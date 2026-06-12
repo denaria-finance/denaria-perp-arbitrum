@@ -1,0 +1,3 @@
+# Marks this package as a Stylus contract for cargo-stylus project discovery
+# (required by check/deploy/verify in managed mode).
+[contract]

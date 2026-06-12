@@ -1,0 +1,19 @@
+# Reproducible-build configuration for the Stylus wasm artifact. Together with
+# rust-toolchain.toml this makes a plain
+#   cargo build --release --target wasm32-unknown-unknown -p denaria-perp-engine-stylus
+# (and therefore the cargo-stylus reproducible/verification build) produce the
+# deployable artifact byte-for-byte, with no environment-specific flags.
+#
+# - build-std + panic=immediate-abort: strips the panic machinery the wasm cannot
+#   use anyway (Stylus reverts on trap); required to fit the activation size cap.
+# - location-detail=none: drops panic file/line/path metadata from the binary —
+#   no local filesystem paths leak into the on-chain artifact, and the build is
+#   insensitive to comment/line shifts (stable across documentation edits).
+# Flags are scoped to the wasm target: host builds (cargo test) keep default
+# panic/unwind behavior.
+
+[unstable]
+build-std = ["std", "panic_abort"]
+
+[target.wasm32-unknown-unknown]
+rustflags = ["-Zunstable-options", "-Cpanic=immediate-abort", "-Zlocation-detail=none"]

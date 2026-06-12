@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.20;
+
+import "../interfaces/IPerpPair.sol";
+import "../util/UtilMath.sol";
+
+contract CallBatcher {
+    constructor() { }
+
+    /*//////////////////////////////////////////////////////////////
+                             calcMR batching
+    //////////////////////////////////////////////////////////////*/
+
+    function batchCalcMR(
+        address[] calldata users,
+        uint256 price,
+        address perpPairAddress
+    )
+        external
+        view
+        returns (uint256[] memory mr)
+    {
+        IPerpPair perpInterface = IPerpPair(perpPairAddress);
+        uint256 lastOperationTimestamp = perpInterface.lastOperationTimestamp();
+        uint256 len = users.length;
+        mr = new uint256[](len);
+        uint256 collateral;
+        for (uint256 i = 0; i < len;) {
+            collateral = perpInterface.getCollateral(users[i]);
+            // adjust if calcMR has multiple returns
+            mr[i] = UtilMath.calcMR(users[i], price, perpPairAddress, collateral, lastOperationTimestamp);
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    struct VirtualTraderPosition {
+        uint256 balanceStable;
+        uint256 balanceAsset;
+        uint256 debtStable;
+        uint256 debtAsset;
+        uint256 fundingFee;
+        bool fundingFeeSign;
+        uint256 initialFundingRate;
+        bool initialFundingRateSign;
+    }
+
+    function batchUserVirtualTraderPosition(
+        address[] calldata users,
+        address perpPairAddress
+    )
+        external
+        view
+        returns (VirtualTraderPosition[] memory positions)
+    {
+        IPerpPair perpInterface = IPerpPair(perpPairAddress);
+        uint256 len = users.length;
+        positions = new VirtualTraderPosition[](len);
+
+        for (uint256 i = 0; i < len;) {
+            (
+                uint256 balanceStable,
+                uint256 balanceAsset,
+                uint256 debtStable,
+                uint256 debtAsset,
+                uint256 fundingFee,
+                bool fundingFeeSign,
+                uint256 initialFundingRate,
+                bool initialFundingRateSign
+            ) = perpInterface.userVirtualTraderPosition(users[i]);
+
+            positions[i] = VirtualTraderPosition({
+                balanceStable: balanceStable,
+                balanceAsset: balanceAsset,
+                debtStable: debtStable,
+                debtAsset: debtAsset,
+                fundingFee: fundingFee,
+                fundingFeeSign: fundingFeeSign,
+                initialFundingRate: initialFundingRate,
+                initialFundingRateSign: initialFundingRateSign
+            });
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    struct LiquidityPosition {
+        uint256 initialStableShares;
+        uint256 initialAssetShares;
+        uint256 debtStable;
+        uint256 debtAsset;
+        uint256 balanceStable;
+        uint256 balanceAsset;
+    }
+
+    function batchCollateral(
+        address[] calldata users,
+        uint256 price,
+        address perpPairAddress
+    )
+        external
+        view
+        returns (uint256[] memory collaterals)
+    {
+        uint256 len = users.length;
+        collaterals = new uint256[](len);
+        IPerpPair perpInterface = IPerpPair(perpPairAddress);
+        for (uint256 i = 0; i < len;) {
+            collaterals[i] = perpInterface.getCollateral(users[i]);
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function batchLiquidityPosition(
+        address[] calldata users,
+        address perpPairAddress
+    )
+        external
+        view
+        returns (LiquidityPosition[] memory positions)
+    {
+        IPerpPair perpInterface = IPerpPair(perpPairAddress);
+        uint256 len = users.length;
+        positions = new LiquidityPosition[](len);
+
+        for (uint256 i = 0; i < len;) {
+            (uint256 initialStableShares, uint256 initialAssetShares, uint256 debtStable, uint256 debtAsset) =
+                perpInterface.liquidityPosition(users[i]);
+
+            (uint256 balanceStable, uint256 balanceAsset) = perpInterface.getLpLiquidityBalance(users[i]);
+
+            positions[i] = LiquidityPosition({
+                initialStableShares: initialStableShares,
+                initialAssetShares: initialAssetShares,
+                debtStable: debtStable,
+                debtAsset: debtAsset,
+                balanceStable: balanceStable,
+                balanceAsset: balanceAsset
+            });
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+}

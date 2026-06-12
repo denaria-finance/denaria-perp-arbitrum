@@ -1,0 +1,50 @@
+[package]
+name = "denaria-perp-engine-stylus"
+version = "0.1.0"
+edition = "2021"
+license = "BUSL-1.1"
+description = "Denaria PerpEngine - Arbitrum Stylus (Rust/WASM) perpetual engine; see docs/ARCHITECTURE.md"
+
+[lib]
+crate-type = ["lib", "cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+stylus-sdk = "0.10.7"
+# Direct dep so the `sol!` event macro can resolve `alloy_sol_types` as an extern
+# crate. Pinned to stylus-sdk's requirement (resolves to the SAME 1.6.0 instance,
+# so the SolEvent trait identity matches stylus_sdk::alloy_sol_types).
+alloy-sol-types = { version = "1.5.7", default-features = false }
+# Pure math (curve solver, MatrixMath, UtilMath helpers) shared with the
+# standalone CurveMath program. default-features=false drops that crate's
+# #[entrypoint]/ABI so only the `pub` math is linked (no entrypoint clash).
+denaria-curve-math-stylus = { path = "..", default-features = false }
+
+[dev-dependencies]
+# `stylus-test` provides the host `TestVM`; the `stylus-test` feature enables the
+# macro-generated `From<&TestVM>` constructor for the entrypoint struct so the
+# storage round-trip test can run on the host. Test-only; never pulled into the
+# deployable wasm.
+stylus-test = "0.10.7"
+stylus-sdk = { version = "0.10.7", features = ["stylus-test"] }
+serde_json = "1"
+
+[features]
+default = []
+export-abi = ["stylus-sdk/export-abi"]
+contract-client-gen = []
+# Test-only: replace the oracle/Vault external calls in `trade` with host
+# constants so the wrapper can be exercised natively. Never enabled for the
+# deployable wasm (which makes the real calls).
+stub_boundary = []
+# Benchmark/test scaffolding: compiles the `initialize_benchmark` + `seed_benchmark_state`
+# helpers, which live in a NON-`#[public]` impl (lib.rs) so they emit NO router selectors in any
+# build — production stays clean and the two router arms + monomorphized arg codecs are reclaimed
+# (the size lever that lets the restored read getters fit under the cargo-stylus activation cap).
+# Native tests (`cfg(test)`) call them as direct methods without this feature. NOTE: the on-chain
+# `initializeBenchmark`/`seedBenchmarkState` *selectors* are retired (no router arm in any build);
+# restore them on a throwaway benchmark branch if on-chain re-benchmarking is ever needed.
+benchmark = []
+
+# NOTE: the release profile is defined once in the workspace root Cargo.toml and
+# applies to this member; do not redefine it here.

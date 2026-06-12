@@ -1,0 +1,8 @@
+# Pinned toolchain for reproducible Stylus builds (cargo stylus verify rebuilds with
+# this exact toolchain). The engine needs nightly: the deployable wasm is built with
+# -Zbuild-std + -Cpanic=immediate-abort (see .cargo/config.toml) to fit the Stylus
+# activation size cap; the stable build does not fit.
+[toolchain]
+channel = "nightly-2026-06-10"
+targets = ["wasm32-unknown-unknown"]
+components = ["rust-src"]

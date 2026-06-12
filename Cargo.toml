@@ -1,0 +1,43 @@
+[package]
+name = "denaria-curve-math-stylus"
+version = "0.1.0"
+edition = "2021"
+license = "BUSL-1.1"
+description = "Denaria CurveMath dynamic-curve AMM solver - Arbitrum Stylus (Rust/WASM) port"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+path = "src/rust/CurveMath.rs"
+
+# stylus-sdk 0.10.7 is used to match the Arbiscan-supported cargo-stylus 0.10.7 verification flow.
+# If compilation fails, verify compatibility with your cargo-stylus version:
+#   cargo stylus new --minimal temp_check
+# and match the SDK version from the generated Cargo.toml.
+
+[dependencies]
+stylus-sdk = "0.10.7"
+
+[features]
+# `standalone-abi` (default) builds the standalone CurveMath Stylus program
+# (its #[entrypoint] + #[public] ABI). The perp-engine crate depends on this
+# crate with default-features=false to consume ONLY the pure math functions
+# (no second #[entrypoint] in the engine wasm).
+default = ["standalone-abi"]
+standalone-abi = []
+export-abi = ["standalone-abi", "stylus-sdk/export-abi"]
+contract-client-gen = []
+
+# Host-only test dependencies. `cargo test` builds for the native target, so
+# pulling serde_json here does not affect the deployable wasm artifact.
+[dev-dependencies]
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+strip = true
+lto = true
+panic = "abort"
+opt-level = "z"
+
+[workspace]
+members = ["perp-engine"]

@@ -1,0 +1,29 @@
+# Foundry outputs
+cache/
+out/
+broadcast/
+snapshots/
+
+# Rust outputs
+target/
+
+# Local dependency checkouts are tracked only as Git submodules.
+lib/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local environment and operator notes
+.env
+notePostAudit.txt
+test.ipynb
+todo.txt
+firme.txt
+deploy_commands.txt
+
+# Local ad-hoc outputs
+abi/
+plotData/
+reports/
+LocalServer/node_modules/

@@ -1,0 +1,13 @@
+{
+  "schema": "denaria.event_selector.parity.v1",
+  "events": {
+    "ExecutedTrade": "0xfdd338d88ceba6992477d38f9541ad9a8d991cb87ea06f59b40a3daa549c2e4f",
+    "ClosedPosition": "0x2b9e4beb55f1f1507abfd61feefd905e25b3bbdf3227acdec2da470fe5b72dff",
+    "LiquidityMoved": "0x8af9ac2af5a26115cf336f25b28ed6af41e6934343bc9d32e69da0b7f417a530",
+    "LiquidatedUser": "0xd6d519236174cd429ffe6aa82deb687480941d5a2c8bf702c2d3730e229e6531",
+    "EnabledAutoClose": "0xd0de127421141866a926c3f6bf43e8949fdc517272d7983ae55d0f09f95063b5",
+    "RealizedPnL": "0xa8f6de86486e0ee00ef266091212a65fd265ec7039655cb49fad79104bd2fb5d",
+    "ParametersUpdated": "0x38166bbec5212bbe64212a8b777dfba53d5c50c26177589de6efb6cabf378e48",
+    "LockedParameterUpdate": "0xe38f7986e2e780a3fd0e421064250ebe0c119f4a93072e84aa273097f020281b"
+  }
+}

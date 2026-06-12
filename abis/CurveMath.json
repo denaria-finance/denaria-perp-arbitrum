@@ -1,0 +1,1447 @@
+[
+  {
+    "type": "function",
+    "name": "computeA",
+    "inputs": [
+      {
+        "name": "lambda",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "liqSquare",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "a",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeAPrimePramLong",
+    "inputs": [
+      {
+        "name": "A",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "p",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "x0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "y0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "aPrime",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeAPrimePramShort",
+    "inputs": [
+      {
+        "name": "A",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "y0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "px0",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "aPrime",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeExactAmountInLong",
+    "inputs": [
+      {
+        "name": "outputSize",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "spotPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialGuess",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "globalLiquidityStable",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "globalLiquidityAsset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "longCurveParameterA",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "longCurveParameterB",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeExactAmountInShort",
+    "inputs": [
+      {
+        "name": "outputSize",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "spotPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialGuess",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "globalLiquidityStable",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "globalLiquidityAsset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "shortCurveParameterA",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "shortCurveParameterB",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeInverseALong",
+    "inputs": [
+      {
+        "name": "x",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "x0",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "a",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeInverseAShort",
+    "inputs": [
+      {
+        "name": "y",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "y0",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "a",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeInverseBLong",
+    "inputs": [
+      {
+        "name": "aPrime",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "x",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "p",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "k",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "kSign",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "bParam",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "x0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "b",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bSign",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeInverseBShort",
+    "inputs": [
+      {
+        "name": "aPrime",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "y",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "p",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "k",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "kSign",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "bParam",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "y0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "b",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bSign",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeInverseCLong",
+    "inputs": [
+      {
+        "name": "aPrime",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "x",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "p",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "k",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "kSign",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "lambda",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lambdaSign",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "bParam",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "x0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeInverseCShort",
+    "inputs": [
+      {
+        "name": "aPrime",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "p",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "y",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "k",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "kSign",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "lambda",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lambdaSign",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "bParam",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "y0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "c",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cSign",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeInverseDLong",
+    "inputs": [
+      {
+        "name": "aPrime",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "x",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "p",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "k",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "kSign",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "lambda",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lambdaSign",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "bParam",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "x0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "d",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dSign",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeInverseDShort",
+    "inputs": [
+      {
+        "name": "aPrime",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "p",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "y",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "k",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "kSign",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "lambda",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lambdaSign",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "bParam",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "y0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "d",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dSign",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeInverseKLong",
+    "inputs": [
+      {
+        "name": "p",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "x0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "y0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "k",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "kSign",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeInverseKShort",
+    "inputs": [
+      {
+        "name": "y0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "px0",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "kShortInv",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "kShortInvSign",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeInverseLambdaLong",
+    "inputs": [
+      {
+        "name": "p",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "x",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "x0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "y0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "lambda",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lambdaSign",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeInverseLambdaShort",
+    "inputs": [
+      {
+        "name": "y",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "y0",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "px0",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "lambdaShortInv",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lambdaShortInvSign",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeLongB",
+    "inputs": [
+      {
+        "name": "xSquare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "spotPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lambda",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialAsset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialStable",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "longCurveParameterA",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "longCurveParameterB",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "b",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bSign",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeLongC",
+    "inputs": [
+      {
+        "name": "size",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "xSquare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "spotPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lambda",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialAsset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialStable",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "longCurveParameterA",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "longCurveParameterB",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "c",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cSign",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeLongD",
+    "inputs": [
+      {
+        "name": "xSquare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "spotPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialAsset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "longCurveParameterB",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "d",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeLongLambda",
+    "inputs": [
+      {
+        "name": "spotPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "size",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialAsset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "lambda",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeLongReturn",
+    "inputs": [
+      {
+        "name": "size",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "spotPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialGuess",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "globalLiquidityStable",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "globalLiquidityAsset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "longCurveParameterA",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "longCurveParameterB",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "outputSize",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeShortB",
+    "inputs": [
+      {
+        "name": "ySquare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "spotPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialStable",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialAsset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lambda",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "shortCurveParameterA",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "shortCurveParameterB",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "b",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bSign",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeShortC",
+    "inputs": [
+      {
+        "name": "size",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ySquare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "spotPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialStable",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialAsset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lambda",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "shortCurveParameterA",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "shortCurveParameterB",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "c",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cSign",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeShortD",
+    "inputs": [
+      {
+        "name": "ySquare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "shortCurveParameterB",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "d",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeShortLambda",
+    "inputs": [
+      {
+        "name": "spotPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "size",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialStable",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "lambda",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeShortReturn",
+    "inputs": [
+      {
+        "name": "size",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "spotPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oracleDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "initialGuess",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "globalLiquidityStable",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "globalLiquidityAsset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "shortCurveParameterA",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "shortCurveParameterB",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "curveParameterDecimals",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "outputSize",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeXSquared",
+    "inputs": [
+      {
+        "name": "initialAsset",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "xSquared",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "computeYSquare",
+    "inputs": [
+      {
+        "name": "initialStable",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ySquared",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "newtonMethodCubic",
+    "inputs": [
+      {
+        "name": "initialGuess",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "a",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "b",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "c",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "d",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bSign",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "cSign",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "dSign",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "y",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  }
+]

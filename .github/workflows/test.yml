@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  check:
+    strategy:
+      fail-fast: true
+
+    name: Foundry project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Show Forge version
+        run: |
+          forge --version
+
+      - name: Run Forge fmt
+        run: |
+          forge fmt --check
+        id: fmt
+
+      - name: Run Forge build
+        run: |
+          forge build --sizes
+        id: build
+
+      - name: Run Forge tests
+        run: |
+          forge test -vvv
+        id: test
+
+      # Cross-contract selector-dependency audit (2026-06-10): every typed callback
+      # in the deployed Solidity stack must exist on the Stylus engine #[public]
+      # surface (and Vault/oracle ABIs), with matching return shapes — the bug class
+      # that shipped the 2026-06-08 deploy with every UtilMath read path reverting.
+      # Uses forge inspect + cast (already installed by foundry-toolchain).
+      - name: Selector-dependency audit (Solidity <-> Stylus surfaces)
+        run: |
+          python3 script/selector_dependency_audit.py
+        id: selector_audit

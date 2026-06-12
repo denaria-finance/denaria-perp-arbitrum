@@ -1,0 +1,4 @@
+[
+  { "type": "function", "name": "getPrice", "stateMutability": "view", "inputs": [], "outputs": [{ "name": "price", "type": "int192" }] },
+  { "type": "function", "name": "verifyReportIfNecessary", "stateMutability": "nonpayable", "inputs": [{ "name": "unverifiedReport", "type": "bytes" }], "outputs": [] }
+]

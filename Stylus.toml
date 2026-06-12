@@ -1,0 +1,5 @@
+# cargo-stylus workspace manifest. The only contract package is perp-engine/
+# (see perp-engine/Stylus.toml); the curve-math crate is embedded, not deployed.
+[workspace]
+
+[workspace.networks]

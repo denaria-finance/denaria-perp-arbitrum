@@ -1,0 +1,209 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2300" height="1480" viewBox="0 0 2300 1480" font-family="DejaVu Sans, Arial, Helvetica, sans-serif">
+<defs><marker id="ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#334155"/></marker><marker id="av" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#db2777"/></marker><marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/></marker></defs>
+<rect width="2300" height="1480" fill="#ffffff"/>
+<text x="48" y="56" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="30" font-weight="bold" fill="#0b2545" text-anchor="start">Denaria PerpPair — on-chain architecture after the Arbitrum Stylus port</text>
+<text x="48" y="90" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="16" font-weight="normal" fill="#5b6b82" text-anchor="start" font-style="italic">Engine ported to Rust/WASM (Stylus); manager/Vault/oracle AND the math/preview libraries stay Solidity. Bit-exact (differential harness + golden vectors).</text>
+<rect x="48" y="150" width="250" height="92" rx="9" ry="9" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+<rect x="48" y="150" width="6" height="92" rx="3" fill="#2563eb"/>
+<text x="70" y="174" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">User / EOA</text>
+<text x="286" y="172" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="normal" fill="#5b6b82" text-anchor="end" font-style="italic">caller</text>
+<text x="70" y="194" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">direct entrypoints:</text>
+<text x="70" y="212" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">trade · close · addLiquidity …</text>
+<rect x="48" y="270" width="250" height="92" rx="9" ry="9" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+<rect x="48" y="270" width="6" height="92" rx="3" fill="#2563eb"/>
+<text x="70" y="294" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">Relayer</text>
+<text x="286" y="292" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="normal" fill="#5b6b82" text-anchor="end" font-style="italic">caller</text>
+<text x="70" y="314" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">EIP-712 meta-tx</text>
+<text x="70" y="332" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">(gasless, signed)</text>
+<rect x="48" y="390" width="250" height="92" rx="9" ry="9" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+<rect x="48" y="390" width="6" height="92" rx="3" fill="#2563eb"/>
+<text x="70" y="414" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">PWA front-end (reads)</text>
+<text x="286" y="412" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="normal" fill="#5b6b82" text-anchor="end" font-style="italic">caller</text>
+<text x="70" y="434" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">quotes &amp; dashboards (eth_call):</text>
+<text x="70" y="452" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">returnTradeInfo · calcMR · PnL</text>
+<rect x="360" y="150" width="330" height="300" rx="14" ry="14" fill="#f3eefe" stroke="#7c3aed" stroke-width="2.2"/>
+<rect x="360" y="150" width="330" height="36" rx="14" ry="14" fill="#7c3aed"/>
+<rect x="360" y="168" width="330" height="18" fill="#7c3aed"/>
+<text x="378" y="174" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="start">StylusPerpMultiCalls</text>
+<text x="674" y="174" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#e6e9f5" text-anchor="end" font-style="italic">Solidity</text>
+<rect x="380" y="196" width="290" height="110" rx="9" ry="9" fill="#ffffff" stroke="#7c3aed" stroke-width="1.8"/>
+<text x="396" y="220" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">Meta-call bundlers</text>
+<text x="396" y="240" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">addCollateralOpenTrade · …AddLiquidity</text>
+<text x="396" y="258" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">closeAndRemoveAllCollateral</text>
+<text x="396" y="276" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">modify/take-profit · batchLiquidate</text>
+<rect x="380" y="320" width="290" height="112" rx="9" ry="9" fill="#ffffff" stroke="#7c3aed" stroke-width="1.8"/>
+<rect x="380" y="320" width="6" height="112" rx="3" fill="#db2777"/>
+<text x="402" y="344" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">= the engine&#x27;s trustedForwarder</text>
+<text x="402" y="364" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">EIP-712 relayer + nonces (ECDSA)</text>
+<text x="402" y="382" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">calls engine *For(user, …)  [typed]</text>
+<text x="402" y="400" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">vault calls keep ERC2771 suffix</text>
+<rect x="728" y="130" width="868" height="1180" rx="20" ry="20" fill="none" stroke="#b91c1c" stroke-width="2.2" stroke-dasharray="10 8"/>
+<rect x="752" y="116" width="300" height="30" rx="15" fill="#b91c1c"/>
+<text x="760" y="137" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#ffffff" text-anchor="start">Rust / WASM  —  Arbitrum Stylus</text>
+<rect x="760" y="168" width="804" height="800" rx="14" ry="14" fill="#fdeeee" stroke="#b91c1c" stroke-width="2.2"/>
+<rect x="760" y="168" width="804" height="36" rx="14" ry="14" fill="#b91c1c"/>
+<rect x="760" y="186" width="804" height="18" fill="#b91c1c"/>
+<text x="778" y="192" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="start">PerpEngine</text>
+<text x="1548" y="192" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#e6e9f5" text-anchor="end" font-style="italic">single #[entrypoint] · one #[public] impl</text>
+<rect x="782" y="214" width="760" height="96" rx="9" ry="9" fill="#ffffff" stroke="#b91c1c" stroke-width="1.8"/>
+<rect x="782" y="214" width="6" height="96" rx="3" fill="#b91c1c"/>
+<text x="804" y="238" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="14.5" font-weight="bold" fill="#1e293b" text-anchor="start">ABI surface  (lib.rs — the only #[public] impl)</text>
+<text x="804" y="258" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">EOA entrypoints + 9 explicit-sender *For (trade/close/add+removeLiquidity/realizePnL/liquidate/autoClose ×2)</text>
+<text x="804" y="276" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">views: getPrice · calcPnL · getLpLiquidityBalance · ReadParameters/Fees · Vault getters · read-parity getters (curveParameters · funding) · governance</text>
+<rect x="782" y="322" width="760" height="60" rx="9" ry="9" fill="#ffffff" stroke="#b91c1c" stroke-width="1.8"/>
+<text x="798" y="346" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="14" font-weight="bold" fill="#1e293b" text-anchor="start">#[entrypoint] sol_storage!  (fresh PACKED layout)</text>
+<text x="798" y="366" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">u8/u32/u64/bool packed · WAD/accumulators full-width · M (2×2) + row G flattened to scalars</text>
+<text x="782" y="416" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="bold" fill="#1e293b" text-anchor="start">implementation — per-domain Rust modules:</text>
+<rect x="782" y="432" width="244" height="70" rx="9" ry="9" fill="#ffffff" stroke="#b91c1c" stroke-width="1.8"/>
+<text x="798" y="456" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="bold" fill="#1e293b" text-anchor="start">trade.rs</text>
+<text x="798" y="476" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">_trade · curve solve · fees</text>
+<rect x="1040" y="432" width="244" height="70" rx="9" ry="9" fill="#ffffff" stroke="#b91c1c" stroke-width="1.8"/>
+<text x="1056" y="456" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="bold" fill="#1e293b" text-anchor="start">funding.rs</text>
+<text x="1056" y="476" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">updateFG · funding rate/fee</text>
+<rect x="1298" y="432" width="244" height="70" rx="9" ry="9" fill="#ffffff" stroke="#b91c1c" stroke-width="1.8"/>
+<text x="1314" y="456" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="bold" fill="#1e293b" text-anchor="start">internal_logic.rs</text>
+<text x="1314" y="476" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">LP balance · calcPnL · calcMR</text>
+<rect x="782" y="516" width="244" height="70" rx="9" ry="9" fill="#ffffff" stroke="#b91c1c" stroke-width="1.8"/>
+<text x="798" y="540" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="bold" fill="#1e293b" text-anchor="start">liquidity.rs</text>
+<text x="798" y="560" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">add/remove · M·M⁻¹ · LP debt</text>
+<rect x="1040" y="516" width="244" height="70" rx="9" ry="9" fill="#ffffff" stroke="#b91c1c" stroke-width="1.8"/>
+<text x="1056" y="540" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="bold" fill="#1e293b" text-anchor="start">close.rs</text>
+<text x="1056" y="560" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">closeAndWithdraw · realizePnL</text>
+<rect x="1298" y="516" width="244" height="70" rx="9" ry="9" fill="#ffffff" stroke="#b91c1c" stroke-width="1.8"/>
+<text x="1314" y="540" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="bold" fill="#1e293b" text-anchor="start">liquidation.rs</text>
+<text x="1314" y="560" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">liquidate · discount · transfers</text>
+<rect x="782" y="600" width="244" height="70" rx="9" ry="9" fill="#ffffff" stroke="#b91c1c" stroke-width="1.8"/>
+<text x="798" y="624" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="bold" fill="#1e293b" text-anchor="start">auto_close.rs</text>
+<text x="798" y="644" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">enable/exec auto-close</text>
+<rect x="1040" y="600" width="244" height="70" rx="9" ry="9" fill="#ffffff" stroke="#b91c1c" stroke-width="1.8"/>
+<text x="1056" y="624" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="bold" fill="#1e293b" text-anchor="start">config.rs</text>
+<text x="1056" y="644" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">init · time-locked params</text>
+<rect x="1298" y="600" width="244" height="70" rx="9" ry="9" fill="#ffffff" stroke="#b91c1c" stroke-width="1.8"/>
+<text x="1314" y="624" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="bold" fill="#1e293b" text-anchor="start">access_control.rs</text>
+<text x="1314" y="644" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">roles · emit · forwarder gate</text>
+<rect x="782" y="690" width="760" height="58" rx="9" ry="9" fill="#ffffff" stroke="#475569" stroke-width="1.8"/>
+<text x="798" y="714" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="bold" fill="#1e293b" text-anchor="start">tests.rs  —  native + golden-vector + DIFFERENTIAL harness</text>
+<text x="798" y="734" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">trade+funding · liquidity · close+PnL · liquidation+auto-close replayed bit-exact vs real PerpPair · invariants + fuzz</text>
+<rect x="760" y="990" width="804" height="250" rx="14" ry="14" fill="#fdeeee" stroke="#b91c1c" stroke-width="2.2"/>
+<rect x="760" y="990" width="804" height="36" rx="14" ry="14" fill="#b91c1c"/>
+<rect x="760" y="1008" width="804" height="18" fill="#b91c1c"/>
+<text x="778" y="1014" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="start">denaria-curve-math-stylus</text>
+<text x="1548" y="1014" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#e6e9f5" text-anchor="end" font-style="italic">Rust crate · embedded (no #[entrypoint] when linked)</text>
+<rect x="782" y="1036" width="376" height="96" rx="9" ry="9" fill="#ffffff" stroke="#b91c1c" stroke-width="1.8"/>
+<text x="798" y="1060" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">Cubic curve solver</text>
+<text x="798" y="1080" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">255-iter Newton (8 branches)</text>
+<text x="798" y="1098" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">exact-amount-in long/short</text>
+<text x="798" y="1116" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">truncation-toward-zero parity</text>
+<rect x="1182" y="1036" width="360" height="96" rx="9" ry="9" fill="#ffffff" stroke="#b91c1c" stroke-width="1.8"/>
+<text x="1198" y="1060" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">MatrixMath + UtilMath</text>
+<text x="1198" y="1080" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">2×2 matMul/inverse · clamp</text>
+<text x="1198" y="1098" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">signedSum · calcEMA · divCeil · _calcPnL</text>
+<text x="1198" y="1116" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">73 golden vectors — bit-exact</text>
+<text x="782" y="1170" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#5b6b82" text-anchor="start" font-style="italic">Same math as the deployed Solidity libraries (right) — golden-vector-locked, so quotes and execution agree bit-exactly.</text>
+<text x="782" y="1196" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#5b6b82" text-anchor="start" font-style="italic">Engine ↔ crate: a normal in-WASM call (the standalone crate also deploys on its own with its own #[entrypoint]).</text>
+<rect x="1640" y="168" width="610" height="360" rx="14" ry="14" fill="#ecfbf7" stroke="#0d9488" stroke-width="2.2"/>
+<rect x="1640" y="168" width="610" height="36" rx="14" ry="14" fill="#0d9488"/>
+<rect x="1640" y="186" width="610" height="18" fill="#0d9488"/>
+<text x="1658" y="192" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="start">Vault</text>
+<text x="2234" y="192" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#e6e9f5" text-anchor="end" font-style="italic">Solidity · ERC2771 · real ERC20 collateral</text>
+<rect x="1662" y="214" width="566" height="132" rx="9" ry="9" fill="#ffffff" stroke="#0d9488" stroke-width="1.8"/>
+<text x="1678" y="238" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">Collateral accounting</text>
+<text x="1678" y="258" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">addCollateral (ERC20 safeTransferFrom) · removeCollateral</text>
+<text x="1678" y="276" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">userCollateral · ratio snapshots · LostAndFound</text>
+<text x="1678" y="294" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">_msgSender() = trustedForwarder (the manager)</text>
+<rect x="1662" y="360" width="566" height="146" rx="9" ry="9" fill="#ffffff" stroke="#0d9488" stroke-width="1.8"/>
+<rect x="1662" y="360" width="6" height="146" rx="3" fill="#db2777"/>
+<text x="1684" y="384" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">reads the engine (F-10 cross-calls):</text>
+<text x="1684" y="404" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">lastOperationTimestamp · calcPnL · updateFG</text>
+<text x="1684" y="422" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">MMR · maxLpLeverage · user/liquidityPosition</text>
+<text x="1684" y="440" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">→ each crosses the WASM boundary (≈+24k pedestal)</text>
+<rect x="1640" y="568" width="610" height="168" rx="14" ry="14" fill="#fff7ec" stroke="#d97706" stroke-width="2.2"/>
+<rect x="1640" y="568" width="610" height="36" rx="14" ry="14" fill="#d97706"/>
+<rect x="1640" y="586" width="610" height="18" fill="#d97706"/>
+<text x="1658" y="592" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="start">TWAP Oracle Middleware</text>
+<text x="2234" y="592" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#e6e9f5" text-anchor="end" font-style="italic">Solidity</text>
+<rect x="1662" y="612" width="566" height="104" rx="9" ry="9" fill="#ffffff" stroke="#d97706" stroke-width="1.8"/>
+<text x="1678" y="636" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">Chainlink Data Streams (Reports V3)</text>
+<text x="1678" y="656" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">getPrice() = SafeCast.toUint256(verified price)</text>
+<text x="1678" y="674" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">verifyReportIfNecessary(report)</text>
+<rect x="1640" y="776" width="610" height="84" rx="9" ry="9" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.8"/>
+<rect x="1640" y="776" width="6" height="84" rx="3" fill="#94a3b8"/>
+<text x="1662" y="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">Chainlink VerifierProxy / Data Streams</text>
+<text x="2238" y="798" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="normal" fill="#5b6b82" text-anchor="end" font-style="italic">off-chain feed</text>
+<text x="1662" y="820" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">external · signed price reports (Reports V3)</text>
+<rect x="1640" y="900" width="610" height="290" rx="14" ry="14" fill="#f1f5f9" stroke="#475569" stroke-width="2.2"/>
+<rect x="1640" y="900" width="610" height="36" rx="14" ry="14" fill="#475569"/>
+<rect x="1640" y="918" width="610" height="18" fill="#475569"/>
+<text x="1658" y="924" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="start">Solidity math libraries</text>
+<text x="2234" y="924" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#e6e9f5" text-anchor="end" font-style="italic">deployed + linked · EVM bytecode</text>
+<rect x="1662" y="946" width="566" height="110" rx="9" ry="9" fill="#ffffff" stroke="#475569" stroke-width="1.8"/>
+<text x="1678" y="970" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">FE quoting layer — UtilMath · CurveMath</text>
+<text x="1678" y="990" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">returnTradeInfo · calcMR · calcHypotheticalMR · _calcPnL  (eth_call)</text>
+<text x="1678" y="1008" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">reads engine state via the read-parity getters</text>
+<text x="1678" y="1026" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">same ABI as the legacy system — FE migration = address swap</text>
+<rect x="1662" y="1066" width="566" height="104" rx="9" ry="9" fill="#ffffff" stroke="#475569" stroke-width="1.8"/>
+<rect x="1662" y="1066" width="6" height="104" rx="3" fill="#475569"/>
+<text x="1684" y="1090" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">Vault-linked — UtilMath (+ MatrixMath · FeeManager)</text>
+<text x="1684" y="1110" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">DELEGATECALL: calcMR inside removeCollateral&#x27;s margin guard</text>
+<text x="1684" y="1128" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">EVM linked-library mechanism — not available to a Stylus program</text>
+<text x="1684" y="1146" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">bit-exact twins of the engine&#x27;s embedded Rust crate</text>
+<polyline points="298,196 360,200" fill="none" stroke="#334155" stroke-width="2.4" marker-end="url(#ad)" stroke-linejoin="round"/>
+<rect x="302.9" y="173.0" width="52.2" height="19" rx="6" fill="#ffffff" fill-opacity="0.88"/>
+<text x="329.0" y="187.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="bold" fill="#334155" text-anchor="middle">bundle</text>
+<polyline points="298,316 360,360" fill="none" stroke="#334155" stroke-width="2.4" marker-end="url(#ad)" stroke-linejoin="round"/>
+<rect x="272.75" y="345.0" width="112.5" height="19" rx="6" fill="#ffffff" fill-opacity="0.88"/>
+<text x="329.0" y="359.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="bold" fill="#334155" text-anchor="middle">EIP-712 meta-tx</text>
+<polyline points="298,242 330,242 330,500 740,500 740,320 760,320" fill="none" stroke="#334155" stroke-width="2.4" stroke-dasharray="6 5" marker-end="url(#ad)" stroke-linejoin="round"/>
+<rect x="478.75" y="507.0" width="112.5" height="19" rx="6" fill="#ffffff" fill-opacity="0.88"/>
+<text x="535.0" y="521.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="bold" fill="#334155" text-anchor="middle">direct EOA path</text>
+<polyline points="690,360 724,360 724,290 760,290" fill="none" stroke="#db2777" stroke-width="2.8" marker-end="url(#av)" stroke-linejoin="round"/>
+<rect x="620.85" y="300.0" width="206.3" height="19" rx="6" fill="#ffffff" fill-opacity="0.88"/>
+<text x="724.0" y="314.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="bold" fill="#db2777" text-anchor="middle">*For(user,…)  explicit-sender</text>
+<polyline points="525,150 525,108 1935,108 1935,168" fill="none" stroke="#334155" stroke-width="2.4" marker-end="url(#ad)" stroke-linejoin="round"/>
+<rect x="1289.3500000000001" y="115.0" width="219.70000000000002" height="19" rx="6" fill="#ffffff" fill-opacity="0.88"/>
+<text x="1399.2" y="129.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="bold" fill="#334155" text-anchor="middle">addCollateral  (ERC2771 suffix)</text>
+<polyline points="1564,300 1640,300" fill="none" stroke="#334155" stroke-width="2.4" marker-end="url(#ad)" stroke-linejoin="round"/>
+<rect x="1518.95" y="275.0" width="166.1" height="19" rx="6" fill="#ffffff" fill-opacity="0.88"/>
+<text x="1602.0" y="289.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="bold" fill="#334155" text-anchor="middle">userCollateral · addPnl</text>
+<polyline points="1640,430 1600,430 1600,470 1564,470" fill="none" stroke="#db2777" stroke-width="2.4" marker-end="url(#av)" stroke-linejoin="round"/>
+<rect x="1547.0" y="437.0" width="146.0" height="19" rx="6" fill="#ffffff" fill-opacity="0.88"/>
+<text x="1620.0" y="451.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="bold" fill="#db2777" text-anchor="middle">getters (cross-call)</text>
+<polyline points="1564,640 1640,640" fill="none" stroke="#334155" stroke-width="2.4" marker-end="url(#ad)" stroke-linejoin="round"/>
+<rect x="1518.95" y="615.0" width="166.1" height="19" rx="6" fill="#ffffff" fill-opacity="0.88"/>
+<text x="1602.0" y="629.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="bold" fill="#334155" text-anchor="middle">getPrice · verifyReport</text>
+<polyline points="1945,736 1945,776" fill="none" stroke="#94a3b8" stroke-width="2.4" marker-end="url(#ag)" stroke-linejoin="round"/>
+<rect x="1951.0" y="747.0" width="58.9" height="19" rx="6" fill="#ffffff" fill-opacity="0.88"/>
+<text x="1957.0" y="761.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="bold" fill="#94a3b8" text-anchor="start">reports</text>
+<polyline points="2250,430 2284,430 2284,1040 2250,1040" fill="none" stroke="#334155" stroke-width="2.4" marker-end="url(#ad)" stroke-linejoin="round"/>
+<rect x="2125.3" y="726.0" width="152.70000000000002" height="19" rx="6" fill="#ffffff" fill-opacity="0.88"/>
+<text x="2272.0" y="740.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="bold" fill="#334155" text-anchor="end">delegatecall (linked)</text>
+<polyline points="1640,990 1604,990 1604,935 1564,935" fill="none" stroke="#db2777" stroke-width="2.4" marker-end="url(#av)" stroke-linejoin="round"/>
+<rect x="1534.35" y="975.0" width="139.3" height="19" rx="6" fill="#ffffff" fill-opacity="0.88"/>
+<text x="1604.0" y="989.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="bold" fill="#db2777" text-anchor="middle">read-parity getters</text>
+<polyline points="48,436 24,436 24,1380 1945,1380 1945,1190" fill="none" stroke="#334155" stroke-width="2.4" stroke-dasharray="6 5" marker-end="url(#ad)" stroke-linejoin="round"/>
+<rect x="1010.9000000000002" y="1355.0" width="139.3" height="19" rx="6" fill="#ffffff" fill-opacity="0.88"/>
+<text x="1080.5500000000002" y="1369.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="bold" fill="#334155" text-anchor="middle">previews (eth_call)</text>
+<polyline points="1162,968 1162,990" fill="none" stroke="#334155" stroke-width="2.6" marker-end="url(#ad)" stroke-linejoin="round"/>
+<rect x="1168.0" y="970.0" width="99.10000000000001" height="19" rx="6" fill="#ffffff" fill-opacity="0.88"/>
+<text x="1174.0" y="984.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11.5" font-weight="bold" fill="#334155" text-anchor="start">embedded math</text>
+<rect x="48" y="980" width="640" height="330" rx="12" ry="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.4"/>
+<text x="66" y="1010" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="16" font-weight="bold" fill="#0b2545" text-anchor="start">Legend  /  what changed vs the Solidity baseline</text>
+<rect x="66" y="1029" width="26" height="18" rx="10" ry="10" fill="#fdeeee" stroke="#b91c1c" stroke-width="2"/>
+<text x="110" y="1042" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="normal" fill="#1e293b" text-anchor="start">Rust / WASM (Stylus): PerpEngine + curve-math crate</text>
+<rect x="66" y="1057" width="26" height="18" rx="10" ry="10" fill="#f3eefe" stroke="#7c3aed" stroke-width="2"/>
+<text x="110" y="1070" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="normal" fill="#1e293b" text-anchor="start">Solidity meta-call manager (trustedForwarder)</text>
+<rect x="66" y="1085" width="26" height="18" rx="10" ry="10" fill="#ecfbf7" stroke="#0d9488" stroke-width="2"/>
+<text x="110" y="1098" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="normal" fill="#1e293b" text-anchor="start">Solidity Vault (real ERC20 collateral)</text>
+<rect x="66" y="1113" width="26" height="18" rx="10" ry="10" fill="#fff7ec" stroke="#d97706" stroke-width="2"/>
+<text x="110" y="1126" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="normal" fill="#1e293b" text-anchor="start">Solidity TWAP oracle ← off-chain Chainlink</text>
+<rect x="66" y="1141" width="26" height="18" rx="10" ry="10" fill="#f1f5f9" stroke="#475569" stroke-width="2"/>
+<text x="110" y="1154" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="normal" fill="#1e293b" text-anchor="start">Solidity math libraries (FE quotes + Vault-linked, bit-exact twins)</text>
+<line x1="66" y1="1178" x2="100" y2="1178" stroke="#db2777" stroke-width="3"/>
+<text x="110" y="1182" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="normal" fill="#1e293b" text-anchor="start">explicit-sender *For  REPLACES  ERC2771 same-selector + calldata-suffix</text>
+<line x1="66" y1="1206" x2="100" y2="1206" stroke="#334155" stroke-width="3"/>
+<text x="110" y="1210" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="normal" fill="#1e293b" text-anchor="start">typed call · view / cross-call</text>
+<line x1="66" y1="1234" x2="100" y2="1234" stroke="#94a3b8" stroke-width="3" stroke-dasharray="6 5"/>
+<text x="110" y="1238" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13.5" font-weight="normal" fill="#1e293b" text-anchor="start">external / off-chain</text>
+<text x="66" y="1268" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start" font-style="italic">Baseline: a monolithic Solidity PerpPair inheritance chain (perpModules/ + storage/).</text>
+<text x="66" y="1290" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start" font-style="italic">Now: one Stylus WASM contract (1 #[entrypoint]/1 #[public] impl) + 9 internal Rust modules; storage repacked.</text>
+</svg>
