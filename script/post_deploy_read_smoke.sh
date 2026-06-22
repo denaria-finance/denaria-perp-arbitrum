@@ -14,7 +14,7 @@
 #   - success                          -> OK
 #
 # Run after EVERY deploy, before re-pointing the front-end:
-#   ENGINE=0x… UTILMATH=0x… VAULT=0x… RPC=https://sepolia-rollup.arbitrum.io/rpc \
+#   ENGINE=0x… UTILMATH=0x… VAULT=0x… BATCHER=0x… RPC=https://sepolia-rollup.arbitrum.io/rpc \
 #     ./script/post_deploy_read_smoke.sh
 #
 # Optional: USER (default: zero-position probe address), PRICE (1e8-scale,
@@ -25,6 +25,7 @@ RPC="${RPC:-https://sepolia-rollup.arbitrum.io/rpc}"
 ENGINE="${ENGINE:?set ENGINE=<PerpEngine address>}"
 UTILMATH="${UTILMATH:?set UTILMATH=<UtilMath library address>}"
 VAULT="${VAULT:?set VAULT=<Vault address>}"
+BATCHER="${BATCHER:-}"
 USER_ADDR="${USER_ADDR:-0x00000000000000000000000000000000000A11CE}"
 PRICE="${PRICE:-300000000000}" # 3000e8
 
@@ -106,6 +107,18 @@ if [ -n "$STABLE" ] && [ "$STABLE" != "0" ]; then
     check "returnTradeInfo (long quote on live pool)" must-pass "$UTILMATH" "returnTradeInfo(address,bool,uint256,uint256,uint256,address)" "$USER_ADDR" true 1000000000000000000 0 "$PRICE" "$ENGINE"
 else
     echo "  [SKIP] returnTradeInfo — pool not seeded yet (globalLiquidityStable == 0)"
+fi
+
+if [ -n "$BATCHER" ]; then
+    echo "== CallBatcher reads ($BATCHER -> $ENGINE) =="
+    check "batchCollateral([])" must-pass "$BATCHER" "batchCollateral(address[],uint256,address)(uint256[])" "[]" "$PRICE" "$ENGINE"
+    check "batchCollateral([user])" must-pass "$BATCHER" "batchCollateral(address[],uint256,address)(uint256[])" "[$USER_ADDR]" "$PRICE" "$ENGINE"
+    check "batchCalcMR([user])" must-pass "$BATCHER" "batchCalcMR(address[],uint256,address)(uint256[])" "[$USER_ADDR]" "$PRICE" "$ENGINE"
+    check "batchUserVirtualTraderPosition([user])" must-pass "$BATCHER" "batchUserVirtualTraderPosition(address[],address)((uint256,uint256,uint256,uint256,uint256,bool,uint256,bool)[])" "[$USER_ADDR]" "$ENGINE"
+    check "batchLiquidityPosition([user])" must-pass "$BATCHER" "batchLiquidityPosition(address[],address)((uint256,uint256,uint256,uint256,uint256,uint256)[])" "[$USER_ADDR]" "$ENGINE"
+else
+    echo "== CallBatcher reads =="
+    echo "  [SKIP] BATCHER not set"
 fi
 
 echo

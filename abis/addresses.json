@@ -1,10 +1,11 @@
 {
   "network": "arbitrum-sepolia",
   "chainId": 421614,
-  "deploy": "2026-06-12 hybrid Stylus/Solidity deploy: Solidity contracts source-verified on Arbiscan; engine = reproducible nightly build (sha256 957e7cd6...)",
+  "deploy": "2026-06-12 hybrid Stylus/Solidity deploy: Solidity contracts source-verified on Arbiscan; engine = reproducible nightly build (sha256 957e7cd6...). 2026-06-19 CallBatcher redeploy fixes Stylus collateral read batching.",
   "report": "docs/DEPLOYMENT.md",
   "contracts": {
     "PerpEngine":           { "address": "0xC46E6F46B24177Cc0B3A0D14f005b8AB24B9A600", "type": "stylus-wasm", "abi": "PerpEngine.json",           "deployed": true, "note": "reproducible artifact sha256 957e7cd6...; not fully Arbiscan source-verified through the managed Stylus flow" },
+    "CallBatcher":          { "address": "0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c", "type": "solidity",    "abi": "CallBatcher.json",          "deployed": true, "verified": true, "note": "redeployed 2026-06-19; reads collateral from Vault via PerpEngine.ReadParameters()[0] instead of PerpEngine.getCollateral" },
     "StylusPerpMultiCalls": { "address": "0xF52Ea4c86501a9428ddC5CbD1637831C997f3986", "type": "solidity",    "abi": "StylusPerpMultiCalls.json", "deployed": true, "verified": true },
     "Vault":                { "address": "0xCBcb733D0c6D550026F50e9d7F7F0470105eC2Ac", "type": "solidity",    "abi": "Vault.json",                "deployed": true, "verified": true },
     "LostAndFound":         { "address": "0x1988D0974f180A6847679c9C8E83d41D1E25128c", "type": "solidity",    "abi": "LostAndFound.json",         "deployed": true, "verified": true },

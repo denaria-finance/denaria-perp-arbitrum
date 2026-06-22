@@ -14,6 +14,7 @@ deployment artifacts.
 | Component | Address | Notes |
 | --- | --- | --- |
 | `PerpEngine` | `0xC46E6F46B24177Cc0B3A0D14f005b8AB24B9A600` | Stylus WASM, reproducible nightly artifact |
+| `CallBatcher` | `0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c` | Solidity read batcher, source-verified; redeployed 2026-06-19 for Stylus collateral-read compatibility |
 | `StylusPerpMultiCalls` | `0xF52Ea4c86501a9428ddC5CbD1637831C997f3986` | Solidity manager / trusted forwarder |
 | `Vault` | `0xCBcb733D0c6D550026F50e9d7F7F0470105eC2Ac` | Solidity collateral custody |
 | `LostAndFound` | `0x1988D0974f180A6847679c9C8E83d41D1E25128c` | Solidity recovery contract |
@@ -23,6 +24,10 @@ deployment artifacts.
 | Stablecoin | `0xad78f7E737288e4a8CdF27d8e9c59B15399936EA` | Reused USDC.e test token |
 
 The ABI map is maintained in [../abis/addresses.json](../abis/addresses.json).
+
+`CallBatcher` is stateless and is not registered by the protocol contracts. Front ends
+and backend jobs should point their batch-read calls at the latest address above and pass
+the live `PerpEngine` address as the `perpPairAddress` argument.
 
 ## Environment
 

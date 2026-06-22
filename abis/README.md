@@ -10,6 +10,7 @@ Network: Arbitrum Sepolia (`421614`).
 | Contract | ABI file | Address | Notes |
 | --- | --- | --- | --- |
 | `PerpEngine` | `PerpEngine.json` | `0xC46E6F46B24177Cc0B3A0D14f005b8AB24B9A600` | Stylus WASM engine ABI generated from `perp-engine`; reproducible artifact hash `957e7cd6...`; not fully Arbiscan source-verified via managed Stylus flow |
+| `CallBatcher` | `CallBatcher.json` | `0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c` | Solidity read batcher; source-verified; redeployed 2026-06-19 to read collateral from the Vault instead of `PerpEngine.getCollateral` |
 | `StylusPerpMultiCalls` | `StylusPerpMultiCalls.json` | `0xF52Ea4c86501a9428ddC5CbD1637831C997f3986` | Solidity manager / trusted forwarder; source-verified |
 | `Vault` | `Vault.json` | `0xCBcb733D0c6D550026F50e9d7F7F0470105eC2Ac` | Solidity collateral custody; source-verified |
 | `LostAndFound` | `LostAndFound.json` | `0x1988D0974f180A6847679c9C8E83d41D1E25128c` | Solidity recovery contract; source-verified |
@@ -29,6 +30,9 @@ Network: Arbitrum Sepolia (`421614`).
   `test/config/EventSelectorGoldenVector.t.sol`.
 - The front-end should use `Vault.getUserTotalCollateral(address)` for real collateral
   reads; the engine does not own ERC20 collateral.
+- Batched collateral reads should use `CallBatcher.batchCollateral`; the batcher resolves
+  the Vault through `PerpEngine.ReadParameters()[0]` and does not call the removed
+  `PerpEngine.getCollateral(address)` selector.
 - Every price-dependent write should attach a fresh signed Chainlink Data Streams v3
   report so `TWAPOracleMiddleware.getPrice()` remains fresh.
 
@@ -38,6 +42,7 @@ Regenerate ABIs after any deployed ABI change:
 
 ```bash
 cargo run -p denaria-perp-engine-stylus --features export-abi
+forge inspect src/manager/callBatcher.sol:CallBatcher abi
 forge inspect src/Vault.sol:Vault abi
 forge inspect src/manager/StylusPerpMultiCalls.sol:StylusPerpMultiCalls abi
 forge inspect src/LostAndFound.sol:LostAndFound abi
