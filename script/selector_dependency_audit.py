@@ -38,6 +38,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CALLER_SOURCES = [
     "src/util/UtilMath.sol",
     "src/Vault.sol",
+    "src/manager/callBatcher.sol",
     "src/manager/StylusPerpMultiCalls.sol",
     "src/manager/FeeManager.sol",
     "src/LostAndFound.sol",
@@ -48,6 +49,7 @@ CALLER_SOURCES = [
 IFACE_BINDINGS = {
     "IPerpPair":           ("src/interfaces/IPerpPair.sol:IPerpPair", "engine"),
     "PerpPair":            ("src/PerpPair.sol:PerpPair", "engine"),
+    "IPerpPairBatcherParameters": ("src/manager/callBatcher.sol:IPerpPairBatcherParameters", "engine"),
     "IStylusPerpEngine":   ("src/manager/StylusPerpMultiCalls.sol:IStylusPerpEngine", "engine"),
     "IPerpPairParameters": ("src/util/UtilMath.sol:IPerpPairParameters", "engine"),
     "IVault":              ("src/interfaces/IVault.sol:IVault", "vault"),

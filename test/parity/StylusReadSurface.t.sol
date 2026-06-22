@@ -3,6 +3,7 @@ pragma solidity ^0.8.25;
 
 import { Test } from "forge-std/Test.sol";
 import "../../src/util/UtilMath.sol";
+import "../../src/manager/callBatcher.sol";
 import "./StylusEngineSurfaceMock.sol";
 
 /// @title StylusReadSurfaceTest — cross-contract selector-dependency regression suite
@@ -24,6 +25,7 @@ contract StylusReadSurfaceTest is Test {
     VaultReadSurfaceMock vault;
     Engine20260608SurfaceMock legacyDeploy; // 2026-06-08 surface (bug regression)
     ReadParityEngineSurfaceMock readParity; // next-deploy surface
+    CallBatcher batcher;
 
     address constant USER = address(0xA11CE);
     uint256 constant PRICE = 3000e8; // benchmark-pool magnitude (stable 1.8e25 / asset 6e21)
@@ -32,6 +34,7 @@ contract StylusReadSurfaceTest is Test {
         vault = new VaultReadSurfaceMock();
         legacyDeploy = new Engine20260608SurfaceMock(address(vault));
         readParity = new ReadParityEngineSurfaceMock(address(vault));
+        batcher = new CallBatcher();
         vault.setCollateral(USER, 1000e18);
     }
 
@@ -81,6 +84,32 @@ contract StylusReadSurfaceTest is Test {
     function test_calcHypotheticalMR_succeeds_on_readParity_surface() public view {
         uint256 mr = UtilMath.calcHypotheticalMR(0, 0, 0, 0, 0, true, PRICE, 1e8, 1e18, 1e6, address(readParity));
         assertEq(mr, 1e6, "empty hypothetical position => MMRDecimals");
+    }
+
+    function test_batchCalcMR_reads_collateral_from_vault_on_readParity_surface() public view {
+        address[] memory users = new address[](1);
+        users[0] = USER;
+
+        uint256[] memory mr = batcher.batchCalcMR(users, PRICE, address(readParity));
+
+        assertEq(mr[0], 1e6, "empty position => marginRatio == MMRDecimals");
+    }
+
+    function test_batchCollateral_reads_collateral_from_vault_on_readParity_surface() public view {
+        address[] memory users = new address[](1);
+        users[0] = USER;
+
+        uint256[] memory collaterals = batcher.batchCollateral(users, PRICE, address(readParity));
+
+        assertEq(collaterals[0], 1000e18, "collateral must come from the Vault");
+    }
+
+    function test_batchCollateral_returns_empty_without_engine_callback() public view {
+        address[] memory users = new address[](0);
+
+        uint256[] memory collaterals = batcher.batchCollateral(users, PRICE, address(legacyDeploy));
+
+        assertEq(collaterals.length, 0, "empty input must return an empty output");
     }
 
     function test_calcPnLNoExit_is_pure_and_engine_independent() public pure {

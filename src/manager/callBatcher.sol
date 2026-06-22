@@ -2,7 +2,26 @@
 pragma solidity ^0.8.20;
 
 import "../interfaces/IPerpPair.sol";
+import "../interfaces/IVault.sol";
 import "../util/UtilMath.sol";
+
+/// @dev Correct 8-field binding of `ReadParameters()` (PerpStorage / Stylus engine).
+/// `IPerpPair.ReadParameters` is stale and returns the old 6-field tuple.
+interface IPerpPairBatcherParameters {
+    function ReadParameters()
+        external
+        view
+        returns (
+            address vault_,
+            address oracle_,
+            uint256 minimumTradeSize_,
+            uint256 minimumLiquidityMovement_,
+            uint256 feeFrontend_,
+            uint256 feeLP_,
+            uint256 insuranceFundCap_,
+            bytes32 tickerAssetCurrency_
+        );
+}
 
 contract CallBatcher {
     constructor() { }
@@ -22,12 +41,12 @@ contract CallBatcher {
     {
         IPerpPair perpInterface = IPerpPair(perpPairAddress);
         uint256 lastOperationTimestamp = perpInterface.lastOperationTimestamp();
+        address vault = _vaultFor(perpPairAddress);
         uint256 len = users.length;
         mr = new uint256[](len);
         uint256 collateral;
         for (uint256 i = 0; i < len;) {
-            collateral = perpInterface.getCollateral(users[i]);
-            // adjust if calcMR has multiple returns
+            collateral = IVault(vault).userCollateral(users[i]);
             mr[i] = UtilMath.calcMR(users[i], price, perpPairAddress, collateral, lastOperationTimestamp);
             unchecked {
                 ++i;
@@ -98,7 +117,7 @@ contract CallBatcher {
 
     function batchCollateral(
         address[] calldata users,
-        uint256 price,
+        uint256,
         address perpPairAddress
     )
         external
@@ -107,9 +126,10 @@ contract CallBatcher {
     {
         uint256 len = users.length;
         collaterals = new uint256[](len);
-        IPerpPair perpInterface = IPerpPair(perpPairAddress);
+        if (len == 0) return collaterals;
+        address vault = _vaultFor(perpPairAddress);
         for (uint256 i = 0; i < len;) {
-            collaterals[i] = perpInterface.getCollateral(users[i]);
+            collaterals[i] = IVault(vault).userCollateral(users[i]);
             unchecked {
                 ++i;
             }
@@ -147,5 +167,9 @@ contract CallBatcher {
                 ++i;
             }
         }
+    }
+
+    function _vaultFor(address perpPairAddress) private view returns (address vault) {
+        (vault,,,,,,,) = IPerpPairBatcherParameters(perpPairAddress).ReadParameters();
     }
 }
