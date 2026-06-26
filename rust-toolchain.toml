@@ -1,8 +1,9 @@
-# Pinned toolchain for reproducible Stylus builds (cargo stylus verify rebuilds with
-# this exact toolchain). The engine needs nightly: the deployable wasm is built with
-# -Zbuild-std + -Cpanic=immediate-abort (see .cargo/config.toml) to fit the Stylus
-# activation size cap; the stable build does not fit.
+# Pinned toolchain for reproducible Stylus builds: `cargo stylus verify` rebuilds the
+# engine with this exact toolchain, so it must match what produced the deployed wasm.
+# The engine needs a nightly for the build-std panic-abort configuration in
+# .cargo/config.toml (used to fit the on-chain activation size limit); this is the
+# nightly version the cargo-stylus 0.10.7 managed/verify build path is compatible with.
 [toolchain]
-channel = "nightly-2026-06-10"
+channel = "nightly-2025-09-01"
 targets = ["wasm32-unknown-unknown"]
 components = ["rust-src"]

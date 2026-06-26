@@ -78,38 +78,40 @@ The engine crate should live at the root, and the curve-math crate should be ven
 a child path. Strip tests from that verification tree if they are not intended to be
 published; Stylus project hashes include all `.rs` files in the project.
 
-## Toolchain Matrix (measured)
+## Toolchain Matrix
 
-Every project-file-only configuration compatible with cargo-stylus 0.10.7's managed
-build was tested against the activation cap (~283 KB raw / ~58 KB compressed):
+For Arbiscan verification the engine must be built by the cargo-stylus 0.10.7 managed
+flow AND activate under the on-chain raw-size limit (~283 KB). The two requirements pull
+in opposite directions across toolchains:
 
-| Recipe | Toolchain | Artifact | Activates | Managed-buildable |
-| --- | --- | --- | --- | --- |
-| nightly + build-std + `-Cpanic=immediate-abort` (current canonical) | nightly-2026-06-10 | 248.5 KB raw / 46.1 KB | yes | no — 0.10.7 injects the pre-rename `build-std-features=panic_immediate_abort`, rejected by this nightly |
-| plain stable (the 0.10.7 canonical verifiable path) | stable | 328 KB raw / 65.8 KB | no | yes |
-| pre-rename nightly + injected old flags | nightly-2025-09-01 | 298.6 KB raw / 55.6 KB | no | yes |
-| stable + `RUSTC_BOOTSTRAP` via `.cargo/config.toml [env]` | stable 1.95 | — | — | no — cargo does not apply config `[env]` to its own manifest/flag parsing |
-| `[profile.release] panic = "immediate-abort"` | stable 1.95 | — | — | no — requires the `cargo-features = ["panic-immediate-abort"]` opt-in, nightly-gated at manifest parse |
-| size levers on the pre-rename nightly (`-Zfmt-debug=none`, `-Zlocation-detail=none`) | nightly-2025-09-01 | 298.6 KB raw (no change) | no | yes |
+| Toolchain | Raw size | Activates | Managed-buildable |
+| --- | --- | --- | --- |
+| nightly-2026-06-10 + `-Cpanic=immediate-abort` | 248.5 KB | yes | no — cargo-stylus 0.10.7 injects the pre-rename `build-std-features=panic_immediate_abort`, which this nightly rejects |
+| stable | 328 KB | no | yes |
+| nightly-2025-09-01 + `build-std-features=panic_immediate_abort` (before the size diet) | 298.6 KB | no | yes |
 
-The build that activates and the build the managed flow can reproduce do not currently
-meet. The remaining exits, in order of preference:
+### Resolution
 
-1. **Stylus tooling fix** — a cargo-stylus that emits the post-rename
-   `-Cpanic=immediate-abort` flag (or passes environment/config through to the managed
-   build) and is selectable on Arbiscan. Questions for the maintainers: which exact
-   toolchain does the Arbiscan verifier run for 0.10.7; is a 0.10.x patch with the new
-   flag planned; can the managed build honor a project `.cargo/config.toml`?
-2. **Engine size reduction** — ~16 KB raw must come out of the engine for the
-   pre-rename-nightly managed build to fit (298.6 → ≤282.9 KB raw); compiler-flag levers
-   are exhausted, so this means removing features.
-3. **Status quo** — reproducible-build evidence (byte-identical Docker rebuild, artifact
-   hash) without Arbiscan source verification for the engine.
+The dominant contributor to engine code size was the inlined expansion of ruint U256
+multiply-then-divide arithmetic, repeated across the curve solver and the engine hot
+paths. Outlining that arithmetic behind a single helper reduces the pre-rename nightly
+managed build from **298.6 KB to 259.9 KB raw** — clearing the activation cap with
+~22.5 KB of headroom. That build both activates on-chain and is reproducible by the
+cargo-stylus 0.10.7 managed/verify flow, so it is the pinned recipe:
+
+- `rust-toolchain.toml`: `nightly-2025-09-01`
+- `.cargo/config.toml`: `rustflags = ["-Zlocation-detail=none"]` only — cargo-stylus
+  injects `build-std` + `panic_immediate_abort` for the wasm build itself, so host
+  `cargo test` stays on the default std.
+
+`cargo stylus build` produces the 259,864-byte artifact; a plain `cargo build --release
+--target wasm32-unknown-unknown` matches it byte-for-byte when the managed flags are added
+explicitly (`-Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort`).
 
 Do not present a future Stylus deployment as Arbiscan source-verified until a managed
 throwaway deploy has passed `cargo stylus verify`.
 
-## Verification Source Tree (when the toolchain gap closes)
+## Verification Source Tree
 
 This repository cannot serve directly as the Arbiscan fetch source, for two reasons:
 
