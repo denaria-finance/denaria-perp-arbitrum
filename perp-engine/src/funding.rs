@@ -20,13 +20,13 @@ impl PerpEngine {
 
         let wad = U256::from(WAD_U64);
         let oracle_dec = U256::from(self.oracle_decimals.get());
-        let price_o = price * wad / oracle_dec;
+        let price_o = cm::md(price, wad, oracle_dec);
 
-        let raw = self.total_trader_exposure.get() * price_o / wad
+        let raw = cm::md(self.total_trader_exposure.get(), price_o, wad)
             * self.funding_c_decimals.get()
             * self.funding_rate_decimals.get();
 
-        let denom_asset = asset_liq * price_o / wad;
+        let denom_asset = cm::md(asset_liq, price_o, wad);
         let denom = U256::from(self.funding_c.get()) * (denom_asset + stable_liq);
 
         let (coeff, coeff_sign) = cm::clamp(
@@ -38,8 +38,8 @@ impl PerpEngine {
         );
 
         let delta = block_ts - timestamp;
-        let new_rate = coeff * delta / U256::from(self.funding_interval.get());
-        Ok((price_o * new_rate / wad, coeff_sign))
+        let new_rate = cm::md(coeff, delta, U256::from(self.funding_interval.get()));
+        Ok((cm::md(price_o, new_rate, wad), coeff_sign))
     }
 
     /// Solidity `_updateFG(price, timestamp)`: advance the cumulative funding rate
@@ -57,7 +57,7 @@ impl PerpEngine {
         self.funding_rate.set(fr);
         self.funding_rate_sign.set(fr_sign);
 
-        let mut b = cm::i(new_fr * self.liquidity_g_decimals.get() / self.funding_rate_decimals.get());
+        let mut b = cm::i(cm::md(new_fr, self.liquidity_g_decimals.get(), self.funding_rate_decimals.get()));
         if !new_fr_sign {
             b = -b;
         }
@@ -85,7 +85,7 @@ impl PerpEngine {
 
         // b = signedSum(_fundingRate, _fundingRateSign, fundingRate, !fundingRateSign)
         let (delta_f, delta_f_sign) = cm::signed_sum(fr, fr_sign, cur_fr, !cur_fr_sign);
-        let mut b = cm::i(delta_f * lgd / frd);
+        let mut b = cm::i(cm::md(delta_f, lgd, frd));
         if !delta_f_sign {
             b = -b;
         }
@@ -126,7 +126,7 @@ impl PerpEngine {
         cm::signed_sum(
             abs_star,
             star_sign,
-            exposure * delta_f2 / frd,
+            cm::md(exposure, delta_f2, frd),
             delta_f2_sign == exposure_sign,
         )
     }

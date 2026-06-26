@@ -80,11 +80,11 @@ impl PerpEngine {
         let up_balance_asset = self.user_virtual_trader_position.getter(user).balance_asset.get();
         let up_debt_asset = self.user_virtual_trader_position.getter(user).debt_asset.get();
         let denom = cm::util_diff_abs(asset_liq + up_balance_asset, up_debt_asset + lp_debt_asset);
-        let fraction = liquidated_position_size * liq_dec / denom;
+        let fraction = cm::md(liquidated_position_size, liq_dec, denom);
         let exposition_side = (asset_liq + up_balance_asset) > (up_debt_asset + lp_debt_asset);
         if stable_liq != U256::ZERO || asset_liq != U256::ZERO {
             self.remove_liquidity(
-                stable_liq * fraction / liq_dec, asset_liq * fraction / liq_dec, user, price, U256::ZERO,
+                cm::md(stable_liq, fraction, liq_dec), cm::md(asset_liq, fraction, liq_dec), user, price, U256::ZERO,
             )?;
         }
 
@@ -156,12 +156,12 @@ impl PerpEngine {
         }
 
         let oracle_dec = U256::from(self.oracle_decimals.get());
-        let position_size = liquidated_position_size * price / oracle_dec;
+        let position_size = cm::md(liquidated_position_size, price, oracle_dec);
         self.emit(LiquidatedUser {
             user,
             liquidator,
             fraction,
-            liquidationFee: position_size * discount / liq_dec,
+            liquidationFee: cm::md(position_size, discount, liq_dec),
             positionSize: position_size,
             currentPrice: price,
             deltaPnl: liquidation_pnl,
@@ -179,9 +179,9 @@ impl PerpEngine {
         let e10 = U256::from(10_000_000_000u64); // 1e10
         let liq_disc = U256::from(self.liquidation_discount.get());
         if margin_ratio <= step0 {
-            liq_disc * (e10 + (step0 - margin_ratio) * e10 / step0) / e10
+            cm::md(liq_disc, e10 + cm::md(step0 - margin_ratio, e10, step0), e10)
         } else {
-            liq_disc / U256::from(2u64) * (e10 + (step1 - margin_ratio) * e10 / (step1 - step0)) / e10
+            cm::md(liq_disc / U256::from(2u64), e10 + cm::md(step1 - margin_ratio, e10, step1 - step0), e10)
         }
     }
 
@@ -214,12 +214,12 @@ impl PerpEngine {
             let short_a = self.short_curve_parameter_a.get();
             let short_b = self.short_curve_parameter_b.get();
             let mut dy_prime = self.compute_short_return(d_amount, price, oracle_dec, gs, gs, ga, short_a, short_b);
-            let slip = cm::calc_slip(dy_prime * oracle_dec / d_amount, price, curve_dec);
+            let slip = cm::calc_slip(cm::md(dy_prime, oracle_dec, d_amount), price, curve_dec);
             if slip > slip_liq_th * self.avg_slippage_s.get() {
-                dy_prime = d_amount * price / oracle_dec;
+                dy_prime = cm::md(d_amount, price, oracle_dec);
             }
-            let dy = (liq_dec - discount) * dy_prime / liq_dec;
-            let insurance_fraction = discount / ins_fund_fraction * dy_prime / liq_dec;
+            let dy = cm::md(liq_dec - discount, dy_prime, liq_dec);
+            let insurance_fraction = cm::md(discount / ins_fund_fraction, dy_prime, liq_dec);
             {
                 let mut up = self.user_virtual_trader_position.setter(user);
                 let ba = up.balance_asset.get();
@@ -237,7 +237,7 @@ impl PerpEngine {
         } else {
             let dy_prime: U256;
             if d_amount > self.global_liquidity_asset.get() {
-                dy_prime = d_amount * price / oracle_dec;
+                dy_prime = cm::md(d_amount, price, oracle_dec);
             } else {
                 let gs = self.global_liquidity_stable.get();
                 let ga = self.global_liquidity_asset.get();
@@ -246,16 +246,16 @@ impl PerpEngine {
                 let exact_in = self.compute_exact_amount_in_long(d_amount, price, oracle_dec, gs, gs, ga, short_a, short_b);
                 let (pnl0, pnl0_sign) = self.calc_pnl_user(user, price)?;
                 let (pnl, pnl_sign) =
-                    cm::signed_sum(pnl0, pnl0_sign, exact_in - d_amount * price / oracle_dec, false);
-                let slip = cm::calc_slip(exact_in * oracle_dec / d_amount, price, curve_dec);
+                    cm::signed_sum(pnl0, pnl0_sign, exact_in - cm::md(d_amount, price, oracle_dec), false);
+                let slip = cm::calc_slip(cm::md(exact_in, oracle_dec, d_amount), price, curve_dec);
                 if (pnl > collateral && !pnl_sign) || slip > slip_liq_th * self.avg_slippage_l.get() {
-                    dy_prime = d_amount * price / oracle_dec;
+                    dy_prime = cm::md(d_amount, price, oracle_dec);
                 } else {
                     dy_prime = exact_in;
                 }
             }
-            let dy_second = (liq_dec + discount) * dy_prime / liq_dec;
-            let insurance_fraction = discount / ins_fund_fraction * dy_prime / liq_dec;
+            let dy_second = cm::md(liq_dec + discount, dy_prime, liq_dec);
+            let insurance_fraction = cm::md(discount / ins_fund_fraction, dy_prime, liq_dec);
             self.debit_stable(user, dy_second);
             {
                 let mut lqp = self.user_virtual_trader_position.setter(liquidator);

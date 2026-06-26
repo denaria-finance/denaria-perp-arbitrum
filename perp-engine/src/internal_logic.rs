@@ -53,10 +53,10 @@ impl PerpEngine {
         let (diff_asset, diff_asset_sign) = cm::signed_sum(balance_asset, true, debt_asset, false);
 
         let mut short_return = U256::ZERO;
-        let threshold = U256::from(10u64).pow(U256::from(13u64)) * oracle_dec / price;
+        let threshold = cm::md(U256::from(10u64).pow(U256::from(13u64)), oracle_dec, price);
         if diff_asset > threshold {
             if use_spot_price {
-                short_return = diff_asset * price / oracle_dec;
+                short_return = cm::md(diff_asset, price, oracle_dec);
             } else if diff_asset_sign {
                 let ts = self.global_liquidity_stable.get();
                 let ta = self.global_liquidity_asset.get();
@@ -101,7 +101,7 @@ impl PerpEngine {
         let (pnl, pnl_sign) = self.calc_pnl(
             balance_stable, balance_asset, debt_stable, debt_asset, funding_fee, funding_fee_sign, price, oracle_dec, true,
         )?;
-        let position_value = cm::util_diff_abs(balance_asset, debt_asset) * price / oracle_dec;
+        let position_value = cm::md(cm::util_diff_abs(balance_asset, debt_asset), price, oracle_dec);
         let (tot_coll, tot_coll_sign) = cm::signed_sum(collateral, true, pnl, pnl_sign);
         if !tot_coll_sign && tot_coll != U256::ZERO {
             return Ok(U256::ZERO); // bad debt
@@ -109,7 +109,7 @@ impl PerpEngine {
         if position_value == U256::ZERO {
             return Ok(mmr_decimals);
         }
-        Ok(tot_coll * mmr_decimals / position_value)
+        Ok(cm::md(tot_coll, mmr_decimals, position_value))
     }
 
     /// Solidity `UtilMath.calcMR(user, price, perpPair, collateral, lastOperationTimestamp)`.

@@ -53,7 +53,7 @@ impl PerpEngine {
 
         let ba = self.user_virtual_trader_position.getter(user).balance_asset.get();
         let da = self.user_virtual_trader_position.getter(user).debt_asset.get();
-        if cm::util_diff_abs(ba, da) * price / oracle_dec < dust {
+        if cm::md(cm::util_diff_abs(ba, da), price, oracle_dec) < dust {
             self.user_virtual_trader_position.setter(user).balance_asset.set(da);
         } else {
             if ba > da {
@@ -63,7 +63,7 @@ impl PerpEngine {
                     pos.debt_asset.set(U256::ZERO);
                 }
                 let input_size = ba - da;
-                let min_trade_return = input_size * price / oracle_dec * (bps - max_slippage) / bps;
+                let min_trade_return = cm::md(cm::md(input_size, price, oracle_dec), bps - max_slippage, bps);
                 let init_guess = self.global_liquidity_stable.get();
                 let tr = self.execute_trade(false, input_size, min_trade_return, init_guess, frontend_address, user, price)?;
                 self.emit(ExecutedTrade {
@@ -100,8 +100,8 @@ impl PerpEngine {
                 let trading_fee_dec = self.trading_fee_decimals.get();
                 let exact_in = self.compute_exact_amount_in_long(da2 + dx0, price, oracle_dec, gs, gs, ga, long_a, long_b);
                 let input_needed =
-                    (exact_in - dy0 + flat_fee) * trading_fee_dec / (trading_fee_dec - trading_fee);
-                let min_trade_return = input_needed * oracle_dec / price * (bps - max_slippage) / bps;
+                    cm::md(exact_in - dy0 + flat_fee, trading_fee_dec, trading_fee_dec - trading_fee);
+                let min_trade_return = cm::md(cm::md(input_needed, oracle_dec, price), bps - max_slippage, bps);
                 let tr = self.execute_trade(true, input_needed, min_trade_return, ga, frontend_address, user, price)?;
                 self.emit(ExecutedTrade {
                     user, direction: true, tradeSize: input_needed, tradeReturn: tr, currentPrice: price, leverage: U256::ZERO,
@@ -114,7 +114,7 @@ impl PerpEngine {
                 // with pool depth. global_liquidity_stable is read AFTER the buy-back
                 // trade, like the Solidity storage read inside the require.
                 let dust_bound = dust.max(self.global_liquidity_stable.get() / dust);
-                if !(cm::util_diff_abs(ba3, da3) * price / oracle_dec < dust_bound) {
+                if !(cm::md(cm::util_diff_abs(ba3, da3), price, oracle_dec) < dust_bound) {
                     return Err(err(b"C0"));
                 }
             }

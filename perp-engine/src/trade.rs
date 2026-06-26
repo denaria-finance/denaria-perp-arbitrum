@@ -85,9 +85,9 @@ impl PerpEngine {
         let mut short_total_trade_return = zero;
 
         let zero_slippage_return = if direction {
-            size * oracle_dec / spot_price
+            cm::md(size, oracle_dec, spot_price)
         } else {
-            size * spot_price / oracle_dec
+            cm::md(size, spot_price, oracle_dec)
         };
 
         if block_ts > U256::from(self.last_curve_update.get()) + U256::from(self.curve_update_interval.get())
@@ -115,9 +115,9 @@ impl PerpEngine {
                 initial_guess = asset_liq - zero_slippage_return;
             }
 
-            trading_fee_amount = size * trading_fee / trading_fee_decimals + flat_trading_fee;
+            trading_fee_amount = cm::md(size, trading_fee, trading_fee_decimals) + flat_trading_fee;
             if size > trading_fee_amount {
-                let frontend_fee_part = trading_fee_amount * fee_frontend / fee_frac_dec;
+                let frontend_fee_part = cm::md(trading_fee_amount, fee_frontend, fee_frac_dec);
                 let dy0 = self.dy0.get();
                 let dx0 = self.dx0.get();
                 let long_a = self.long_curve_parameter_a.get();
@@ -138,7 +138,7 @@ impl PerpEngine {
                 if last_op_ts != block_ts {
                     let avg = self.avg_slippage_l.get();
                     self.avg_slippage_l.set(cm::calc_ema(
-                        (size - trading_fee_amount) * oracle_dec / trade_return,
+                        cm::md(size - trading_fee_amount, oracle_dec, trade_return),
                         spot_price,
                         oracle_dec,
                         avg,
@@ -157,7 +157,7 @@ impl PerpEngine {
             if stable_liq <= zero_slippage_return {
                 initial_guess = zero;
             } else if initial_guess > stable_liq || initial_guess < (stable_liq - zero_slippage_return) {
-                initial_guess = stable_liq - (size * spot_price) / oracle_dec;
+                initial_guess = stable_liq - cm::md(size, spot_price, oracle_dec);
             }
 
             let dx0 = self.dx0.get();
@@ -170,7 +170,7 @@ impl PerpEngine {
             if last_op_ts != block_ts {
                 let avg = self.avg_slippage_s.get();
                 self.avg_slippage_s.set(cm::calc_ema(
-                    short_total_trade_return * oracle_dec / size,
+                    cm::md(short_total_trade_return, oracle_dec, size),
                     spot_price,
                     oracle_dec,
                     avg,
@@ -180,7 +180,7 @@ impl PerpEngine {
             self.dx0.set(dx0 + size);
             self.dy0.set(dy0 + short_total_trade_return);
 
-            trading_fee_amount = short_total_trade_return * trading_fee / trading_fee_decimals + flat_trading_fee;
+            trading_fee_amount = cm::md(short_total_trade_return, trading_fee, trading_fee_decimals) + flat_trading_fee;
             if trading_fee_amount < short_total_trade_return {
                 trade_return = short_total_trade_return - trading_fee_amount;
             } else {
@@ -188,7 +188,7 @@ impl PerpEngine {
                 trade_return = zero;
             }
             if frontend_address == Address::ZERO {
-                trade_return = trade_return + trading_fee_amount * fee_frontend / fee_frac_dec;
+                trade_return = trade_return + cm::md(trading_fee_amount, fee_frontend, fee_frac_dec);
             }
             if !(trade_return >= min_trade_return && trade_return <= zero_slippage_return) {
                 return Err(err(b"T4"));
@@ -264,15 +264,15 @@ impl PerpEngine {
         // Liquidity matrix M update.
         let liq_m_dec = self.liquidity_m_decimals.get();
         let liq_m_dec_u = cm::u(liq_m_dec);
-        let fee_lp_share = trading_fee_amount * fee_lp / fee_frac_dec;
+        let fee_lp_share = cm::md(trading_fee_amount, fee_lp, fee_frac_dec);
 
         if direction {
-            let mut adj_size = size - trading_fee_amount * (fee_frac_dec - fee_lp) / fee_frac_dec;
+            let mut adj_size = size - cm::md(trading_fee_amount, fee_frac_dec - fee_lp, fee_frac_dec);
             if frontend_address == Address::ZERO {
-                adj_size = adj_size + trading_fee_amount * fee_frontend / fee_frac_dec;
+                adj_size = adj_size + cm::md(trading_fee_amount, fee_frontend, fee_frac_dec);
             }
-            let a_y = cm::i(adj_size * liq_m_dec_u / asset_liq);
-            let a_x = cm::i(trade_return * liq_m_dec_u / asset_liq);
+            let a_y = cm::i(cm::md(adj_size, liq_m_dec_u, asset_liq));
+            let a_x = cm::i(cm::md(trade_return, liq_m_dec_u, asset_liq));
             let m10 = self.liquidity_m10.get();
             let m11 = self.liquidity_m11.get();
             self.liquidity_m00.set(self.liquidity_m00.get() + a_y * m10 / liq_m_dec);
@@ -283,8 +283,8 @@ impl PerpEngine {
             self.global_liquidity_asset.set(self.global_liquidity_asset.get() - trade_return);
         } else {
             let net_return = short_total_trade_return - fee_lp_share;
-            let a_x = cm::i(size * liq_m_dec_u / stable_liq);
-            let a_y = cm::i(net_return * liq_m_dec_u / stable_liq);
+            let a_x = cm::i(cm::md(size, liq_m_dec_u, stable_liq));
+            let a_y = cm::i(cm::md(net_return, liq_m_dec_u, stable_liq));
             let m00 = self.liquidity_m00.get();
             let m01 = self.liquidity_m01.get();
             self.liquidity_m10.set(self.liquidity_m10.get() + a_x * m00 / liq_m_dec);
@@ -295,18 +295,18 @@ impl PerpEngine {
             self.global_liquidity_asset.set(self.global_liquidity_asset.get() + size);
         }
 
-        let protocol_fee = trading_fee_amount * (fee_frac_dec - fee_lp - fee_frontend) / fee_frac_dec;
+        let protocol_fee = cm::md(trading_fee_amount, fee_frac_dec - fee_lp - fee_frontend, fee_frac_dec);
         let protocol_addr = self.fee_protocol_addr.get();
         self.assign_protocol_fee_filling_insurance(protocol_fee, protocol_addr);
         if frontend_address != Address::ZERO {
             let mut fp = self.user_virtual_trader_position.setter(frontend_address);
             let bal = fp.balance_stable.get();
-            fp.balance_stable.set(bal + trading_fee_amount * fee_frontend / fee_frac_dec);
+            fp.balance_stable.set(bal + cm::md(trading_fee_amount, fee_frontend, fee_frac_dec));
         }
 
         let wad = U256::from(WAD_U64);
         if !(self.global_liquidity_stable.get() >= wad
-            && self.global_liquidity_asset.get() * spot_price / U256::from(self.oracle_decimals.get()) >= wad)
+            && cm::md(self.global_liquidity_asset.get(), spot_price, U256::from(self.oracle_decimals.get())) >= wad)
         {
             return Err(err(b"T3"));
         }
@@ -371,7 +371,7 @@ impl PerpEngine {
         let size_ok = if direction {
             size >= self.minimum_trade_size.get()
         } else {
-            (size * spot_price) / U256::from(self.oracle_decimals.get()) >= self.minimum_trade_size.get()
+            cm::md(size, spot_price, U256::from(self.oracle_decimals.get())) >= self.minimum_trade_size.get()
         };
         if !size_ok {
             return Err(err(b"T2"));

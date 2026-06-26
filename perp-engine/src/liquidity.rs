@@ -31,13 +31,13 @@ impl PerpEngine {
         let gs = self.global_liquidity_stable.get();
         let ga = self.global_liquidity_asset.get();
         let oracle_dec = U256::from(self.oracle_decimals.get());
-        let total_liq_value = gs + ga * spot_price / oracle_dec;
+        let total_liq_value = gs + cm::md(ga, spot_price, oracle_dec);
         if fee_value > U256::ZERO && ga != U256::ZERO && gs != U256::ZERO && total_liq_value > U256::ZERO {
             let liq_m_dec = self.liquidity_m_decimals.get();
             let liq_m_dec_u = cm::u(liq_m_dec);
-            let fee_stable = fee_value * gs / total_liq_value;
-            let a_x = cm::i(fee_stable * liq_m_dec_u / gs);
-            let a_y = cm::i((fee_value - fee_stable) * liq_m_dec_u / ga);
+            let fee_stable = cm::md(fee_value, gs, total_liq_value);
+            let a_x = cm::i(cm::md(fee_stable, liq_m_dec_u, gs));
+            let a_y = cm::i(cm::md(fee_value - fee_stable, liq_m_dec_u, ga));
             let m00 = self.liquidity_m00.get();
             let m01 = self.liquidity_m01.get();
             let m10 = self.liquidity_m10.get();
@@ -101,7 +101,7 @@ impl PerpEngine {
             self.liquidity_max_fee.get(), self.liquidity_min_fee.get(), self.liquidity_fee_k.get(), fee_decimals,
         );
         let fee_value =
-            (stable_to_remove + asset_to_remove * spot_price / oracle_dec) * fee / fee_decimals;
+            cm::md(stable_to_remove + cm::md(asset_to_remove, spot_price, oracle_dec), fee, fee_decimals);
         if !(max_fee_value >= fee_value || max_fee_value == U256::ZERO) {
             return Err(err(b"L6"));
         }
@@ -307,7 +307,7 @@ impl PerpEngine {
 
         let oracle_dec = U256::from(self.oracle_decimals.get());
         // L1: minimum movement.
-        if !(liquidity_stable + liquidity_asset * price / oracle_dec >= self.minimum_liquidity_movement.get()) {
+        if !(liquidity_stable + cm::md(liquidity_asset, price, oracle_dec) >= self.minimum_liquidity_movement.get()) {
             return Err(err(b"L1"));
         }
 
@@ -320,7 +320,7 @@ impl PerpEngine {
             fee = U256::ZERO;
         }
         let fee_value =
-            (liquidity_stable + liquidity_asset * price / oracle_dec) * fee / self.liquidity_fee_decimals.get();
+            cm::md(liquidity_stable + cm::md(liquidity_asset, price, oracle_dec), fee, self.liquidity_fee_decimals.get());
         // L2: fee cap.
         if !(fee_value <= max_fee_value || max_fee_value == U256::ZERO) {
             return Err(err(b"L2"));
@@ -357,7 +357,7 @@ impl PerpEngine {
             self.liquidity_position.getter(sender).debt_stable.get() + self.user_virtual_trader_position.getter(sender).debt_stable.get();
         let total_debt_asset =
             self.liquidity_position.getter(sender).debt_asset.get() + self.user_virtual_trader_position.getter(sender).debt_asset.get();
-        if !(total_debt_stable + total_debt_asset * price / oracle_dec
+        if !(total_debt_stable + cm::md(total_debt_asset, price, oracle_dec)
             <= collateral * U256::from(self.max_lp_leverage.get()))
         {
             return Err(err(b"L3"));
@@ -400,7 +400,7 @@ impl PerpEngine {
 
         let oracle_dec = U256::from(self.oracle_decimals.get());
         // L4: minimum movement.
-        if !(liquidity_stable_to_remove + liquidity_asset_to_remove * price / oracle_dec
+        if !(liquidity_stable_to_remove + cm::md(liquidity_asset_to_remove, price, oracle_dec)
             >= self.minimum_liquidity_movement.get())
         {
             return Err(err(b"L4"));

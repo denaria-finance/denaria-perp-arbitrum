@@ -57,6 +57,15 @@ pub fn u(v: I256) -> U256 {
     }
 }
 
+/// `(a*b)/c` in U256, outlined behind `#[inline(never)]` so the inlined expansion is
+/// emitted once instead of at every call site. Uses the same `*` and `/` operators in the
+/// same order as the inline form it replaces, so its overflow and truncation behavior is
+/// bit-identical — preserving Solidity parity at every replaced site.
+#[inline(never)]
+pub fn md(a: U256, b: U256, c: U256) -> U256 {
+    a * b / c
+}
+
 fn signed_parts(v: I256) -> (I256, bool) {
     if v < I256::ZERO {
         (-v, false)
@@ -658,7 +667,7 @@ pub fn signed_sum_to_int(x: U256, sign_x: bool, y: U256, sign_y: bool) -> I256 {
 /// |p - spotP| * decimals / spotP. Solidity `UtilMath.calcSlip`.
 #[allow(dead_code)]
 pub fn calc_slip(p: U256, spot_p: U256, decimals: U256) -> U256 {
-    util_diff_abs(p, spot_p) * decimals / spot_p
+    md(util_diff_abs(p, spot_p), decimals, spot_p)
 }
 
 /// EMA update. Solidity `UtilMath.calcEMA`:
@@ -666,7 +675,7 @@ pub fn calc_slip(p: U256, spot_p: U256, decimals: U256) -> U256 {
 #[allow(dead_code)]
 pub fn calc_ema(p: U256, spot_p: U256, slip_decimals: U256, old_average: U256, ema_param: U256) -> U256 {
     let slip = calc_slip(p, spot_p, slip_decimals);
-    old_average * ema_param / slip_decimals + slip * (slip_decimals - ema_param) / slip_decimals
+    md(old_average, ema_param, slip_decimals) + md(slip, slip_decimals - ema_param, slip_decimals)
 }
 
 /// Ceil-division of signed integers. Solidity `UtilMath.divCeil` (Yul): adds 1
@@ -746,47 +755,57 @@ pub fn compute_liquidity_removal_fee(
     let ten_e18 = U256::from(10u64) * ratio_decimals; // 10e18
     // Fees waived if almost no liquidity is left in the pool.
     if (initial_stable_liquidity - stable_liquidity) < ten_e18
-        && (initial_asset_liquidity - asset_liquidity) < ten_e18 * oracle_decimals / price
+        && (initial_asset_liquidity - asset_liquidity) < md(ten_e18, oracle_decimals, price)
     {
         return U256::ZERO;
     }
     let p;
     let p_prime;
     let p_second;
-    if initial_stable_liquidity * ratio_decimals / initial_asset_liquidity
-        > price * ratio_decimals / oracle_decimals
+    if md(initial_stable_liquidity, ratio_decimals, initial_asset_liquidity)
+        > md(price, ratio_decimals, oracle_decimals)
     {
         if initial_asset_liquidity == asset_liquidity {
             return liquidity_max_fee;
         }
-        p = price * ratio_decimals / oracle_decimals;
-        p_prime = initial_stable_liquidity * ratio_decimals / initial_asset_liquidity;
-        p_second = (initial_stable_liquidity - stable_liquidity) * ratio_decimals
-            / (initial_asset_liquidity - asset_liquidity);
+        p = md(price, ratio_decimals, oracle_decimals);
+        p_prime = md(initial_stable_liquidity, ratio_decimals, initial_asset_liquidity);
+        p_second = md(
+            initial_stable_liquidity - stable_liquidity,
+            ratio_decimals,
+            initial_asset_liquidity - asset_liquidity,
+        );
     } else {
         if initial_stable_liquidity == stable_liquidity {
             return U256::ZERO; // last LP leaving pays no fee
         }
-        p = ratio_decimals * oracle_decimals / price;
-        p_prime = initial_asset_liquidity * ratio_decimals / initial_stable_liquidity;
-        p_second = (initial_asset_liquidity - asset_liquidity) * ratio_decimals
-            / (initial_stable_liquidity - stable_liquidity);
+        p = md(ratio_decimals, oracle_decimals, price);
+        p_prime = md(initial_asset_liquidity, ratio_decimals, initial_stable_liquidity);
+        p_second = md(
+            initial_asset_liquidity - asset_liquidity,
+            ratio_decimals,
+            initial_stable_liquidity - stable_liquidity,
+        );
     }
     if p_second < p_prime && p_second > p {
         return liquidity_min_fee;
     }
     let rel_price_diff1_sq =
-        util_diff_abs(p_prime, p) * util_diff_abs(p_prime, p) / p * ratio_decimals / p;
+        md(md(util_diff_abs(p_prime, p), util_diff_abs(p_prime, p), p), ratio_decimals, p);
     let rel_price_diff2_sq =
-        util_diff_abs(p_second, p) * util_diff_abs(p_second, p) / p * ratio_decimals / p;
-    let num = liquidity_min_fee * liquidity_fee_decimals / liquidity_max_fee * liquidity_fee_k
-        / liquidity_fee_decimals
-        * (ratio_decimals + rel_price_diff1_sq)
-        / ratio_decimals
-        + rel_price_diff2_sq * liquidity_fee_decimals / ratio_decimals;
-    let den = liquidity_fee_k * (ratio_decimals + rel_price_diff1_sq) / ratio_decimals
-        + rel_price_diff2_sq * liquidity_fee_decimals / ratio_decimals;
-    num * liquidity_max_fee / den
+        md(md(util_diff_abs(p_second, p), util_diff_abs(p_second, p), p), ratio_decimals, p);
+    let num = md(
+        md(
+            md(liquidity_min_fee, liquidity_fee_decimals, liquidity_max_fee),
+            liquidity_fee_k,
+            liquidity_fee_decimals,
+        ),
+        ratio_decimals + rel_price_diff1_sq,
+        ratio_decimals,
+    ) + md(rel_price_diff2_sq, liquidity_fee_decimals, ratio_decimals);
+    let den = md(liquidity_fee_k, ratio_decimals + rel_price_diff1_sq, ratio_decimals)
+        + md(rel_price_diff2_sq, liquidity_fee_decimals, ratio_decimals);
+    md(num, liquidity_max_fee, den)
 }
 
 /// Liquidity-DEPOSIT fee. Bit-exact port of `FeeManager.computeLiquidityDepositFee`
@@ -820,33 +839,40 @@ pub fn compute_liquidity_deposit_fee(
     let p;
     let p_prime;
     let p_second;
-    if initial_stable_liquidity * ratio_decimals / initial_asset_liquidity
-        > price * ratio_decimals / oracle_decimals
+    if md(initial_stable_liquidity, ratio_decimals, initial_asset_liquidity)
+        > md(price, ratio_decimals, oracle_decimals)
     {
-        p = price * ratio_decimals / oracle_decimals;
-        p_prime = initial_stable_liquidity * ratio_decimals / initial_asset_liquidity;
-        p_second = (initial_stable_liquidity + stable_liquidity) * ratio_decimals
-            / (initial_asset_liquidity + asset_liquidity);
+        p = md(price, ratio_decimals, oracle_decimals);
+        p_prime = md(initial_stable_liquidity, ratio_decimals, initial_asset_liquidity);
+        p_second = md(
+            initial_stable_liquidity + stable_liquidity,
+            ratio_decimals,
+            initial_asset_liquidity + asset_liquidity,
+        );
     } else {
-        p = ratio_decimals * oracle_decimals / price;
-        p_prime = initial_asset_liquidity * ratio_decimals / initial_stable_liquidity;
-        p_second = (initial_asset_liquidity + asset_liquidity) * ratio_decimals
-            / (initial_stable_liquidity + stable_liquidity);
+        p = md(ratio_decimals, oracle_decimals, price);
+        p_prime = md(initial_asset_liquidity, ratio_decimals, initial_stable_liquidity);
+        p_second = md(
+            initial_asset_liquidity + asset_liquidity,
+            ratio_decimals,
+            initial_stable_liquidity + stable_liquidity,
+        );
     }
     if p_second < p_prime && p_second > p {
         return liquidity_min_fee;
     }
     let rel_price_diff1_sq =
-        util_diff_abs(p_prime, p) * util_diff_abs(p_prime, p) / p * ratio_decimals / p;
+        md(md(util_diff_abs(p_prime, p), util_diff_abs(p_prime, p), p), ratio_decimals, p);
     let rel_price_diff2_sq =
-        util_diff_abs(p_second, p) * util_diff_abs(p_second, p) / p * ratio_decimals / p;
-    let num = liquidity_min_fee * liquidity_fee_k / liquidity_max_fee
-        * (ratio_decimals + rel_price_diff1_sq)
-        / ratio_decimals
-        + rel_price_diff2_sq * liquidity_fee_decimals / ratio_decimals;
-    let den = liquidity_fee_k * (ratio_decimals + rel_price_diff1_sq) / ratio_decimals
-        + rel_price_diff2_sq * liquidity_fee_decimals / ratio_decimals;
-    num * liquidity_max_fee / den
+        md(md(util_diff_abs(p_second, p), util_diff_abs(p_second, p), p), ratio_decimals, p);
+    let num = md(
+        md(liquidity_min_fee, liquidity_fee_k, liquidity_max_fee),
+        ratio_decimals + rel_price_diff1_sq,
+        ratio_decimals,
+    ) + md(rel_price_diff2_sq, liquidity_fee_decimals, ratio_decimals);
+    let den = md(liquidity_fee_k, ratio_decimals + rel_price_diff1_sq, ratio_decimals)
+        + md(rel_price_diff2_sq, liquidity_fee_decimals, ratio_decimals);
+    md(num, liquidity_max_fee, den)
 }
 
 // -----------------------------------------------------------------------
