@@ -4,14 +4,14 @@ pragma solidity ^0.8.25;
 import { Test } from "forge-std/Test.sol";
 import "../../src/PerpPair.sol";
 
-/// @title Liquidity stateful differential generator (review finding F-04, scenario 2)
+/// @title Liquidity stateful differential generator
 /// @notice Drives the REAL Solidity `PerpPair` through an add/remove-liquidity sequence
 ///         (empty-pool bootstrap → general add → partial remove → full remove) and snapshots
 ///         the full liquidity state after each op into a JSON fixture. The Rust/Stylus
 ///         `PerpEngine` replays it under `stub_boundary` (perp-engine test
 ///         `liquidity_differential`) and asserts bit-exact. Fee-free (the default config's
 ///         liquidityMaxFee=0 waives fees); the fee math itself is separately golden-locked
-///         (Phase 6/7). Env mirrors the Stylus stub: oracle 3000e8, vault collateral 1000e18.
+///         Env mirrors the Stylus stub: oracle 3000e8, vault collateral 1000e18.
 contract MockOracleL {
     function verifyReportIfNecessary(bytes calldata) external { }
 

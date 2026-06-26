@@ -574,10 +574,9 @@ pub fn mat_mul_2x2(
 
 /// Inverse of a 2x2 matrix. Bit-exact port of Solidity `inverseTwoByTwo`:
 /// it computes the determinant generally and DIVIDES by it (it does NOT assume
-/// determinant 1). The earlier Rust version returned the bare adjugate
-/// `(a11, -a01, -a10, a00)`, which matches Solidity ONLY when the normalized
-/// determinant is exactly 1; for any other determinant it diverged and it also
-/// skipped the `det != 0` revert. Restored to full Solidity parity here.
+/// determinant 1), and reverts on a zero determinant — the bare adjugate
+/// `(a11, -a01, -a10, a00)` would match Solidity only when the normalized
+/// determinant is exactly 1.
 pub fn mat_inverse_2x2(
     a00: I256, a01: I256, a10: I256, a11: I256,
     norm: I256,

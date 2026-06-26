@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Post-deploy READ-SURFACE smoke test for the hybrid Stylus/Solidity perp stack.
 #
-# Motivation (2026-06-10 debugging): the 2026-06-08 deploy shipped with every
-# UtilMath read path (calcMR / returnTradeInfo / _calcPnL / calcHypotheticalMR)
-# and Vault.removeCollateral reverting, because UtilMath's typed callbacks hit
-# selectors the Stylus engine no longer exposed. Post-deploy verification only
-# cast-called the engine's own getters, so nobody noticed. This script is the
-# missing gate: it drives the FULL front-end-shaped read surface end-to-end
+# Motivation: every UtilMath read path (calcMR / returnTradeInfo / _calcPnL /
+# calcHypotheticalMR) and Vault.removeCollateral revert if UtilMath's typed
+# callbacks hit selectors the Stylus engine does not expose. A post-deploy
+# check that only cast-calls the engine's own getters misses this. This script
+# is the gate: it drives the FULL front-end-shaped read surface end-to-end
 # (engine direct + through UtilMath + Vault) and classifies every revert:
 #
 #   - empty revert data ("0x")        -> FAIL  (Stylus router miss = missing selector)
@@ -77,7 +76,7 @@ check "liquidityPosition(user)" must-pass "$ENGINE" "liquidityPosition(address)(
 check "getLpLiquidityBalance(user)" must-pass "$ENGINE" "getLpLiquidityBalance(address)(uint256,uint256)" "$USER_ADDR"
 check "getPrice() [OM2 expected until a signed report exists]" may-warn "$ENGINE" "getPrice()(uint256)"
 
-echo "== engine read-parity getters (restored 2026-06-09/10 — REQUIRED by UtilMath) =="
+echo "== engine read-parity getters (REQUIRED by UtilMath) =="
 check "curveParameters()" must-pass "$ENGINE" "curveParameters()(uint256,uint256,uint256,uint256,uint256,uint256,bool,uint256)"
 check "totalTraderExposureSign()" must-pass "$ENGINE" "totalTraderExposureSign()(bool)"
 check "computeFundingRate(price,1)" must-pass "$ENGINE" "computeFundingRate(uint256,uint256)(uint256,bool)" "$PRICE" 1

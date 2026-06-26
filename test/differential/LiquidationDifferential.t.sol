@@ -4,10 +4,9 @@ pragma solidity ^0.8.25;
 import { Test } from "forge-std/Test.sol";
 import "../../src/PerpPair.sol";
 
-/// @title Liquidation stateful differential generator (review finding F-04, scenario 4)
+/// @title Liquidation stateful differential generator
 /// @notice Drives the REAL Solidity `PerpPair` public `liquidate` path through a full
-///         bad-debt SHORT liquidation (which also exercises short CLOSE, the case deferred
-///         from scenario 3) and a full bad-debt LONG liquidation. Each op's pre-state
+///         bad-debt SHORT liquidation (which also exercises short CLOSE) and a full bad-debt LONG liquidation. Each op's pre-state
 ///         (the liquidatable position + the liquidator's funding) is set via a harness
 ///         setter and RECORDED in the fixture, so the Rust/Stylus `PerpEngine` replays the
 ///         identical setup + `liquidateFor` under `stub_boundary` (perp-engine test

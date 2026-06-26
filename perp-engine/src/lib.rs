@@ -1001,13 +1001,11 @@ impl PerpEngine {
     }
 
 // Benchmark/test scaffolding — DELIBERATELY OUTSIDE the `#[public]` impl so it emits NO router
-// selectors in any build. This reclaims the two router arms + monomorphized arg codecs that
-// previously shipped even though their production bodies just reverted `BENCH` (the size lever
-// that lets the restored read getters fit under the cargo-stylus activation cap). Compiled only
-// under `cfg(test)` (native tests call these as direct methods) or `--features benchmark`. The
-// on-chain-benchmark *selector* surface (`initializeBenchmark`/`seedBenchmarkState`) is
-// intentionally retired; restore it on a throwaway benchmark branch if on-chain re-benchmarking
-// is ever needed (the read getters do not touch the trade path, so trade gas is unchanged).
+// selectors in any build, which keeps the deployed wasm within the cargo-stylus activation size
+// limit. Compiled only under `cfg(test)` (native tests call these as direct methods) or
+// `--features benchmark`; `initializeBenchmark`/`seedBenchmarkState` are therefore not part of
+// the on-chain selector surface (these helpers do not touch the trade path, so trade gas is
+// unchanged).
 #[cfg(any(test, feature = "benchmark"))]
 impl PerpEngine {
     /// Benchmark/test initializer (no Stylus `#[constructor]`; called post-deploy). Sets the

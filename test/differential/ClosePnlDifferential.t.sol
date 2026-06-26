@@ -4,7 +4,7 @@ pragma solidity ^0.8.25;
 import { Test } from "forge-std/Test.sol";
 import "../../src/PerpPair.sol";
 
-/// @title Close + PnL stateful differential generator (review finding F-04, scenario 3)
+/// @title Close + PnL stateful differential generator
 /// @notice Drives the REAL Solidity `PerpPair` through open→close (long) and open→realizePnL
 ///         sequences, snapshotting full state after each op into a JSON fixture. The
 ///         Rust/Stylus `PerpEngine` replays it under `stub_boundary` (perp-engine test
@@ -16,7 +16,7 @@ import "../../src/PerpPair.sol";
 ///         unless the post-buyback residual lands within the dust bound
 ///         (max(1e10, globalLiquidityStable / 1e10)) — a real-engine property,
 ///         not a Stylus divergence. Short CLOSE is covered via the liquidation path
-///         (scenario group 4, which closes shorts through `liquidate`) and the C0
+///         (which closes shorts through `liquidate`) and the C0
 ///         envelope harness (test/c0_envelope/).
 contract MockOracleC {
     function verifyReportIfNecessary(bytes calldata) external { }

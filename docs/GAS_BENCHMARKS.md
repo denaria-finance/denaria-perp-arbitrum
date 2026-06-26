@@ -36,19 +36,19 @@ Every call into the Stylus program pays a fixed EVM→WASM entry overhead, isola
 | EVM twin noop getter | 95,329 | 71,000 | 24,329 |
 | Stylus math probe (full 8-iteration 256-bit Newton, zero storage) | 180,586 | 133,754 | 46,832 |
 
-- Pedestal = 46,753 − 24,329 = **+22,424 gas** (micro-benchmark, constant-product spike build); **≈ +23,400** on the real cubic engine (noop 47,712 vs the 24,329 EVM getter baseline); **24,915** measured per-frame on the live deployment's `Vault → engine.lastOperationTimestamp()` STATICCALL (vs ~3k for an equivalent Solidity getter). The pedestal is stable and engine-size-insensitive.
+- Pedestal = 46,753 − 24,329 = **+22,424 gas** (constant-product micro-benchmark build); **≈ +23,400** on the real cubic engine (noop 47,712 vs the 24,329 EVM getter baseline); **24,915** measured per-frame on the live deployment's `Vault → engine.lastOperationTimestamp()` STATICCALL (vs ~3k for an equivalent Solidity getter). The pedestal is stable and engine-size-insensitive.
 - It is largely per-call and ~irreducible; it shrinks only by doing more work per call (fewer Stylus calls, monolithic engine — the design adopted) and by keeping the program CacheManager-cached.
 - The EVM baseline sanity-checks: 24,329 ≈ 21,000 intrinsic + ~2,100 SLOAD + dispatch.
 
 ### 2.2 The body is cheaper; arithmetic is negligible in absolute terms
 
-Decomposition of the constant-product spike's trade deficit (pure L2):
+Decomposition of the constant-product micro-benchmark's trade deficit (pure L2):
 
 | Quantity | Gas | Meaning |
 | --- | ---: | --- |
 | Δ_noop | +22,424 | Fixed per-call WASM entry overhead |
 | math probe − noop | +79 | The full 8-iteration 256-bit Newton solver costs ≈ the one SLOAD the getter performs ⇒ **absolute Stylus arithmetic ≈ ~2,000 gas, negligible** |
-| Δ_trade (long) | +12,757 | Net L2 trade deficit of the spike |
+| Δ_trade (long) | +12,757 | Net L2 trade deficit of the micro-benchmark |
 | Δ_trade (short) | +12,653 | Stable across direction/size |
 | Trade body = Δ_trade − Δ_noop | ≈ −9,700 | Stylus executes the trade body (≈40 storage ops + Newton + signed 2×2 matrix + fee splits + 3 external calls) **~9.7k cheaper** than the EVM twin |
 
@@ -58,7 +58,7 @@ Decomposition of the constant-product spike's trade deficit (pure L2):
 
 Because the body is net-cheaper and the entry pedestal is fixed, adding body work makes Stylus relatively *better*. Evidence:
 
-- The constant-product spike was **+12,757 L2 (~+3.5%, Stylus more expensive)**; the real engine (true cubic `CurveMath`, funding `_updateFG`/`computeFundingFee`, full fee/matrix path) flips it to **−59,254 L2 (−12.2%)** direct-call.
+- The constant-product micro-benchmark was **+12,757 L2 (~+3.5%, Stylus more expensive)**; the real engine (true cubic `CurveMath`, funding `_updateFG`/`computeFundingFee`, full fee/matrix path) flips it to **−59,254 L2 (−12.2%)** direct-call.
 - The cubic + funding logic adds **+129,554 L2 on Solidity** vs **+57,543 L2 on Stylus** over the constant-product baseline → Stylus's marginal 256-bit arithmetic is **~2.25× cheaper**, outweighing the fixed entry pedestal.
 - The real engine's trade body (work beyond the fixed entry) is ≈ 377,500 L2 (425,186 − 47,712 on the direct path).
 - On the live deployment, the most arithmetic-heavy operations show the largest advantages (`addLiquidity` ≈ −17%, `closeAndWithdraw` ≈ −23% vs the Solidity reference, §6).

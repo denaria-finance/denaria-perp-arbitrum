@@ -14,7 +14,7 @@ import "../../src/util/UtilMath.sol";
 ///         with `block.timestamp` lifted to an explicit `blockTs` argument and
 ///         storage reads lifted to explicit inputs; it calls the REAL
 ///         `UtilMath.clamp` library, so the clamp logic is not transcribed.
-///         (computeFundingFee golden vectors are a follow-up; it has ~3x the
+///         (computeFundingFee golden vectors are deferred; it has ~3x the
 ///         inputs and is covered by an engine native smoke test in the meantime.)
 library FundingRef {
     function computeFundingRate(

@@ -1,4 +1,4 @@
-//! Native test suite for the Stylus `PerpEngine` (extracted from lib.rs, review F-11).
+//! Native test suite for the Stylus `PerpEngine` (extracted from lib.rs).
 
     use super::*;
     use serde_json::Value;
@@ -265,7 +265,7 @@
 
     // Proves the shared math crate is reachable from the engine crate without an
     // entrypoint clash (depended on with default-features=false). Reuses the
-    // direct-long-default golden vector; the engine's trade path (Phase 3 next)
+    // direct-long-default golden vector; the engine's trade path
     // will call these helpers for real.
     #[test]
     fn core_math_is_callable_from_engine() {
@@ -495,7 +495,7 @@
     }
 
     // Seeds a balanced engine (price 3000, stable 1.8e25, asset 6000e18) with the
-    // default fee/curve/funding config used by the spike, ready for a trade.
+    // default fee/curve/funding config, ready for a trade.
     fn seed_trade_engine(e: &mut PerpEngine) {
         let wad = U256::from(WAD_U64);
         e.global_liquidity_stable.set(U256::from(18_000_000u64) * wad);
@@ -641,7 +641,7 @@
     // insuranceFundCap, tickerAssetCurrency) — the manager reads [3] as liquidityTh.
     #[test]
     fn vault_integration_getters() {
-        // F-10: the real Vault reads these from perpPair; the engine must expose them
+        // The real Vault reads these from perpPair; the engine must expose them
         // (matching the Solidity auto-getter shapes) or addCollateral/removeCollateral revert.
         let vm = TestVM::new();
         let mut e = PerpEngine::from(&vm);
@@ -1038,7 +1038,7 @@
         e.disable_auto_close().expect("disable");
         assert!(!e.auto_close_users_data.getter(user).authorized.get(), "disabled");
 
-        // Forwarded variants (Phase 10c): the caller acts as the trusted forwarder and
+        // Forwarded variants: the caller acts as the trusted forwarder and
         // the config accrues to the explicit `user`; a non-forwarder caller reverts "F".
         let forwarder = e.vm().msg_sender();
         e.trusted_forwarder.set(forwarder);
@@ -1186,7 +1186,7 @@
         assert!(e.funding_rate_sign_public().unwrap(), "fundingRateSign");
     }
 
-    // Follow-up (F-07): AccessControl revokeRole + renounceRole — the production-safety lever
+    // AccessControl revokeRole + renounceRole — the production-safety lever
     // to drop a granted (e.g. compromised) role. revokeRole is admin-gated; renounceRole drops
     // the caller's own role and requires callerConfirmation == caller (OZ guard).
     #[test]
@@ -1213,7 +1213,7 @@
         assert!(!e.has_role(B256::ZERO, admin), "renounced");
     }
 
-    // F-01 regression (critical review 2026-06-04): seedBenchmarkState must be MOD_ROLE-
+    // seedBenchmarkState must be MOD_ROLE-
     // gated so an arbitrary caller cannot rewrite the global reserves post-initialization.
     #[test]
     fn seed_benchmark_state_mod_role_gated() {
@@ -1244,7 +1244,7 @@
         assert_eq!(e.global_liquidity_asset.get(), U256::from(6_000u64) * wad, "asset reserves seeded");
     }
 
-    // F-03: initializeProduction matches the PerpPair constructor — full param set + SET*
+    // initializeProduction matches the PerpPair constructor — full param set + SET*
     // validation, and the fixed protocol constants identical to the benchmark initializer.
     #[test]
     fn initialize_production_parity_and_validation() {
@@ -1353,7 +1353,7 @@
         assert_eq!(e.liquidity_max_fee.get(), lmax, "liquidityMaxFee applied");
     }
 
-    // Follow-up (F-08): storage-narrowing boundary tests. Fields the packed layout narrows
+    // Storage-narrowing boundary tests. Fields the packed layout narrows
     // below Solidity's uint256 must REVERT on an un-storable value, never silently truncate.
     // funding_c (u32) and param_time_lock (u64) pass prepare's validation (which doesn't bound
     // them) and so reach the `set` narrowing guard; ema (u64) is narrowed in initializeProduction.
@@ -1412,7 +1412,7 @@
         assert!(e.is_trusted_forwarder(addr(0xAB)).unwrap(), "AB is the forwarder");
         assert!(!e.is_trusted_forwarder(addr(0xCD)).unwrap(), "CD is not");
 
-        // F-05: the change is observable — one TrustedForwarderUpdated(old=0x0, new=0xAB)
+        // The change is observable — one TrustedForwarderUpdated(old=0x0, new=0xAB)
         // (the earlier AC revert emitted nothing). Both addresses are indexed topics.
         let logs = vm.get_emitted_logs();
         assert_eq!(logs.len(), 1, "exactly one forwarder-update event");
@@ -1423,7 +1423,7 @@
         assert!(data.is_empty(), "both args indexed -> no data");
     }
 
-    // F-05 (forwarder hardening): EVERY forwarded `*For` entrypoint must reject a caller that
+    // Forwarder hardening: EVERY forwarded `*For` entrypoint must reject a caller that
     // is not the trusted forwarder with "F" — the gate is the load-bearing security property
     // of the explicit-sender topology (a private `*_impl` reachable by a non-forwarder would
     // let anyone act as any user). The gate runs before any external call, so this needs no
@@ -1449,7 +1449,7 @@
         assert_eq!(e.disable_auto_close_for(u).err(), Some(f), "disableAutoCloseFor");
     }
 
-    // F-06: revert codes are encoded as Solidity-standard Error(string) revert data
+    // Revert codes are encoded as Solidity-standard Error(string) revert data
     // (0x08c379a0 + abi.encode(string)) so explorers/tooling decode the reason. The
     // expected bytes are the canonical `cast abi-encode "x(string)" "<code>"` output
     // (prefixed with the Error(string) selector) — so this is locked against the real
@@ -1663,7 +1663,7 @@
         assert!(e.funding_rate.get() > U256::ZERO, "funding rate advanced over [1000,4600]");
     }
 
-    // Forwarded trade (Phase 10): the trusted forwarder opens a position FOR a distinct
+    // Forwarded trade: the trusted forwarder opens a position FOR a distinct
     // user; the position accrues to the user, not the forwarder.
     #[test]
     #[cfg(feature = "stub_boundary")]
@@ -1707,7 +1707,7 @@
         assert_eq!(r, Err(err(b"F")), "non-forwarder caller reverts F");
     }
 
-    // F-04 (critical review, scenario group 1): STATEFUL trade + funding differential.
+    // STATEFUL trade + funding differential.
     // Replays the exact op sequence the Solidity PerpPair generator ran
     // (test/differential/TradeFundingDifferential.t.sol) and asserts the full engine
     // state bit-exact after EACH op — return value, global pool, funding rate/sign,
@@ -1770,7 +1770,7 @@
         }
     }
 
-    // F-04 scenario group 2: STATEFUL liquidity differential. Replays the exact add/remove
+    // STATEFUL liquidity differential. Replays the exact add/remove
     // sequence the Solidity PerpPair generator ran (LiquidityDifferential.t.sol): empty-pool
     // bootstrap → general add → partial remove → full remove (fee-free default config), and
     // asserts the full liquidity state bit-exact after each op — globals, funding, exposure,
@@ -1848,7 +1848,7 @@
         }
     }
 
-    // F-04 scenario group 3: STATEFUL close + PnL differential. Replays the Solidity
+    // STATEFUL close + PnL differential. Replays the Solidity
     // PerpPair generator's sequence (ClosePnlDifferential.t.sol): open long → close (×2),
     // then open long → realizePnL. Asserts bit-exact after each op — for trade/realizePnL
     // the return value (realizePnL also the pnl SIGN), and the full state snapshot (globals,
@@ -1924,7 +1924,7 @@
         }
     }
 
-    // F-04 scenario group 4: STATEFUL liquidation differential. Replays the Solidity
+    // STATEFUL liquidation differential. Replays the Solidity
     // PerpPair generator's sequence (LiquidationDifferential.t.sol): full bad-debt SHORT
     // liquidation (also exercises short close) + full bad-debt LONG liquidation. Each op's
     // liquidatable pre-state + the liquidator's funding are written from the fixture
@@ -2005,7 +2005,7 @@
         }
     }
 
-    // Shared invariant oracle (F-09): the coupled accounting invariants the engine must
+    // Shared invariant oracle: the coupled accounting invariants the engine must
     // satisfy after every successful op. Used by `financial_invariants` (fixed sequence) and
     // `financial_invariants_fuzz` (randomized sequence).
     #[cfg(feature = "stub_boundary")]
@@ -2034,7 +2034,7 @@
         assert!(gs > U256::ZERO && ga > U256::ZERO, "{label}: pool reserves stay positive");
     }
 
-    // F-09: system-level FINANCIAL INVARIANTS over a realistic mixed sequence (long/short
+    // System-level FINANCIAL INVARIANTS over a realistic mixed sequence (long/short
     // trades + funding accrual + add/remove liquidity, several users). After EVERY successful
     // op the engine must satisfy a set of coupled accounting invariants — proving solvency
     // properties beyond single-path tests. Asserted on engine state alone (no Solidity ref).
@@ -2079,7 +2079,7 @@
         check(&e, &users, "after a re-long");
     }
 
-    // F-09 follow-up: RANDOMIZED invariant fuzz. A deterministic LCG drives 40 ops (long/short
+    // RANDOMIZED invariant fuzz. A deterministic LCG drives 40 ops (long/short
     // trades from a 6-user pool with bounded-safe sizes, an LP add, periodic LP removes, random
     // time advances → funding accrues) and asserts the coupled invariants after EVERY op. All
     // ops must succeed (the TestVM does not roll back), so sizes are bounded to stay healthy.

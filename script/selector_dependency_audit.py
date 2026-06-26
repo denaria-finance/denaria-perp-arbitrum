@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Cross-contract selector-DEPENDENCY audit for the hybrid Stylus/Solidity stack.
 
-Motivation (2026-06-10 debugging): the F-07 selector manifest compares the engine's
+Motivation: the selector manifest compares the engine's
 OWN ABI against the legacy PerpPair, but never checked who CONSUMES those selectors.
 `UtilMath.calcMR`/`returnTradeInfo`/`_calcPnL` make typed `IPerpPair(...)` callbacks
 into the engine, and `Vault._checkMR -> UtilMath.calcMR` (delegatecalled library)
-inherits them transitively — so the 2026-06-08 deploy shipped with every UtilMath
+inherits them transitively — so a deploy can leave every UtilMath
 read path (and Vault.removeCollateral) reverting on selectors the Stylus engine no
 longer exposes. This audit closes that class of bug, in BOTH directions:
 
@@ -91,7 +91,7 @@ def strip_comments(src):
 
 def abi_type(t):
     """Canonical ABI type, expanding struct `tuple` types into their component
-    lists (completeness-review finding: the raw 'tuple' label made struct-taking
+    lists (the raw 'tuple' label made struct-taking
     signatures non-canonical, so selector math would silently diverge)."""
     typ = t["type"]
     if typ.startswith("tuple"):
@@ -121,7 +121,7 @@ def narrowed_uint_only(caller_outs, target_outs):
     """True when the only differences are SAME-SIGN-CLASS, SAME-DIRECTION width
     changes on 32-byte words (uintN/uintM or intN/intM). Caller-wider is always
     decode-safe; caller-narrower is decode-safe while the value fits the protocol
-    range. MIXED directions are rejected (completeness-review finding: a per-field
+    range. MIXED directions are rejected (a per-field
     width check alone would wave through a FIELD SWAP like caller
     (uint64,uint256) vs target (uint256,uint64) — semantically reversed outputs).
     Any sign-class mix or structural difference stays a hard violation."""
@@ -162,7 +162,7 @@ def forge_iface_abi(target):
 
 # --- engine surface from the Rust #[public] impl (source of truth for the next deploy) ---
 def engine_surface_from_source():
-    """Reuses the F-07 manifest's extraction idea: every #[selector(name=…)] /
+    """Reuses the selector manifest's extraction idea: every #[selector(name=…)] /
     default-camelCase method in the single `#[public] impl PerpEngine` block, with
     Rust arg/return types mapped to ABI types."""
     lines = (ROOT / ENGINE_LIB).read_text().split("\n")
@@ -179,9 +179,9 @@ def engine_surface_from_source():
         sys.exit(f"could not locate `#[public] impl PerpEngine` in {ENGINE_LIB}")
     # Brace-depth end detection (NOT a column-0 heuristic): the impl's own closing
     # brace is indented, and the next column-0 brace belongs to the cfg-gated
-    # benchmark impl — the old heuristic absorbed it, presenting the retired
-    # initializeBenchmark/seedBenchmarkState as PHANTOM surface members
-    # (completeness-review real-miss). Line comments are stripped before counting
+    # benchmark impl, so a column-0 heuristic would over-read into it and present
+    # initializeBenchmark/seedBenchmarkState as phantom surface members.
+    # Line comments are stripped before counting
     # because doc comments quote braces.
     depth, end = 0, None
     for k in range(start, len(lines)):
@@ -200,8 +200,8 @@ def engine_surface_from_source():
     fns = {}
     # `#[selector(name = "X")]` optionally precedes `pub fn y(...) -> Result<RET, Vec<u8>>`,
     # possibly with OTHER attributes in between (live pattern: #[allow(clippy::...)] sits
-    # between #[selector] and `pub fn` on initialize_production — completeness-review
-    # finding; without the inter-attribute tolerance the renamed selector would be lost).
+    # between #[selector] and `pub fn` on initialize_production; without the
+    # inter-attribute tolerance the renamed selector would be lost).
     # The full `Result<T, Vec<u8>>` is captured non-greedily up to the `, Vec<u8>>` error
     # type, so tuple returns like `Result<(U256, bool), Vec<u8>>` parse whole.
     pat = re.compile(
@@ -284,7 +284,7 @@ def main():
         iface_abis[name] = forge_iface_abi(inspect_target)
         if not iface_abis[name][0]:
             # A broken binding must NEVER silently void its checks
-            # (completeness-review real-miss: an empty interface ABI degraded every
+            # (an empty interface ABI degraded every
             # dependent check to a non-fatal info and the audit false-PASSED).
             used_in = [rel for rel, s in caller_srcs.items() if re.search(rf"\b{name}\s*\(", s)]
             if used_in:
@@ -298,7 +298,7 @@ def main():
     # --- directions A + B + D: typed calls in the Solidity stack ---
     # The cast argument allows ONE level of nested parens so forms like
     # `IOracleMiddleware(IVault(vault).oracle()).verifyReportIfNecessary(...)`
-    # are extracted (completeness-critic finding: the flat pattern missed them).
+    # are extracted (the flat pattern missed them).
     call_pat = re.compile(
         r"\b(" + "|".join(IFACE_BINDINGS) + r")\s*\((?:[^()]|\([^()]*\))*\)\s*\.\s*([A-Za-z_]\w*)"
     )
@@ -360,7 +360,7 @@ def main():
 
     # --- direction C: engine sol_interface! -> Vault/oracle ---
     # explicit routing — an UNKNOWN interface in sol_interface! must fail loudly,
-    # not be checked against an arbitrary surface (completeness-review finding)
+    # not be checked against an arbitrary surface
     sol_iface_targets = {"IVault": (vault, VAULT_ABI), "IOracleMiddleware": (oracle, ORACLE_ABI)}
     for iface, sig, rets in engine_outbound_interfaces():
         if iface not in sol_iface_targets:

@@ -39,11 +39,9 @@ contract-client-gen = []
 stub_boundary = []
 # Benchmark/test scaffolding: compiles the `initialize_benchmark` + `seed_benchmark_state`
 # helpers, which live in a NON-`#[public]` impl (lib.rs) so they emit NO router selectors in any
-# build — production stays clean and the two router arms + monomorphized arg codecs are reclaimed
-# (the size lever that lets the restored read getters fit under the cargo-stylus activation cap).
-# Native tests (`cfg(test)`) call them as direct methods without this feature. NOTE: the on-chain
-# `initializeBenchmark`/`seedBenchmarkState` *selectors* are retired (no router arm in any build);
-# restore them on a throwaway benchmark branch if on-chain re-benchmarking is ever needed.
+# build, keeping the deployed wasm within the cargo-stylus activation size limit. Native tests
+# (`cfg(test)`) call them as direct methods without this feature; `initializeBenchmark`/
+# `seedBenchmarkState` are not part of the on-chain selector surface.
 benchmark = []
 
 # NOTE: the release profile is defined once in the workspace root Cargo.toml and

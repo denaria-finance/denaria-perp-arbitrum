@@ -4,7 +4,7 @@ pragma solidity ^0.8.25;
 import { Test } from "forge-std/Test.sol";
 import "../../src/PerpPair.sol";
 
-/// @title Trade + funding stateful differential generator (review finding F-04, scenario 1)
+/// @title Trade + funding stateful differential generator
 /// @notice Drives the REAL Solidity `PerpPair` engine through a multi-trade sequence with
 ///         time advancing between ops (so funding accrues), capturing a full state snapshot
 ///         after each op into a JSON fixture. The Rust/Stylus `PerpEngine` replays the same

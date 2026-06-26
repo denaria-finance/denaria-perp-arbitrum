@@ -176,7 +176,7 @@ node(1662, 214, 566, 132, "Collateral accounting", [
     "addCollateral (ERC20 safeTransferFrom) · removeCollateral",
     "userCollateral · ratio snapshots · LostAndFound",
     "_msgSender() = trustedForwarder (the manager)"], stroke=GROUPS["vault"][0])
-node(1662, 360, 566, 146, "reads the engine (F-10 cross-calls):", [
+node(1662, 360, 566, 146, "reads the engine (cross-calls):", [
     "lastOperationTimestamp · calcPnL · updateFG",
     "MMR · maxLpLeverage · user/liquidityPosition",
     "→ each crosses the WASM boundary (≈+24k pedestal)"], stroke=GROUPS["vault"][0], accent=SEAM)

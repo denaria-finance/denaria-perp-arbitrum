@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Machine-checked ABI/selector manifest: Solidity PerpPair vs the Stylus PerpEngine
-(review finding F-07).
+"""Machine-checked ABI/selector manifest: Solidity PerpPair vs the Stylus PerpEngine.
 
 Extracts the authoritative Solidity selector set from the compiled `PerpPair`
 (`forge inspect`), extracts the Stylus engine's selectors from its `#[public] impl`
@@ -38,11 +37,11 @@ def find_public_impl(lines):
     so the extractor cannot silently drift when lib.rs line numbers shift. Returns
     0-based [start, end] inclusive indices spanning the `impl ... {` line to its
     matching closing brace, found by BRACE-DEPTH COUNTING — the impl's own closing
-    brace is indented, so the old `startswith("}")` heuristic ran PAST it and
-    absorbed whatever followed (after the 2026-06-10 size lever that is the
+    brace is indented, so a `startswith("}")` heuristic ran PAST it and
+    absorbed whatever followed (the
     `#[cfg(any(test, feature = "benchmark"))] impl`, whose initialize_benchmark/
     seed_benchmark_state would then appear as PHANTOM members of the public
-    surface — found by the audit-completeness review)."""
+    surface)."""
     start = None
     for i, ln in enumerate(lines):
         if ln.strip() == "#[public]":
@@ -141,14 +140,14 @@ DIVERGENT = {
 
 # Intentionally NOT exposed on the Stylus engine (documented gaps), grouped by reason.
 #
-# Read-parity pass: the binding limit is the cargo-stylus 0.10.7
+# Read parity: the binding limit is the cargo-stylus 0.10.7
 # activation-simulation cap (~57.8-58.0 KB brotli in the stable build measurements),
-# NOT a 24 KB wall (24,576 B is the per-fragment chunk size). Restored on the engine:
+# NOT a 24 KB wall (24,576 B is the per-fragment chunk size). Exposed on the engine:
 # curveParameters,
-# totalTraderExposureSign, computeFundingRate, _computeFundingFee (the selectors whose absence
-# broke every UtilMath read path and Vault.removeCollateral in a prior deployment).
+# totalTraderExposureSign, computeFundingRate, _computeFundingFee (required by the UtilMath
+# read paths and Vault.removeCollateral).
 # Still unsupported below; full parity for those needs real headroom
-# (panic_immediate_abort nightly profile, or the PerpReader facet — Plan B).
+# (panic_immediate_abort nightly profile, or the PerpReader facet).
 UNSUPPORTED = {
     # Redundant funding alias dropped to fit under the activation cap: the FE and UtilMath
     # use _computeFundingFee; nothing calls the no-arg-rate convenience variant.
@@ -178,9 +177,8 @@ ADDITIONS = {
     # Settable trusted forwarder (OZ's is immutable).
     "setTrustedForwarder(address)",
     # Initializer (no Stylus #[constructor]). The benchmark entrypoints
-    # (initializeBenchmark/seedBenchmarkState) were RETIRED from the production router
-    # on 2026-06-10 (size lever: moved to a cfg-gated NON-#[public] impl) — they are no
-    # longer additions and the brace-depth extractor correctly excludes them.
+    # (initializeBenchmark/seedBenchmarkState) live in a cfg-gated NON-#[public] impl,
+    # so they are not additions and the brace-depth extractor correctly excludes them.
     "initializeProduction(address,address,address,uint256,bytes32,uint32,uint32,address,uint256,uint256,uint256)",
     # Flattened-clamp governance setters (the Stylus side of DIVERGENT).
     "prepareTimeLockedParameters(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)",
