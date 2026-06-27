@@ -21,6 +21,8 @@ test.ipynb
 todo.txt
 firme.txt
 deploy_commands.txt
+# Internal engineering/ops notes — never publish (findings, runbooks).
+*_INTERNAL.md
 
 # Local ad-hoc outputs
 abi/
