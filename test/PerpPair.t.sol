@@ -298,6 +298,29 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         assertTrue(finalCollat > 1000 * 1e18 + 2 * startingStableAmount, "collateral did not go up");
     }
 
+    ///@dev closing requires a designated frontend: a zero frontend reverts "C2".
+    function testCloseAndWithdrawRevertsOnZeroFrontend() public {
+        oracle.setPrice(100 * oracleDecimals);
+
+        address alice = makeAddr("alice");
+        vm.prank(alice);
+        perpPair.addLiquidity(1_000_000 * 1e18, 10_000 * 1e18, maxUserLiquidityFee, fakeReport);
+
+        address bob = makeAddr("bob");
+        uint256[] memory collateral = new uint256[](2);
+        collateral[0] = 1000 * 1e6;
+        collateral[1] = 0;
+        vm.prank(bob);
+        vault.addCollateral(collateral);
+        uint256 liq = perpPair.globalLiquidityAsset();
+        vm.prank(bob);
+        perpPair.trade(true, 1000 * 1e18, 100 * 1e5, liq, frontendAddress, 1, fakeReport);
+
+        vm.prank(bob);
+        vm.expectRevert(bytes("C2"));
+        perpPair.closeAndWithdraw(1e5, 1e10, address(0), fakeReport);
+    }
+
     ///@dev tests the closeAndWithdraw function in a scenario where the trader went long and made profit.
     function testCloseAndWithdrawShortProfit() public {
         oracle.setPrice(100 * oracleDecimals);

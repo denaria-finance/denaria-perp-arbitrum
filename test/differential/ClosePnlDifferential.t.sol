@@ -118,7 +118,7 @@ contract ClosePnlDifferentialTest is Test {
     function closeOp(address u, uint256 ts) internal returns (string memory) {
         vm.warp(ts);
         vm.prank(u);
-        ref.closeAndWithdraw(MAX_SLIP, MAX_LIQ_FEE, address(0), "");
+        ref.closeAndWithdraw(MAX_SLIP, MAX_LIQ_FEE, address(0xFE), "");
         string memory head = string.concat(
             '{"kind":"close","user":"', vm.toString(u), '","blockTs":"', vm.toString(ts), '","ret":"0","retSign":true'
         );

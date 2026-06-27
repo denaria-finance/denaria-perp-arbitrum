@@ -379,6 +379,11 @@ abstract contract PerpTrade is PerpLiquidity {
     ///@param frontendAddress Address that collects the fees due to the frontend used for this operation. Giving address(0) as frontendAddress will skip assigning the fees to a frontend.
     ///@param user User owning the position to close
     function _closeAndWithdraw(uint256 maxSlippage, uint256 maxLiqFee, address frontendAddress, address user) internal {
+        // A designated frontend is required to close: the short buy-back grosses the stable
+        // input up for the full trading fee, which only holds when the forward trade deducts
+        // that full fee. The zero-address branch instead rebates the frontend-fee share into
+        // the trade, so the buy-back would overshoot.
+        require(frontendAddress != address(0), "C2");
         uint256 price = getPrice();
         (uint256 lpStableBalance, uint256 lpAssetBalance) = getLpLiquidityBalance(user);
         VirtualTraderPosition storage pos = userVirtualTraderPosition[user];

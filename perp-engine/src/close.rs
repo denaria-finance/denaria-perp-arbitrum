@@ -20,6 +20,13 @@ impl PerpEngine {
         collateral: U256,
         is_self_close: bool,
     ) -> Result<(U256, bool), Vec<u8>> {
+        // A designated frontend is required to close: the short buy-back grosses the
+        // stable input up for the full trading fee, which only holds when the forward
+        // trade deducts that full fee. The zero-address branch instead rebates the
+        // frontend-fee share into the trade, so the buy-back would overshoot.
+        if frontend_address == Address::ZERO {
+            return Err(err(b"C2"));
+        }
         let oracle_dec = U256::from(self.oracle_decimals.get());
         let dust = U256::from(10_000_000_000u64); // 1e10
         let bps = U256::from(100_000u64); // 1e5

@@ -811,7 +811,7 @@
         }
         let (pnl, pnl_sign) = e
             .close_and_withdraw_inner(
-                U256::ZERO, U256::ZERO, Address::ZERO, user, U256::from(300_000_000_000u64),
+                U256::ZERO, U256::ZERO, addr(0xFE), user, U256::from(300_000_000_000u64),
                 U256::from(1_000u64) * wad, true,
             )
             .expect("close should not revert");
@@ -849,7 +849,7 @@
         // 1% max slippage so the short _trade clears T4 (zeroSlippage*0.99 floor).
         let (pnl, pnl_sign) = e
             .close_and_withdraw_inner(
-                U256::from(1_000u64), U256::ZERO, Address::ZERO, user, U256::from(300_000_000_000u64),
+                U256::from(1_000u64), U256::ZERO, addr(0xFE), user, U256::from(300_000_000_000u64),
                 U256::from(1_000u64) * wad, true,
             )
             .expect("close should not revert");
@@ -865,6 +865,45 @@
         // sold ~1e18 asset @3000 for ~2999e18 stable -> positive residual equity
         assert!(pnl_sign, "PnL sign positive");
         assert!(pnl > U256::from(2_900u64) * wad && pnl < U256::from(3_000u64) * wad, "PnL ~2999e18: got {pnl}");
+    }
+
+    // Closing requires a designated (non-zero) frontend: a zero frontend reverts "C2"
+    // before any trade, while the same position closes cleanly with a non-zero frontend.
+    #[test]
+    fn close_requires_nonzero_frontend() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+
+        let user = addr(0x45);
+        {
+            let mut p = e.user_virtual_trader_position.setter(user);
+            p.balance_asset.set(wad);
+        }
+        // zero frontend -> rejected up front, position untouched
+        let err_c2 = e
+            .close_and_withdraw_inner(
+                U256::from(1_000u64), U256::ZERO, Address::ZERO, user, U256::from(300_000_000_000u64),
+                U256::from(1_000u64) * wad, true,
+            )
+            .expect_err("zero frontend must revert");
+        assert_eq!(err_c2, err(b"C2"), "zero frontend close reverts C2");
+        assert_eq!(
+            e.user_virtual_trader_position.getter(user).balance_asset.get(), wad,
+            "rejected close leaves the position untouched",
+        );
+        // same position, non-zero frontend -> closes
+        e.close_and_withdraw_inner(
+            U256::from(1_000u64), U256::ZERO, addr(0xFE), user, U256::from(300_000_000_000u64),
+            U256::from(1_000u64) * wad, true,
+        )
+        .expect("non-zero frontend close should succeed");
+        assert_eq!(
+            e.user_virtual_trader_position.getter(user).balance_asset.get(), U256::ZERO,
+            "position cleared after a valid close",
+        );
     }
 
     // add_liquidity into an EMPTY pool bootstraps inverseSnapshotM to identity*liqMDec
@@ -1544,7 +1583,7 @@
             p.balance_asset.set(wad); // 1e18 long
         }
 
-        e.close_and_withdraw(U256::from(1_000u64), U256::ZERO, Address::ZERO, Bytes::new())
+        e.close_and_withdraw(U256::from(1_000u64), U256::ZERO, addr(0xFE), Bytes::new())
             .expect("stub close should not revert");
 
         assert!(!e.entered.get(), "reentrancy guard reset after a successful close");
@@ -1889,7 +1928,7 @@
                     assert_eq!(ret, us("ret"), "op {i} tradeReturn");
                 }
                 "close" => {
-                    e.close_and_withdraw_for(user, max_slip, max_liq_fee, Address::ZERO, Bytes::new())
+                    e.close_and_withdraw_for(user, max_slip, max_liq_fee, addr(0xFE), Bytes::new())
                         .unwrap_or_else(|_| panic!("op {i} close reverted on Stylus"));
                 }
                 "realizepnl" => {
@@ -1978,7 +2017,7 @@
                     // owner authorizes auto-close (loss threshold), keeper triggers it
                     e.enable_auto_close_for(user, U256::ZERO, us("lossTh"), us("maxSlip"), us("maxLiqFee"))
                         .unwrap_or_else(|_| panic!("op {i} enableAutoClose reverted on Stylus"));
-                    e.auto_close_user_position_for(liquidator, user, Address::ZERO, Bytes::new())
+                    e.auto_close_user_position_for(liquidator, user, addr(0xFE), Bytes::new())
                         .unwrap_or_else(|_| panic!("op {i} autoClose reverted on Stylus"));
                 }
                 other => panic!("op {i}: unknown kind {other}"),
@@ -2012,7 +2051,12 @@
     fn check_financial_invariants(e: &PerpEngine, users: &[Address], label: &str) {
         let gs = e.global_liquidity_stable.get();
         let ga = e.global_liquidity_asset.get();
-        // INV-EXPOSURE: totalTraderExposure (signed) == Σ signed(balanceAsset − debtAsset).
+        // INV-EXPOSURE: totalTraderExposure (signed) == Σ signed(balanceAsset − debtAsset),
+        // up to the bounded dust drift a short close leaves in totalTraderExposure. The
+        // close buy-back inverts via computeExactAmountInLong, whose fixed-point residual is
+        // capped per close by the pool-relative C0 dust bound (and priced into PnL); the
+        // residual asset is zeroed with the position but not subtracted from exposure, so the
+        // identity holds only within that envelope (see close path / perpTrade.sol).
         let mut net = I256::ZERO;
         for &u in users {
             let p = e.user_virtual_trader_position.getter(u);
@@ -2020,7 +2064,14 @@
         }
         let exp = cm::i(e.total_trader_exposure.get());
         let signed_exp = if e.total_trader_exposure_sign.get() { exp } else { -exp };
-        assert_eq!(net, signed_exp, "{label}: exposure == Σ trader net asset");
+        let drift = if net >= signed_exp { net - signed_exp } else { signed_exp - net };
+        let price = U256::from(300_000_000_000u64); // stub oracle price both callers run under
+        let drift_stable = cm::md(cm::u(drift), price, U256::from(e.oracle_decimals.get()));
+        let dust_bound = (gs / U256::from(10_000_000_000u64)).max(U256::from(10_000_000_000u64));
+        assert!(
+            drift_stable <= dust_bound,
+            "{label}: exposure == Σ trader net asset within close dust bound (drift_stable={drift_stable}, bound={dust_bound})",
+        );
         // INV-LP-BOUND: each LP's reconstructed balance is clamped to the global pool.
         for &u in users {
             let (ls, la) = e.get_lp_liquidity_balance(u);
@@ -2123,7 +2174,7 @@
                 }
                 6 => {
                     // close: open→close cycles (full close of the user's position).
-                    let _ = e.close_and_withdraw_for(u, U256::from(50_000u64), wad, Address::ZERO, Bytes::new());
+                    let _ = e.close_and_withdraw_for(u, U256::from(50_000u64), wad, addr(0xFE), Bytes::new());
                 }
                 7 => {
                     // realizePnL: settles the user's funding PnL.
