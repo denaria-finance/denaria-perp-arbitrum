@@ -139,3 +139,54 @@ The L1 component (~8–17k in the table above) is **engine-agnostic** and domina
 - **Shared periphery.** In the controlled benchmarks, both sides used the same mock vault (no-op `addCollateral`, fixed generous `userCollateral`) and the same constant-price mock oracle, so those legs cancel in the delta. The real Chainlink Data Streams verification path cannot be driven in a benchmark without Chainlink's report API; the oracle leg is engine-agnostic (both engines call the same oracle), so it does not bias the cross-engine delta — and the live-deployment numbers (§6) include the real `TWAPOracleMiddleware`.
 - **Caching.** All headline Stylus figures are with the program CacheManager-cached (the production-relevant state); §4 quantifies the uncached penalty.
 - **Topology.** Both direct-call (cleanest engine signal) and production manager→engine figures are reported; the headline is the production topology. The fixed WASM-entry pedestal is paid once per Stylus call regardless of topology.
+
+## 8. Source-level optimizations (applied in source; effect realized at the next redeploy)
+
+The measured tables above describe the currently deployed engine. The changes below are
+applied in this repository and reduce gas at the next redeploy. They are behaviour-preserving
+(bit-exact) — locked by the golden vectors and a two-stack `Vault` differential — and are
+re-measured once deployed rather than claimed here.
+
+The strategy follows from the cost model in §2: the hot trade path is already a single
+monolithic engine call, so the marginal gas lives in **(a)** the number of separate EVM→WASM
+entries a periphery operation makes, each paying the fixed ~22–25k entry cost (§2.1), and
+**(b)** cold storage reads. The changes target exactly these.
+
+### 8.1 Fewer engine round-trips on the collateral / close path
+
+- **Collateral removal reads the oracle price once.** `Vault.removeCollateral` read
+  `oracle.getPrice()` twice (once for the PnL check, once inside the margin check); it now
+  reads it once and reuses the value. Nothing between the two reads mutates the oracle, so
+  they were always equal and the result is unchanged.
+- **The snapshot timestamp read is guarded.** `Vault.updateSnapshot` read the engine's
+  `lastOperationTimestamp()` on every collateral operation, but that value only affects a
+  ratio snapshot that cannot flip until a fixed time window elapses. The read is now skipped
+  while the operation lands inside that window (the common case) and taken only when a flip
+  is actually possible. On a deposit this removes the operation's only engine round-trip.
+- **The margin check is one engine call.** `Vault._checkMR` orchestrated the margin
+  computation as roughly a dozen separate reads into the engine (through `UtilMath.calcMR`,
+  with several position/liquidity reads duplicated). A single engine view, `marginCheckData`,
+  now returns the margin ratio together with the raw position/liquidity fields and the
+  leverage/MMR bounds the Vault's bad-debt guard needs, all computed in one WASM frame; the
+  guard itself stays in the Vault. `UtilMath.calcMR` is retained for the front-end quote path
+  and remains the differential reference.
+
+Each eliminated engine entry removes the fixed ~22–25k L2 WASM-entry cost (§2.1). The
+consolidated margin call is the largest of these: it collapses the multi-read fan-out on the
+`removeCollateral` / close-and-withdraw path, which — off the hot trade path — can dominate
+that operation's cost.
+
+### 8.2 Fewer cold storage reads on the hot path
+
+Several protocol constants — the fixed-point scaling decimals (trading fee, fee fractions,
+funding rate, funding constant, liquidity fee) and the AMM curve coefficients — are set once
+at initialization and never modified. Their internal read sites in the engine are folded to
+constants, removing a cold storage read (~2,100 gas) each from the trade and related paths.
+The storage fields, their initialization writes, and the `curveParameters()` getter are left
+intact, so the on-chain storage layout and the read-parity surface are unchanged.
+
+### 8.3 Caching reliability
+
+The ~10% cached-vs-uncached benefit (§4) depends on the engine holding its CacheManager
+entry, which an LRU with time-decay can evict. `script/cache_keeper.sh` monitors that entry
+and re-bids before eviction, protecting the benefit from silently disappearing.

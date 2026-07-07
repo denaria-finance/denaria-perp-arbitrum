@@ -25,6 +25,11 @@ forge test --match-path test/config/*.t.sol
 The Solidity `PerpPair` is a reference implementation for tests and vectors. Production
 deployment uses the Stylus `PerpEngine`.
 
+`test/differential/VaultSeamDifferential.t.sol` drives the current `Vault` and a frozen
+pre-optimization copy (`VaultLegacy.sol`) through identical operation sequences — scripted and
+fuzzed — on two full stacks and asserts their observable state stays bit-identical. It proves
+the collateral-path read-reduction changes are behaviour-preserving.
+
 ## Rust
 
 Run native engine tests:

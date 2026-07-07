@@ -17,7 +17,7 @@ with bit-exact identical output — see [GAS_BENCHMARKS.md](GAS_BENCHMARKS.md).
 | Collateral custody | `Vault` | Solidity | Stablecoin deposits, withdrawals, collateral accounting, PnL settlement, and margin-safety checks |
 | Recovery | `LostAndFound` | Solidity | Custody for transfers that cannot be delivered to a user |
 | Oracle | `TWAPOracleMiddleware` | Solidity | Chainlink Data Streams report verification, freshness checks, and TWAP volatility checks |
-| Quote/math layer | `CurveMath`, `MatrixMath`, `UtilMath`, `FeeManager` | Solidity libraries | Front-end quote reads and Vault-linked margin checks |
+| Quote/math layer | `CurveMath`, `MatrixMath`, `UtilMath`, `FeeManager` | Solidity libraries | Front-end quote reads and Vault collateral-ratio helpers |
 | Rust math crate | `denaria-curve-math-stylus` | Rust | Bit-exact CurveMath/MatrixMath/UtilMath routines embedded into the Stylus engine |
 | Reference engine | `PerpPair.sol` + `perpModules/` | Solidity | Regression and differential-test reference, not the current deploy target |
 
@@ -27,11 +27,17 @@ The Stylus migration moved the stateful engine and write paths to WASM. The Soli
 math libraries remain because they have two production roles that are better served as
 EVM bytecode:
 
-1. `Vault` links `UtilMath` for margin-safety checks. EVM library linking uses
-   `DELEGATECALL`, which a Stylus program cannot provide.
-2. The front-end quote path already uses `UtilMath` and `CurveMath` as read-only
-   `eth_call` targets. Keeping that ABI stable avoids duplicating preview logic in the
+1. The front-end quote path uses `UtilMath` and `CurveMath` as read-only `eth_call`
+   targets. Keeping that ABI stable avoids duplicating preview logic in the
    size-constrained Stylus engine.
+2. `Vault` still links `UtilMath` for collateral-ratio helpers (EVM library linking uses
+   `DELEGATECALL`, which a Stylus program cannot provide).
+
+The Vault's collateral-removal margin check no longer fans out through `UtilMath.calcMR`.
+It now reads a single consolidated `marginCheckData` view from the engine — the margin
+ratio plus the raw position/liquidity fields it needs — and applies the bad-debt guard
+locally, replacing roughly a dozen separate reads into the engine with one. `UtilMath.calcMR`
+is retained for the front-end quote path and as the differential reference.
 
 The Rust engine embeds the same math internally for execution. Golden-vector and
 differential tests lock the Rust routines against the Solidity libraries.
