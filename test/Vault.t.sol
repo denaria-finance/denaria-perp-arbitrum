@@ -5,6 +5,8 @@ import { Test, console } from "forge-std/Test.sol";
 import { Vm, VmSafe } from "forge-std/Vm.sol";
 import { PerpPair } from "../src/PerpPair.sol";
 import { Vault } from "../src/Vault.sol";
+import { IPerpPair } from "../src/interfaces/IPerpPair.sol";
+import { IOracleMiddleware } from "../src/CL_oracle_middleware/interfaces/IOracleMiddleware.sol";
 import { LostAndFound } from "../src/LostAndFound.sol";
 import "../src/token/USDCe.sol";
 import "../src/util/CurveMath.sol";
@@ -742,6 +744,96 @@ contract VaultTest is Test, PerpPairTestDeploymentHelper {
     function testUnauthorizedAddToPnL() public {
         vm.expectRevert("OnlyPerp");
         vault.addPnlToCollateral(msg.sender, 100, true);
+    }
+
+    // ==========================================================================================
+    // Seam-read dedup refactor — equivalence proofs.
+    //   #2 updateSnapshot: guard the perpPair.lastOperationTimestamp() read behind the base
+    //      time-window check (skip it when the snapshot cannot flip).
+    //   #7 removeCollateral: read oracle.getPrice() once and reuse it for the PnL and MR checks.
+    // The refactor must be behaviour-identical; the whole existing suite passing unchanged is the
+    // primary regression proof. These add targeted checks on the exact changed decisions.
+    // ==========================================================================================
+
+    /// @dev Vault default ratioLockTime (the field is private; this mirrors the constructor value).
+    uint256 private constant SEAM_RATIO_LOCK = 3600 * 24;
+
+    /// @dev Balanced 50/50 deposit so ratios never move (no AC3) while still triggering updateSnapshot.
+    function _seamDeposit(address u, uint256 units) internal {
+        uint256[] memory a = new uint256[](numStableCoins);
+        a[0] = units * 1e6; // coinA, 6 decimals
+        a[1] = units * 1e18; // coinB, 18 decimals
+        vm.prank(u);
+        vault.addCollateral(a);
+    }
+
+    /// @dev The exact snapshot-flip predicate the pre-refactor updateSnapshot implemented.
+    function _seamSpecFlip(uint256 nowTs, uint256 lastSnap, uint256 lastOpTs) internal pure returns (bool) {
+        uint256 randomDelta = uint256(keccak256(abi.encodePacked(lastOpTs))) % (3600 * 2);
+        return nowTs > lastSnap + SEAM_RATIO_LOCK + randomDelta;
+    }
+
+    /// @dev #2 differential: the guarded updateSnapshot must flip the snapshot on EXACTLY the same
+    ///      timestamps as the original predicate, including the randomDelta-sensitive band just past
+    ///      ratioLockTime where the guard does not short-circuit.
+    function test_seam_updateSnapshotFlip_matchesSpec() public {
+        vm.warp(5_000_000);
+        _seamDeposit(alice, 1000); // establish an initial snapshot
+
+        // Offsets from the current snapshot spanning: deep in-window, exactly at ratioLockTime,
+        // one second past (randomDelta decides), and past the maximum randomDelta (must flip).
+        uint256[5] memory offsets =
+            [uint256(10), SEAM_RATIO_LOCK, SEAM_RATIO_LOCK + 1, SEAM_RATIO_LOCK + 7200, SEAM_RATIO_LOCK + 7201];
+
+        for (uint256 i; i < offsets.length; i++) {
+            uint256 snapBefore = vault.lastSnapshotTimestamp();
+            uint256 lastOpTs = perpPair.lastOperationTimestamp(); // unchanged by addCollateral
+            uint256 t = snapBefore + offsets[i];
+            bool expectFlip = _seamSpecFlip(t, snapBefore, lastOpTs);
+
+            vm.warp(t);
+            _seamDeposit(alice, 1000);
+
+            assertEq(vault.lastSnapshotTimestamp(), expectFlip ? t : snapBefore, "flip decision diverged from spec");
+        }
+    }
+
+    /// @dev #2 gas win: in-window, the guard must skip the perpPair read entirely (0 calls).
+    function test_seam_updateSnapshot_skipsEngineReadInWindow() public {
+        vm.warp(5_000_000);
+        _seamDeposit(alice, 1000); // flips: lastSnapshotTimestamp = 5_000_000
+
+        vm.warp(5_000_000 + 100); // well within ratioLockTime
+        vm.expectCall(address(perpPair), abi.encodeWithSelector(IPerpPair.lastOperationTimestamp.selector), 0);
+        _seamDeposit(alice, 1000);
+    }
+
+    /// @dev #2 counterpart: out-of-window, the read still happens exactly once (behaviour preserved).
+    function test_seam_updateSnapshot_readsEngineOutOfWindow() public {
+        vm.warp(5_000_000);
+        _seamDeposit(alice, 1000);
+
+        vm.warp(5_000_000 + SEAM_RATIO_LOCK + 7201); // past ratioLockTime + max randomDelta
+        vm.expectCall(address(perpPair), abi.encodeWithSelector(IPerpPair.lastOperationTimestamp.selector), 1);
+        _seamDeposit(alice, 1000);
+    }
+
+    /// @dev #7: removeCollateral must read oracle.getPrice() one fewer time. Post-refactor it is read
+    ///      twice total (once in perpPair.updateFG, once in the Vault reused for PnL + MR); pre-refactor
+    ///      the Vault read it a second time in _checkMR (3 total). Outcome must be unchanged.
+    function test_seam_removeCollateral_singleVaultOracleRead() public {
+        uint256[] memory a = new uint256[](numStableCoins);
+        a[0] = 4000 * 1e6;
+        a[1] = 6000 * 1e18;
+        vm.prank(alice);
+        vault.addCollateral(a);
+
+        vm.expectCall(address(oracle), abi.encodeWithSelector(IOracleMiddleware.getPrice.selector), 2);
+        vm.prank(alice);
+        vault.removeCollateral(5000 * 1e18, fakeReportData);
+
+        assertEq(vault.userCollateral(alice), 5000 * collateralDecimals, "alice collateral after removal");
+        assertEq(vault.totalCollateral(), 5000 * collateralDecimals, "total collateral after removal");
     }
 
     //support functions

@@ -1,16 +1,21 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.25;
 
-import "./interfaces/IPerpPair.sol";
-import "./interfaces/ILostAndFound.sol";
-import { LostAndFound } from "./LostAndFound.sol";
-import "./util/CurveMath.sol";
-import "./util/MatrixMath.sol";
-import "./util/UtilMath.sol";
-import "./interfaces/IVault.sol";
-import "./manager/FeeManager.sol";
+// FROZEN SNAPSHOT of src/Vault.sol as it was BEFORE the seam-read dedup refactor
+// (guarded updateSnapshot + single-read removeCollateral). Generated verbatim from that
+// revision and used ONLY by VaultSeamDifferential.t.sol to prove the refactor is
+// behaviour-identical. It is not deployed and must not be edited to track src/Vault.sol.
+
+import "../../src/interfaces/IPerpPair.sol";
+import "../../src/interfaces/ILostAndFound.sol";
+import { LostAndFound } from "../../src/LostAndFound.sol";
+import "../../src/util/CurveMath.sol";
+import "../../src/util/MatrixMath.sol";
+import "../../src/util/UtilMath.sol";
+import "../../src/interfaces/IVault.sol";
+import "../../src/manager/FeeManager.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "./CL_oracle_middleware/interfaces/IOracleMiddleware.sol";
+import "../../src/CL_oracle_middleware/interfaces/IOracleMiddleware.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/metatx/ERC2771Context.sol";
@@ -33,7 +38,7 @@ import "@openzeppelin/contracts/metatx/ERC2771Context.sol";
  *     | UNINIT1    | Contract already initialized.                                               |
  *     | OnlyPerp   | Caller is not the PerpPair contract.                                         |
  */
-contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context {
+contract VaultLegacy is AccessControl, ReentrancyGuardTransient, ERC2771Context {
     using Math for uint256;
     using SignedMath for int256;
     using SafeERC20 for IERC20;
@@ -194,11 +199,8 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context {
         IPerpPair(perpPair).updateFG(unverifiedReport);
         address user = _msgSender();
         require(amount <= userCollateral[user], "RC1"); //Error on removeCollateral: Amount exceeds user collateral
-        // Read the oracle price once and reuse it for both the PnL check and the margin check
-        // (_checkMR). Nothing between here and the MR check mutates the oracle, so the two former
-        // reads returned the same value; this drops one Vault->oracle read per removeCollateral.
-        uint256 price = SafeCast.toUint256(IOracleMiddleware(oracle).getPrice());
-        (uint256 pnl, bool pnlSign) = IPerpPair(perpPair).calcPnL(user, price);
+        (uint256 pnl, bool pnlSign) =
+            IPerpPair(perpPair).calcPnL(user, SafeCast.toUint256(IOracleMiddleware(oracle).getPrice()));
         if (!pnlSign) {
             require(amount + pnl <= userCollateral[user], "RC5");
         }
@@ -207,7 +209,7 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context {
         }
         require(amount <= totalCollateral, "RC3"); //Error on removeCollateral: Amount exceeds total collateral
 
-        require(_checkMR(amount, user, price), "RC4"); //Error on removeCollateral: MMR check
+        require(_checkMR(amount, user), "RC4"); //Error on removeCollateral: MMR check
 
         uint256[] memory removedCollateral = _removeCollateral(amount, user);
 
@@ -569,13 +571,6 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context {
     ///@dev Updates the snapshot of the timestamp of the ratios to look at when deciding if new ratios are acceptable.
     ///@dev Some randomness is introduced using hash of last operation on perpPair. This is to prevent the unlock time to be predictable.
     function updateSnapshot() private {
-        // randomDelta >= 0, so `block.timestamp > lastSnapshotTimestamp + ratioLockTime` is a
-        // necessary condition for the snapshot to flip; when it does not hold the flip is
-        // impossible regardless of randomDelta. Return early to skip the perpPair read (paid on
-        // every collateral op) in that case, without changing any flip decision.
-        if (block.timestamp <= lastSnapshotTimestamp + ratioLockTime) {
-            return;
-        }
         //Random shift to time lock.
         uint256 lastOperationTimestamp = IPerpPair(perpPair).lastOperationTimestamp();
         uint256 randomDelta = uint256(keccak256(abi.encodePacked(lastOperationTimestamp))) % (3600 * 2);
@@ -590,8 +585,9 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context {
     ///@dev check the margin ratio of the user, used when the user wants to remove some collateral from an active position.
     ///@param amount Amount of collateral to remove
     ///@param user User removing the collateral
-    function _checkMR(uint256 amount, address user, uint256 price) private view returns (bool) {
-        // `price` is supplied by removeCollateral (a single oracle read reused for PnL + MR).
+    function _checkMR(uint256 amount, address user) private view returns (bool) {
+        uint256 price = SafeCast.toUint256(IOracleMiddleware(oracle).getPrice());
+
         (uint256 balanceStable, uint256 balanceAsset, uint256 debtStable, uint256 debtAsset,,,,) =
             IPerpPair(perpPair).userVirtualTraderPosition(user);
 
