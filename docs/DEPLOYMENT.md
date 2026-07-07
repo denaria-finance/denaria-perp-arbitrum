@@ -59,6 +59,18 @@ After activation, cache the program:
 cargo stylus cache bid <PERP_ENGINE>
 ```
 
+The cache is an LRU with time-decay: access does not auto-cache, and an entry can be
+evicted, after which every call pays the full WASM re-activation cost (~10% more L2 gas)
+until it is re-bid. Monitor the engine and re-bid when needed with the keeper (read-only
+by default; `--execute` places a bid):
+
+```bash
+PERP_ENGINE=<address> RPC="$ARBITRUM_SEPOLIA_RPC_URL" ./script/cache_keeper.sh
+```
+
+Run it on a schedule (e.g. cron); a non-zero exit means the engine is not cached or is at
+eviction risk.
+
 ## Solidity Periphery
 
 Run the current deploy script after `PERP_ENGINE` is known:
