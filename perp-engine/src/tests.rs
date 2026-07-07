@@ -1104,6 +1104,65 @@
         assert_eq!(e.user_virtual_trader_position.getter(user).debt_asset.get(), U256::ZERO, "user asset debt repaid");
     }
 
+    // batch_liquidate_impl must produce state bit-identical to liquidating the same users one
+    // by one: the batch only hoists the reentrancy guard and the oracle verify/price read (a
+    // no-op under stub_boundary) out of the per-user loop, so the per-user results are unchanged.
+    #[test]
+    fn batch_liquidate_matches_loop() {
+        let wad = U256::from(WAD_U64);
+        let liquidator = addr(0x71);
+        let user1 = addr(0x72);
+        let user2 = addr(0x73);
+        let size1 = wad / U256::from(2u64); // 0.5e18 -> partial fraction
+        let size2 = U256::from(3u64) * wad / U256::from(10u64); // 0.3e18
+
+        // Two underwater long positions (large stable debt -> bad debt -> margin ratio 0 ->
+        // liquidatable) plus a well-capitalized liquidator.
+        fn build(vm: &TestVM, liquidator: Address, user1: Address, user2: Address) -> PerpEngine {
+            let wad = U256::from(WAD_U64);
+            let mut e = PerpEngine::from(vm);
+            seed_trade_engine(&mut e);
+            for u in [user1, user2] {
+                let mut up = e.user_virtual_trader_position.setter(u);
+                up.balance_asset.set(wad);
+                up.debt_stable.set(U256::from(100_000u64) * wad);
+            }
+            let mut lq = e.user_virtual_trader_position.setter(liquidator);
+            lq.balance_stable.set(U256::from(1_000_000_000u64) * wad);
+            e
+        }
+
+        // Engine A: one batch call.
+        let vma = TestVM::new();
+        vma.set_block_timestamp(1_700_000_000);
+        let mut ea = build(&vma, liquidator, user1, user2);
+        ea.batch_liquidate_impl(liquidator, vec![user1, user2], vec![size1, size2], Bytes::new()).expect("batch");
+
+        // Engine B: two single-user calls in the same order.
+        let vmb = TestVM::new();
+        vmb.set_block_timestamp(1_700_000_000);
+        let mut eb = build(&vmb, liquidator, user1, user2);
+        eb.liquidate_impl(liquidator, user1, size1, Bytes::new()).expect("single 1");
+        eb.liquidate_impl(liquidator, user2, size2, Bytes::new()).expect("single 2");
+
+        // Per-user + global state must be bit-identical.
+        for u in [user1, user2, liquidator] {
+            let pa = ea.user_virtual_trader_position.getter(u);
+            let pb = eb.user_virtual_trader_position.getter(u);
+            assert_eq!(pa.balance_stable.get(), pb.balance_stable.get(), "balance_stable");
+            assert_eq!(pa.balance_asset.get(), pb.balance_asset.get(), "balance_asset");
+            assert_eq!(pa.debt_stable.get(), pb.debt_stable.get(), "debt_stable");
+            assert_eq!(pa.debt_asset.get(), pb.debt_asset.get(), "debt_asset");
+            assert_eq!(pa.funding_fee.get(), pb.funding_fee.get(), "funding_fee");
+        }
+        assert_eq!(ea.global_liquidity_stable.get(), eb.global_liquidity_stable.get(), "gLS");
+        assert_eq!(ea.global_liquidity_asset.get(), eb.global_liquidity_asset.get(), "gLA");
+        assert_eq!(ea.funding_rate.get(), eb.funding_rate.get(), "funding_rate");
+        assert_eq!(ea.total_trader_exposure.get(), eb.total_trader_exposure.get(), "exposure");
+        assert_eq!(ea.insurance_fund.get(), eb.insurance_fund.get(), "insurance");
+        assert_eq!(ea.last_operation_timestamp.get(), eb.last_operation_timestamp.get(), "last_op_ts");
+    }
+
     // enableAutoClose stores the config (require profitTh>0||lossTh>0); disableAutoClose
     // deletes it. Neither makes external calls, so they run in the default build.
     #[test]

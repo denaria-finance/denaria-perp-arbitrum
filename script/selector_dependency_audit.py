@@ -77,6 +77,16 @@ RUST_TO_ABI = {
 }
 
 
+def rust_to_abi(t):
+    """Map a Rust param/return type to its ABI type, expanding `Vec<Inner>` to
+    `<Inner>[]` (the ABI array form Stylus generates the selector from)."""
+    t = t.strip()
+    m = re.match(r"^Vec<(.+)>$", t)
+    if m:
+        return rust_to_abi(m.group(1)) + "[]"
+    return RUST_TO_ABI.get(t, t)
+
+
 def run(cmd):
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
     if r.returncode != 0:
@@ -218,7 +228,7 @@ def engine_surface_from_source():
             if not a:
                 continue
             t = a.split(":", 1)[1].strip()
-            args.append(RUST_TO_ABI.get(t, t))
+            args.append(rust_to_abi(t))
         rets = []
         raw_ret = (m.group("ret") or "").strip()
         if raw_ret.startswith("(") and raw_ret.endswith(")"):
@@ -227,7 +237,7 @@ def engine_surface_from_source():
             for t in raw_ret.split(","):
                 t = t.strip()
                 if t:
-                    rets.append(RUST_TO_ABI.get(t, t))
+                    rets.append(rust_to_abi(t))
         fns[f"{name}({','.join(args)})"] = ",".join(rets)
     return fns
 

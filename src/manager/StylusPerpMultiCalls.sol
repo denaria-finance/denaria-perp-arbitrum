@@ -58,6 +58,13 @@ interface IStylusPerpEngine {
         bytes calldata unverifiedReport
     )
         external;
+    function batchLiquidateFor(
+        address liquidator,
+        address[] calldata users,
+        uint256[] calldata liquidatedPositionSizes,
+        bytes calldata unverifiedReport
+    )
+        external;
     function realizePnLFor(address user, bytes calldata unverifiedReport) external returns (uint256, bool);
 
     // Public view getters (read paths for modify-liquidity / take-profit bundlers).
@@ -370,14 +377,10 @@ contract StylusPerpMultiCalls is Initializable, EIP712, AccessControl, Reentranc
     )
         external
     {
-        uint256 len = users.length;
-        require(len == liquidatedPositionSizes.length, "length mismatch");
-        for (uint256 i = 0; i < len;) {
-            IStylusPerpEngine(perpPair).liquidateFor(msg.sender, users[i], liquidatedPositionSizes[i], unverifiedReport);
-            unchecked {
-                ++i;
-            }
-        }
+        require(users.length == liquidatedPositionSizes.length, "length mismatch");
+        // One engine call for the whole batch: the engine verifies the report and reads the
+        // oracle price once, then loops the liquidations in-WASM (see batchLiquidateFor).
+        IStylusPerpEngine(perpPair).batchLiquidateFor(msg.sender, users, liquidatedPositionSizes, unverifiedReport);
     }
 
     // --- modify liquidity position -----------------------------------------------------

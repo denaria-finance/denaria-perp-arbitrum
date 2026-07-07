@@ -461,6 +461,21 @@ impl PerpEngine {
         self.liquidate_impl(liquidator, user, liquidated_position_size, unverified_report)
     }
 
+    /// Forwarded batch liquidation: trusted-forwarder-only, explicit `liquidator`. Verifies
+    /// the report and reads the oracle price once for the whole batch, then liquidates each
+    /// target — one WASM entry and one oracle round-trip instead of one per user.
+    #[selector(name = "batchLiquidateFor")]
+    pub fn batch_liquidate_for(
+        &mut self,
+        liquidator: Address,
+        users: Vec<Address>,
+        liquidated_position_sizes: Vec<U256>,
+        unverified_report: Bytes,
+    ) -> Result<(), Vec<u8>> {
+        let liquidator = self.require_forwarder(liquidator)?;
+        self.batch_liquidate_impl(liquidator, users, liquidated_position_sizes, unverified_report)
+    }
+
     /// Public `realizePnL` (EOA) — Solidity `internalPerpLogic.realizePnL`. Settle the
     /// caller's PnL into collateral in place. Delegates to `realize_pnl_outer`.
     #[selector(name = "realizePnL")]

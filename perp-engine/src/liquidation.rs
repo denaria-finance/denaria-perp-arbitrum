@@ -34,6 +34,23 @@ impl PerpEngine {
         #[cfg(feature = "stub_boundary")]
         let price = U256::from(300_000_000_000u64);
 
+        self.liquidate_with_price(liquidator, user, liquidated_position_size, price)?;
+        self.entered.set(false);
+        Ok(())
+    }
+
+    /// The oracle-free liquidation body, parameterized by the already-read `price`.
+    /// `liquidate_impl` wraps it with the reentrancy guard and the single oracle
+    /// verify/price read; `batch_liquidate_impl` calls it once per user so the batch pays
+    /// those shared costs once, not once per liquidation. Per-user state (funding, last-op
+    /// timestamp, snapshots) is handled here exactly as in the single-liquidation path.
+    pub(crate) fn liquidate_with_price(
+        &mut self,
+        liquidator: Address,
+        user: Address,
+        liquidated_position_size: U256,
+        price: U256,
+    ) -> Result<(), Vec<u8>> {
         let last_op_ts = U256::from(self.last_operation_timestamp.get());
         self.update_fg(price, last_op_ts)?;
 
@@ -167,6 +184,49 @@ impl PerpEngine {
             deltaPnl: liquidation_pnl,
             liquidationDirection: exposition_side,
         });
+        Ok(())
+    }
+
+    /// Batch `liquidate` (forwarded): verify the report and read the oracle price ONCE, then
+    /// run the per-user liquidation body for each target. Collapses the manager's per-user
+    /// loop of engine calls into one WASM entry + one oracle round-trip. Any per-user failure
+    /// propagates and reverts the whole batch, matching the manager's loop semantics.
+    pub(crate) fn batch_liquidate_impl(
+        &mut self,
+        liquidator: Address,
+        users: Vec<Address>,
+        liquidated_position_sizes: Vec<U256>,
+        unverified_report: Bytes,
+    ) -> Result<(), Vec<u8>> {
+        if users.len() != liquidated_position_sizes.len() {
+            return Err(err(b"BL1"));
+        }
+        if self.entered.get() {
+            return Err(err(b"R"));
+        }
+        self.entered.set(true);
+
+        #[cfg(not(feature = "stub_boundary"))]
+        {
+            let oracle = IOracleMiddleware::new(self.oracle.get());
+            let cfg = Call::new_mutating(self);
+            oracle.verify_report_if_necessary(self.vm(), cfg, unverified_report.into())?;
+        }
+        #[cfg(feature = "stub_boundary")]
+        let _ = unverified_report;
+
+        #[cfg(not(feature = "stub_boundary"))]
+        let price = {
+            let oracle = IOracleMiddleware::new(self.oracle.get());
+            cm::u(oracle.get_price(self.vm(), Call::new())?)
+        };
+        #[cfg(feature = "stub_boundary")]
+        let price = U256::from(300_000_000_000u64);
+
+        for (user, size) in users.iter().zip(liquidated_position_sizes.iter()) {
+            self.liquidate_with_price(liquidator, *user, *size, price)?;
+        }
+
         self.entered.set(false);
         Ok(())
     }

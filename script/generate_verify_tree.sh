@@ -32,8 +32,8 @@ set -euo pipefail
 # workspace root changes Rust's crate-metadata hashes, so the tree has its own
 # deterministic, path-independent hash. This is the artifact to DEPLOY, so that
 # `cargo stylus verify` (which rebuilds this published tree) matches the chain.
-EXPECT_SIZE=264934
-EXPECT_SHA256=56cacc0380c7775e062caf21da2df3cfcf6c109bb488b17bc2f269514446e330
+EXPECT_SIZE=271061
+EXPECT_SHA256=fb0f89110cacad1fa09f594b2393d48545d4740e1aa135d86046d2e4c565657f
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
