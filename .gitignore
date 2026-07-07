@@ -7,6 +7,9 @@ snapshots/
 # Rust outputs
 target/
 
+# Generated Arbiscan verification source tree (produced by script/generate_verify_tree.sh)
+verify-tree/
+
 # Local dependency checkouts are tracked only as Git submodules.
 lib/
 

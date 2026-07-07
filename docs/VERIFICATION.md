@@ -133,6 +133,14 @@ src/                engine modules, tests.rs removed, `mod tests` line removed
 curve-math/         the curve crate as a child path dependency, test module stripped
 ```
 
-Generate it from this repository with a committed script (so it cannot drift), publish it
-as the dedicated public verification repo, run the managed throwaway deploy + verify from
-it, and only then redeploy the production stack from the same tree.
+Generate it with the committed script `script/generate_verify_tree.sh` (it emits the tree
+deterministically and fails if the source layout drifts), publish it as the dedicated public
+verification repo, run the managed throwaway deploy + verify from it, and only then redeploy
+the production stack from the same tree.
+
+Promoting the engine to the workspace root changes Rust's crate-metadata hashes, so the tree
+builds to a wasm of the same size as a plain repo build but a different sha256. The tree build
+is deterministic and path-independent, so this is expected and correct: deploy the artifact
+built **from the tree**, and `cargo stylus verify` (which rebuilds the published tree) will
+match the on-chain bytes. Run `script/generate_verify_tree.sh --build` to regenerate and check
+the wasm against the recorded size and hash.
