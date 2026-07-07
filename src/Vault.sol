@@ -592,27 +592,35 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context {
     ///@param user User removing the collateral
     function _checkMR(uint256 amount, address user, uint256 price) private view returns (bool) {
         // `price` is supplied by removeCollateral (a single oracle read reused for PnL + MR).
-        (uint256 balanceStable, uint256 balanceAsset, uint256 debtStable, uint256 debtAsset,,,,) =
-            IPerpPair(perpPair).userVirtualTraderPosition(user);
-
-        (,, uint256 lpStableDebt, uint256 lpAssetDebt) = IPerpPair(perpPair).liquidityPosition(user);
-        (uint256 lpStableBalance, uint256 lpAssetBalance) = IPerpPair(perpPair).getLpLiquidityBalance(user);
-
+        // One engine call returns the margin ratio plus the raw position/LP fields and
+        // maxLpLeverage/MMR the bad-debt override below needs — replacing the ~12 separate
+        // cross-contract reads the fan-out used to make. The override itself stays here.
         uint256 hypotheticalCollateral = userCollateral[user] - amount;
-        uint256 lastOpTimestamp = IPerpPair(perpPair).lastOperationTimestamp();
-        uint256 calculatedMMR = UtilMath.calcMR(user, price, perpPair, hypotheticalCollateral, lastOpTimestamp);
+        (
+            uint256 calculatedMMR,
+            uint256 balanceStable,
+            uint256 balanceAsset,
+            uint256 debtStable,
+            uint256 debtAsset,
+            uint256 lpStableDebt,
+            uint256 lpAssetDebt,
+            uint256 lpStableBalance,
+            uint256 lpAssetBalance,
+            uint256 maxLpLev,
+            uint256 mmr
+        ) = IPerpPair(perpPair).marginCheckData(user, price, hypotheticalCollateral);
 
         debtStable = debtStable > balanceStable ? debtStable - balanceStable : 0;
         debtAsset = debtAsset > balanceAsset ? debtAsset - balanceAsset : 0;
         if (lpStableBalance + lpAssetBalance != 0) {
             if (
-                hypotheticalCollateral * IPerpPair(perpPair).maxLpLeverage()
+                hypotheticalCollateral * maxLpLev
                     < debtStable + lpStableDebt + (debtAsset + lpAssetDebt) * price / oracleDecimals
             ) {
                 calculatedMMR = 0;
             }
         }
-        return calculatedMMR >= IPerpPair(perpPair).MMR();
+        return calculatedMMR >= mmr;
     }
 
     function _msgSender() internal view override(Context, ERC2771Context) returns (address sender) {

@@ -746,6 +746,57 @@
         assert_eq!(mr, U256::from(1_333_333u64), "MR = 4000e18*1e6/3000e18");
     }
 
+    // margin_check_data (the Vault's one-call margin read) must return the SAME margin ratio as
+    // calc_mr — both build on margin_check_core — plus raw fields matching the individual getters
+    // and maxLpLeverage/MMR. Same state as calc_mr_pure_asset_position (last_op == block ts).
+    #[test]
+    fn margin_check_data_matches_calc_mr_and_getters() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        let ts = 1_700_000_000u64;
+        vm.set_block_timestamp(ts);
+        let mut e = PerpEngine::from(&vm);
+        e.liquidity_m_decimals.set(cm::i(U256::from(10_000u64) * wad));
+        e.funding_rate_decimals.set(wad);
+        e.liquidity_g_decimals.set(U256::from(10_000_000_000u64));
+        e.funding_rate.set(U256::ZERO);
+        e.funding_rate_sign.set(true);
+        e.global_liquidity_stable.set(U256::from(18_000_000u64) * wad);
+        e.global_liquidity_asset.set(U256::from(6_000u64) * wad);
+        e.last_operation_timestamp.set(U64::from(ts));
+        e.max_lp_leverage.set(U8::from(10u8));
+        e.mmr.set(U32::from(40_000u32));
+
+        let user = addr(0xAB);
+        {
+            let mut p = e.user_virtual_trader_position.setter(user);
+            p.balance_asset.set(wad); // 1e18 asset, no debt/funding/LP
+        }
+
+        let price = U256::from(300_000_000_000u64);
+        let collateral = U256::from(1_000u64) * wad;
+        let last_op = U256::from(e.last_operation_timestamp.get());
+        let expected_mr = e.calc_mr(user, price, collateral, last_op).expect("calc_mr");
+
+        let (mr, bs, ba, ds, da, lpds, lpda, slp, alp, max_lp, mmr) =
+            e.margin_check_data(user, price, collateral).expect("margin_check_data");
+
+        assert_eq!(mr, expected_mr, "margin_check_data MR must equal calc_mr");
+        let vp = e.user_virtual_trader_position.getter(user);
+        assert_eq!(bs, vp.balance_stable.get());
+        assert_eq!(ba, vp.balance_asset.get());
+        assert_eq!(ds, vp.debt_stable.get());
+        assert_eq!(da, vp.debt_asset.get());
+        let lp = e.liquidity_position.getter(user);
+        assert_eq!(lpds, lp.debt_stable.get());
+        assert_eq!(lpda, lp.debt_asset.get());
+        let (elp_s, elp_a) = e.get_lp_liquidity_balance(user);
+        assert_eq!(slp, elp_s);
+        assert_eq!(alp, elp_a);
+        assert_eq!(max_lp, U256::from(10u64), "maxLpLeverage");
+        assert_eq!(mmr, U256::from(40_000u64), "MMR");
+    }
+
     // remove_liquidity with the removal fee waived (maxFee=0): an identity-snapshot
     // LP of (1000e18 stable, 2e18 asset) is pulled entirely back into the trader's
     // virtual balances; globals drop by the removed amounts; dx0/dy0 reset; exposure

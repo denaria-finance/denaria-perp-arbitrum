@@ -101,6 +101,47 @@ abstract contract InternalPerpLogic is PerpFunding, ReentrancyGuardTransient {
         );
     }
 
+    ///@dev Single-call margin data for the Vault's collateral-removal check: the margin ratio plus
+    ///     the raw position/LP fields and maxLpLeverage/MMR its bad-debt override needs. Returns the
+    ///     same values Vault._checkMR used to read one by one; the override stays in the Vault.
+    ///@param user Target user.
+    ///@param price Oracle price for the asset.
+    ///@param collateral Hypothetical collateral covering the position after removal.
+    function marginCheckData(
+        address user,
+        uint256 price,
+        uint256 collateral
+    )
+        external
+        view
+        returns (
+            uint256 marginRatio,
+            uint256 balanceStable,
+            uint256 balanceAsset,
+            uint256 debtStable,
+            uint256 debtAsset,
+            uint256 lpDebtStable,
+            uint256 lpDebtAsset,
+            uint256 lpBalanceStable,
+            uint256 lpBalanceAsset,
+            uint256 maxLpLev,
+            uint256 mmr
+        )
+    {
+        marginRatio = UtilMath.calcMR(user, price, address(this), collateral, lastOperationTimestamp);
+        VirtualTraderPosition storage vp = userVirtualTraderPosition[user];
+        balanceStable = vp.balanceStable;
+        balanceAsset = vp.balanceAsset;
+        debtStable = vp.debtStable;
+        debtAsset = vp.debtAsset;
+        LiquidityPosition storage lp = liquidityPosition[user];
+        lpDebtStable = lp.debtStable;
+        lpDebtAsset = lp.debtAsset;
+        (lpBalanceStable, lpBalanceAsset) = getLpLiquidityBalance(user);
+        maxLpLev = maxLpLeverage;
+        mmr = MMR;
+    }
+
     ///@dev Moves the PnL of the user to the user's Collateral.
     function realizePnL(bytes memory unverifiedReport) external nonReentrant returns (uint256, bool) {
         IOracleMiddleware(oracle).verifyReportIfNecessary(unverifiedReport);

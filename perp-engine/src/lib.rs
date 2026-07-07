@@ -864,6 +864,21 @@ impl PerpEngine {
         Ok(U256::from(self.max_lp_leverage.get()))
     }
 
+    /// `marginCheckData(user, price, collateral)` — the Vault's whole margin-removal read in one
+    /// call: (marginRatio, balanceStable, balanceAsset, debtStable, debtAsset, lpDebtStable,
+    /// lpDebtAsset, lpBalanceStable, lpBalanceAsset, maxLpLeverage, MMR). Replaces the Vault's
+    /// ~12-read `UtilMath.calcMR` fan-out; the bad-debt override stays in the Vault.
+    #[selector(name = "marginCheckData")]
+    #[allow(clippy::type_complexity)]
+    pub fn margin_check_data_public(
+        &self,
+        user: Address,
+        price: U256,
+        collateral: U256,
+    ) -> Result<(U256, U256, U256, U256, U256, U256, U256, U256, U256, U256, U256), Vec<u8>> {
+        self.margin_check_data(user, price, collateral)
+    }
+
     /// `userVirtualTraderPosition(user)` — the 8-field struct auto-getter shape the Vault
     /// decodes: (balanceStable, balanceAsset, debtStable, debtAsset, fundingFee,
     /// fundingFeeSign, initialFundingRate, initialFundingRateSign).

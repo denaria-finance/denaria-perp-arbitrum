@@ -197,6 +197,14 @@ interface IPerpPair {
         view
         returns (uint256 initialStableShares, uint256 initialAssetShares, uint256 debtStable, uint256 debtAsset);
     function maxLpLeverage() external view returns (uint256);
+    function marginCheckData(
+        address user,
+        uint256 price,
+        uint256 collateral
+    )
+        external
+        view
+        returns (uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256);
     function minimumLiquidityMovement() external view returns (uint256);
     function minimumTradeSize() external view returns (uint256);
     function trade(

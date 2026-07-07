@@ -112,8 +112,18 @@ impl PerpEngine {
         Ok(cm::md(tot_coll, mmr_decimals, position_value))
     }
 
-    /// Solidity `UtilMath.calcMR(user, price, perpPair, collateral, lastOperationTimestamp)`.
-    pub(crate) fn calc_mr(&self, user: Address, price: U256, collateral: U256, last_op_ts: U256) -> Result<U256, Vec<u8>> {
+    /// Shared body of the margin check: reads the position/LP state ONCE and returns the
+    /// margin ratio together with the raw fields a caller's bad-debt override needs
+    /// (position balances/debts, LP debts, LP balances). `calc_mr` and the public
+    /// `margin_check_data` getter both build on this so they stay bit-identical.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn margin_check_core(
+        &self,
+        user: Address,
+        price: U256,
+        collateral: U256,
+        last_op_ts: U256,
+    ) -> Result<(U256, U256, U256, U256, U256, U256, U256, U256, U256), Vec<u8>> {
         let (stable_lp, asset_lp) = self.get_lp_liquidity_balance(user);
 
         let vp = self.user_virtual_trader_position.getter(user);
@@ -141,7 +151,7 @@ impl PerpEngine {
         let (funding_fee, funding_fee_sign) =
             cm::signed_sum(pos_funding_fee, pos_funding_fee_sign, local_ff, local_ff_sign);
 
-        self.calc_hypothetical_mr(
+        let mr = self.calc_hypothetical_mr(
             stable_lp + balance_stable,
             asset_lp + balance_asset,
             debt_stable + lp_debt_stable,
@@ -150,7 +160,29 @@ impl PerpEngine {
             funding_fee_sign,
             price,
             collateral,
-        )
+        )?;
+        Ok((mr, balance_stable, balance_asset, debt_stable, debt_asset, lp_debt_stable, lp_debt_asset, stable_lp, asset_lp))
+    }
+
+    /// Solidity `UtilMath.calcMR(user, price, perpPair, collateral, lastOperationTimestamp)`.
+    pub(crate) fn calc_mr(&self, user: Address, price: U256, collateral: U256, last_op_ts: U256) -> Result<U256, Vec<u8>> {
+        Ok(self.margin_check_core(user, price, collateral, last_op_ts)?.0)
+    }
+
+    /// Solidity `Vault._checkMR`'s margin read in ONE WASM frame: the margin ratio plus the raw
+    /// position/LP fields and `maxLpLeverage`/`MMR` its bad-debt override needs, instead of the
+    /// ~12 separate cross-contract reads the Vault used to make. Reads `lastOperationTimestamp`
+    /// internally, exactly as the Vault passed it before.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn margin_check_data(
+        &self,
+        user: Address,
+        price: U256,
+        collateral: U256,
+    ) -> Result<(U256, U256, U256, U256, U256, U256, U256, U256, U256, U256, U256), Vec<u8>> {
+        let last_op_ts = U256::from(self.last_operation_timestamp.get());
+        let (mr, bs, ba, ds, da, lpds, lpda, slp, alp) = self.margin_check_core(user, price, collateral, last_op_ts)?;
+        Ok((mr, bs, ba, ds, da, lpds, lpda, slp, alp, U256::from(self.max_lp_leverage.get()), U256::from(self.mmr.get())))
     }
 
     /// Solidity `internalPerpLogic.calcPnL(user, price)` — the close-path PnL
