@@ -62,7 +62,7 @@ impl PerpEngine {
                 let ta = self.global_liquidity_asset.get();
                 short_return = self.compute_short_return(
                     diff_asset, price, oracle_dec, ts, ts, ta,
-                    self.short_curve_parameter_a.get(), self.short_curve_parameter_b.get(),
+                    U256::from(100_000_000u64), U256::from(10_000_000u64),
                 );
             } else {
                 let ts = self.global_liquidity_stable.get();
@@ -74,7 +74,7 @@ impl PerpEngine {
                 }
                 short_return = self.compute_exact_amount_in_long(
                     diff_asset, price, oracle_dec, ts, ts, ta,
-                    self.long_curve_parameter_a.get(), self.long_curve_parameter_b.get(),
+                    U256::from(100_000_000u64), U256::from(10_000_000u64),
                 );
             }
         }

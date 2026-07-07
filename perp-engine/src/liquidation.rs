@@ -211,8 +211,8 @@ impl PerpEngine {
         if direction {
             let gs = self.global_liquidity_stable.get();
             let ga = self.global_liquidity_asset.get();
-            let short_a = self.short_curve_parameter_a.get();
-            let short_b = self.short_curve_parameter_b.get();
+            let short_a = U256::from(100_000_000u64);
+            let short_b = U256::from(10_000_000u64);
             let mut dy_prime = self.compute_short_return(d_amount, price, oracle_dec, gs, gs, ga, short_a, short_b);
             let slip = cm::calc_slip(cm::md(dy_prime, oracle_dec, d_amount), price, curve_dec);
             if slip > slip_liq_th * self.avg_slippage_s.get() {
@@ -241,8 +241,8 @@ impl PerpEngine {
             } else {
                 let gs = self.global_liquidity_stable.get();
                 let ga = self.global_liquidity_asset.get();
-                let short_a = self.short_curve_parameter_a.get();
-                let short_b = self.short_curve_parameter_b.get();
+                let short_a = U256::from(100_000_000u64);
+                let short_b = U256::from(10_000_000u64);
                 let exact_in = self.compute_exact_amount_in_long(d_amount, price, oracle_dec, gs, gs, ga, short_a, short_b);
                 let (pnl0, pnl0_sign) = self.calc_pnl_user(user, price)?;
                 let (pnl, pnl_sign) =

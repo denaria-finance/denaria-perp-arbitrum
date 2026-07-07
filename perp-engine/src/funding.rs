@@ -23,8 +23,8 @@ impl PerpEngine {
         let price_o = cm::md(price, wad, oracle_dec);
 
         let raw = cm::md(self.total_trader_exposure.get(), price_o, wad)
-            * self.funding_c_decimals.get()
-            * self.funding_rate_decimals.get();
+            * U256::from(100_000u64)
+            * U256::from(1_000_000_000_000_000_000u64);
 
         let denom_asset = cm::md(asset_liq, price_o, wad);
         let denom = U256::from(self.funding_c.get()) * (denom_asset + stable_liq);
@@ -57,7 +57,7 @@ impl PerpEngine {
         self.funding_rate.set(fr);
         self.funding_rate_sign.set(fr_sign);
 
-        let mut b = cm::i(cm::md(new_fr, self.liquidity_g_decimals.get(), self.funding_rate_decimals.get()));
+        let mut b = cm::i(cm::md(new_fr, self.liquidity_g_decimals.get(), U256::from(1_000_000_000_000_000_000u64)));
         if !new_fr_sign {
             b = -b;
         }
@@ -78,7 +78,7 @@ impl PerpEngine {
         let inv_lmd = self.liquidity_m_decimals.get();
         let lp = self.liquidity_position.getter(user);
         let vp = self.user_virtual_trader_position.getter(user);
-        let frd = self.funding_rate_decimals.get();
+        let frd = U256::from(1_000_000_000_000_000_000u64);
         let lgd = self.liquidity_g_decimals.get();
         let cur_fr = self.funding_rate.get();
         let cur_fr_sign = self.funding_rate_sign.get();

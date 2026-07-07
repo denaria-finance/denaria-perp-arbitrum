@@ -100,11 +100,11 @@ impl PerpEngine {
                 let dy0 = self.dy0.get();
                 let gs = self.global_liquidity_stable.get();
                 let ga = self.global_liquidity_asset.get();
-                let long_a = self.long_curve_parameter_a.get();
-                let long_b = self.long_curve_parameter_b.get();
+                let long_a = U256::from(100_000_000u64);
+                let long_b = U256::from(10_000_000u64);
                 let flat_fee = self.flat_trading_fee.get();
                 let trading_fee = self.trading_fee.get();
-                let trading_fee_dec = self.trading_fee_decimals.get();
+                let trading_fee_dec = U256::from(1_000_000_000_000_000_000u64);
                 let exact_in = self.compute_exact_amount_in_long(da2 + dx0, price, oracle_dec, gs, gs, ga, long_a, long_b);
                 let input_needed =
                     cm::md(exact_in - dy0 + flat_fee, trading_fee_dec, trading_fee_dec - trading_fee);

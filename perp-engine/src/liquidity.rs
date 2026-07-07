@@ -95,7 +95,7 @@ impl PerpEngine {
         let gs = self.global_liquidity_stable.get();
         let ga = self.global_liquidity_asset.get();
         let oracle_dec = U256::from(self.oracle_decimals.get());
-        let fee_decimals = self.liquidity_fee_decimals.get();
+        let fee_decimals = U256::from(10_000_000_000u64);
         let fee = cm::compute_liquidity_removal_fee(
             stable_to_remove, asset_to_remove, gs, ga, spot_price, oracle_dec,
             self.liquidity_max_fee.get(), self.liquidity_min_fee.get(), self.liquidity_fee_k.get(), fee_decimals,
@@ -314,13 +314,13 @@ impl PerpEngine {
         let mut fee = cm::compute_liquidity_deposit_fee(
             liquidity_stable, liquidity_asset, self.global_liquidity_stable.get(), self.global_liquidity_asset.get(),
             price, oracle_dec, self.liquidity_max_fee.get(), self.liquidity_min_fee.get(),
-            self.liquidity_fee_k.get(), self.liquidity_fee_decimals.get(),
+            self.liquidity_fee_k.get(), U256::from(10_000_000_000u64),
         );
         if self.global_liquidity_asset.get() == U256::ZERO && self.global_liquidity_stable.get() == U256::ZERO {
             fee = U256::ZERO;
         }
         let fee_value =
-            cm::md(liquidity_stable + cm::md(liquidity_asset, price, oracle_dec), fee, self.liquidity_fee_decimals.get());
+            cm::md(liquidity_stable + cm::md(liquidity_asset, price, oracle_dec), fee, U256::from(10_000_000_000u64));
         // L2: fee cap.
         if !(fee_value <= max_fee_value || max_fee_value == U256::ZERO) {
             return Err(err(b"L2"));

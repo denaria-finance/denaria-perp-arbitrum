@@ -102,9 +102,9 @@ impl PerpEngine {
         }
 
         let trading_fee = self.trading_fee.get();
-        let trading_fee_decimals = self.trading_fee_decimals.get();
+        let trading_fee_decimals = U256::from(1_000_000_000_000_000_000u64);
         let flat_trading_fee = self.flat_trading_fee.get();
-        let fee_frac_dec = self.fee_fractions_decimals.get();
+        let fee_frac_dec = U256::from(1_000_000u64);
         let fee_lp = U256::from(self.fee_lp.get());
         let ema_param = U256::from(self.ema_param.get());
 
@@ -120,8 +120,8 @@ impl PerpEngine {
                 let frontend_fee_part = cm::md(trading_fee_amount, fee_frontend, fee_frac_dec);
                 let dy0 = self.dy0.get();
                 let dx0 = self.dx0.get();
-                let long_a = self.long_curve_parameter_a.get();
-                let long_b = self.long_curve_parameter_b.get();
+                let long_a = U256::from(100_000_000u64);
+                let long_b = U256::from(10_000_000u64);
                 if frontend_address == Address::ZERO {
                     let inp = size - (trading_fee_amount - frontend_fee_part) + dy0;
                     trade_return = self
@@ -162,8 +162,8 @@ impl PerpEngine {
 
             let dx0 = self.dx0.get();
             let dy0 = self.dy0.get();
-            let short_a = self.short_curve_parameter_a.get();
-            let short_b = self.short_curve_parameter_b.get();
+            let short_a = U256::from(100_000_000u64);
+            let short_b = U256::from(10_000_000u64);
             short_total_trade_return = self
                 .compute_short_return(size + dx0, spot_price, oracle_dec, initial_guess + dy0, stable_liq + dy0, asset_liq - dx0, short_a, short_b)
                 - dy0;
