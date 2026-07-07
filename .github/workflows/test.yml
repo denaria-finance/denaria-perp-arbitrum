@@ -35,8 +35,12 @@ jobs:
         id: fmt
 
       - name: Run Forge build
+        # Size-gate the DEPLOYABLE contracts only. The differential-test reference contracts
+        # under test/ inherit the full Solidity PerpPair plus fixture-generation helpers, so
+        # they run over EIP-170; they are never deployed (Foundry deploys them for tests
+        # regardless of size). src/ still covers every real deployable, including PerpPair.
         run: |
-          forge build --sizes
+          forge build --sizes --skip 'test/**'
         id: build
 
       - name: Run Forge tests
