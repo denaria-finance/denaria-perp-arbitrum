@@ -61,6 +61,16 @@ The engine uses a fresh packed storage layout rather than mirroring Solidity sto
 slot-for-slot. Narrowed fields are restricted to values whose protocol ranges fit the
 target integer width; WAD-scale and accumulating quantities remain full-width.
 
+## Configuration Events
+
+The engine emits configuration-update events — `ParametersUpdated` and
+`LockedParameterUpdate` — so off-chain indexers and dashboards can observe parameter
+changes. They are retained deliberately: the engine is bounded by WASM activation size,
+not the 24 KB EVM bytecode limit (EIP-170), so there is no size pressure to drop them.
+If a future raw-WASM size reduction is ever required, these two events are low-risk
+removal candidates; dropping them would also align the engine's event surface with the
+size-optimized Solidity build.
+
 ## Solidity Periphery
 
 `StylusPerpMultiCalls` is the deployed manager for bundled and relayed flows. It forwards
