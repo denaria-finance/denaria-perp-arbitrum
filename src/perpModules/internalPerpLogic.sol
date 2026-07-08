@@ -49,11 +49,17 @@ abstract contract InternalPerpLogic is PerpFunding, ReentrancyGuardTransient {
         int256 m11 = actualM[1][1];
         int256 d = decimals.liquidityMDecimals;
 
-        // Combine dot product + division + cast in one expression
-        lpStableBalance = uint256((initialStableBalance * m00 + initialAssetBalance * m01) / d);
-        lpAssetBalance = uint256((initialStableBalance * m10 + initialAssetBalance * m11) / d);
+        // Compute the signed dot-product results first.
+        int256 stableResult = (initialStableBalance * m00 + initialAssetBalance * m01) / d;
+        int256 assetResult = (initialStableBalance * m10 + initialAssetBalance * m11) / d;
 
-        // Branchless-style min using ternary (compiler optimizes well)
+        // Clamp each leg to 0 if negative instead of wrapping on the uint256 cast: an
+        // ill-conditioned M(t)*M^-1(t0) can drive a leg negative, which would otherwise wrap
+        // to a huge value and inflate the LP balance up to the pool cap.
+        lpStableBalance = stableResult > 0 ? uint256(stableResult) : 0;
+        lpAssetBalance = assetResult > 0 ? uint256(assetResult) : 0;
+
+        // Cap at global liquidity.
         if (lpStableBalance > globalLiquidityStable) lpStableBalance = globalLiquidityStable;
         if (lpAssetBalance > globalLiquidityAsset) lpAssetBalance = globalLiquidityAsset;
     }

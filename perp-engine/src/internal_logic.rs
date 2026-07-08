@@ -18,8 +18,11 @@ impl PerpEngine {
         );
         let init_stable = cm::i(lp.initial_stable_balance.get());
         let init_asset = cm::i(lp.initial_asset_balance.get());
-        let mut lp_stable = cm::u((init_stable * am00 + init_asset * am01) / d);
-        let mut lp_asset = cm::u((init_stable * am10 + init_asset * am11) / d);
+        // Clamp each signed recovery leg to the pool floor (0) before the U256 cast and the
+        // global cap: an ill-conditioned M(t)·M⁻¹(t0) can drive a leg negative, and `cm::u`
+        // reverts on a negative I256. Mirrors Solidity `result > 0 ? uint256(result) : 0`.
+        let mut lp_stable = cm::u_or_zero((init_stable * am00 + init_asset * am01) / d);
+        let mut lp_asset = cm::u_or_zero((init_stable * am10 + init_asset * am11) / d);
         let gs = self.global_liquidity_stable.get();
         let ga = self.global_liquidity_asset.get();
         if lp_stable > gs {

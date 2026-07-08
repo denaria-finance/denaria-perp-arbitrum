@@ -636,6 +636,39 @@
         );
     }
 
+    // Negative-LP-balance clamp (parity + DoS-hardening): when a recovered leg
+    // (initialShares · M(t)·M⁻¹(t0)) goes negative, get_lp_liquidity_balance must return 0
+    // for that leg instead of reverting on the `cm::u` cast. Here M(t) flips the stable leg
+    // negative (m00 = -d) while leaving the asset leg positive (m11 = d), with an identity
+    // snapshot so actualM == M(t): stable raw leg = -initialStable (clamped to 0), asset raw
+    // leg = initialAsset (preserved). Pre-fix this path panicked in `cm::u`.
+    #[test]
+    fn lp_liquidity_balance_clamps_negative_leg() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        let d = U256::from(10_000u64) * wad; // 1e22
+        e.liquidity_m_decimals.set(cm::i(d));
+        e.liquidity_m00.set(-cm::i(d)); // stable leg -> negative recovery
+        e.liquidity_m11.set(cm::i(d)); // asset leg  -> positive recovery
+        e.global_liquidity_stable.set(U256::from(18_000_000u64) * wad);
+        e.global_liquidity_asset.set(U256::from(6_000u64) * wad);
+
+        let lpa = addr(0x02);
+        {
+            let mut lp = e.liquidity_position.setter(lpa);
+            lp.inverse_snapshot_m00.set(cm::i(d)); // identity snapshot -> actualM == M(t)
+            lp.inverse_snapshot_m11.set(cm::i(d));
+            lp.initial_stable_balance.set(U256::from(1_000u64) * wad);
+            lp.initial_asset_balance.set(U256::from(2u64) * wad);
+        }
+        assert_eq!(
+            e.get_lp_liquidity_balance(lpa),
+            (U256::ZERO, U256::from(2u64) * wad),
+            "negative stable leg clamps to 0, positive asset leg preserved"
+        );
+    }
+
     // Public config view: ReadParameters returns the 8-field tuple in PerpStorage
     // order (vault, oracle, minTradeSize, minLiquidityMovement, feeFrontend, feeLP,
     // insuranceFundCap, tickerAssetCurrency) — the manager reads [3] as liquidityTh.

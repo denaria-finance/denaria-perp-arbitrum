@@ -56,6 +56,17 @@ pub fn u(v: I256) -> U256 {
         Err(_) => panic!("U256"),
     }
 }
+/// `max(v, 0)` as `U256`. Mirrors the Solidity `v > 0 ? uint256(v) : 0` clamp: a
+/// non-positive signed value maps to `0` instead of reverting the way [`u`] does on a
+/// negative input. Used to clamp signed LP-recovery legs to the pool floor before the
+/// global cap, so an ill-conditioned matrix cannot revert the balance read.
+pub fn u_or_zero(v: I256) -> U256 {
+    if v > I256::ZERO {
+        u(v)
+    } else {
+        U256::ZERO
+    }
+}
 
 /// `(a*b)/c` in U256, outlined behind `#[inline(never)]` so the inlined expansion is
 /// emitted once instead of at every call site. Uses the same `*` and `/` operators in the
@@ -1205,6 +1216,35 @@ mod parity {
         let c = signed(input(v, "c"), v["inputs"]["cSign"].as_bool().unwrap());
         let d = signed(input(v, "d"), v["inputs"]["dSign"].as_bool().unwrap());
         (guess, a, b, c, d)
+    }
+
+    // Dependency-free randomized property test ("fuzz") for `u_or_zero`, the clamp the
+    // negative-LP-balance fix applies before the U256 cast. Over 100k pseudo-random signed
+    // inputs it must (a) never panic and (b) equal `max(v, 0)` — passing positives through
+    // unchanged like `u()`, mapping every non-positive value to 0. `u()` itself panics on a
+    // negative input, which is exactly the DoS the clamp removes.
+    #[test]
+    fn u_or_zero_fuzz_clamps_negatives() {
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        for _ in 0..100_000 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            // Magnitude < 2^128 (product of two u64) is always a valid I256.
+            let magnitude = U256::from(state) * U256::from(state ^ 0xA5A5_A5A5_A5A5_A5A5u64);
+            let vi = i(magnitude);
+            let v = if state & 1 == 0 { vi } else { -vi };
+            let got = u_or_zero(v);
+            if v > I256::ZERO {
+                assert_eq!(got, u(v), "positive leg passes through unchanged: {v}");
+            } else {
+                assert_eq!(got, U256::ZERO, "non-positive leg clamps to 0: {v}");
+            }
+        }
+        // Boundary cases.
+        assert_eq!(u_or_zero(I256::ZERO), U256::ZERO);
+        assert_eq!(u_or_zero(I256::MINUS_ONE), U256::ZERO);
+        assert_eq!(u_or_zero(i(U256::from(1u64))), U256::from(1u64));
     }
 
     #[test]
