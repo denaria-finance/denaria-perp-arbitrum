@@ -26,19 +26,19 @@ contract OracleTest is Test {
     ///@dev tests verifying multiple prices in sequence
     function testAddMultiplePrices(int192 price1, int192 price2, int192 price3) public {
         price1 = int192(bound(price1, 1e12, 1e40));
-        price2 = int192(bound(price2, 1e12, 1e40));
-        price3 = int192(bound(price3, 1e12, 1e40));
+        price2 = int192(bound(price2, price1 * 90 / 100, price1 * 110 / 100));
+        price3 = int192(bound(price3, price2 * 90 / 100, price2 * 110 / 100));
 
         oracle.verifyReportIfNecessary(price1, uint32(block.timestamp));
         int192 returnPrice = oracle.getPrice();
         assertTrue(returnPrice == price1 / 1e10, "1");
         console.log(oracle.lastPrices(1));
 
-        skip(2);
+        skip(3602);
         oracle.verifyReportIfNecessary(price2, uint32(block.timestamp));
         console.log(oracle.lastPrices(2));
         returnPrice = oracle.getPrice();
-        assertTrue(returnPrice == price1 / 1e10, "2");
+        assertTrue(returnPrice == price2 / 1e10, "2");
 
         skip(3604);
         oracle.verifyReportIfNecessary(price2, uint32(block.timestamp));
@@ -64,7 +64,6 @@ contract OracleTest is Test {
         uint256 price7 = price6 * 95 / 100;
         uint256 price8 = price7 * 102 / 100;
         uint256 price9 = price8 * 9000 / 100;
-        uint256 price10 = price8 * 90 / 100;
 
         int192 returnPrice;
 
@@ -119,7 +118,7 @@ contract OracleTest is Test {
         assertTrue(
             inConfidenceInterval(
                 uint256(uint192(abi.decode(entries[0].data, (int192)))),
-                (price3 * 3 + price4 * 15 + price5 * 12) / 30,
+                (price2 * 6 + price3 * 3 + price4 * 15 + price5 * 12) / 36,
                 1_000_000
             ),
             "twap1"
@@ -151,40 +150,33 @@ contract OracleTest is Test {
         assertTrue(
             inConfidenceInterval(
                 uint256(uint192(abi.decode(entries[0].data, (int192)))),
-                (price4 * 15 + price5 * 12 + price6 * 6 + price7 * 2) / 35,
+                (price3 + price4 * 15 + price5 * 12 + price6 * 6 + price7 * 2) / 36,
                 1_000_000
             ),
             "twap3"
         );
 
         skip(1000);
+        assertFalse(
+            oracle.checkLastPriceVolatility(int192(uint192(price9)), uint32(block.timestamp)), "price9 should fail twap"
+        );
+        int192 acceptedPriceBeforeSpike = oracle.lastDecodedPrice();
+        uint256 updateIndexBeforeSpike = oracle.updateIndex();
         oracle.verifyReportIfNecessary(int192(uint192(price9)), uint32(block.timestamp));
-        vm.expectRevert(bytes("OM3"));
+        assertEq(oracle.lastDecodedPrice(), acceptedPriceBeforeSpike, "price9 should not be exposed");
+        assertEq(oracle.updateIndex(), updateIndexBeforeSpike + 1, "price9 should still feed twap history");
+        vm.expectRevert(bytes("OM2"));
         returnPrice = oracle.getPrice();
-        //assertTrue(uint256(uint192(returnPrice)) == price9/1e10, "price9");
 
         entries = vm.getRecordedLogs();
         assertEq(entries.length, 1);
         assertTrue(
             inConfidenceInterval(
                 uint256(uint192(abi.decode(entries[0].data, (int192)))),
-                (price5 * 12 + price6 * 6 + price7 * 2 + price8 * 10) / 30,
+                (price4 * 6 + price5 * 12 + price6 * 6 + price7 * 2 + price8 * 10) / 36,
                 1_000_000
             ),
             "twap4"
-        );
-
-        skip(5000);
-        oracle.verifyReportIfNecessary(int192(uint192(price10)), uint32(block.timestamp));
-        skip(400);
-        oracle.verifyReportIfNecessary(int192(uint192(price8)), uint32(block.timestamp));
-        returnPrice = oracle.getPrice();
-        assertTrue(uint256(uint192(returnPrice)) == price8 / 1e10, "price8bis");
-
-        entries = vm.getRecordedLogs();
-        assertEq(entries.length, 1);
-        assertTrue(
-            inConfidenceInterval(uint256(uint192(abi.decode(entries[0].data, (int192)))), (price10), 1_000_000), "twap5"
         );
     }
 
@@ -211,6 +203,68 @@ contract OracleTest is Test {
 
         // Allow small tolerance for rounding differences
         assertTrue(inConfidenceInterval(computedTwap, expectedTwap, 1_000_000), "TWAP computation incorrect");
+    }
+
+    /// @dev a stored price older than the full lookback window still carries into the TWAP, so a
+    /// tail-only spike is rejected and does not become the exposed price (but still feeds history).
+    function testSparseHistoryCarriesPriceAcrossFullTwapWindow() public {
+        oracle = new TWAPOracleMiddleware(300, "oracle", 1);
+
+        vm.warp(12 hours);
+        oracle.verifyReportIfNecessary(100, uint32(vm.getBlockTimestamp()));
+
+        vm.warp(13 hours + 59 minutes);
+        oracle.verifyReportIfNecessary(60, uint32(vm.getBlockTimestamp()));
+
+        vm.warp(14 hours);
+        assertEq(oracle.getTWAP(), 99, "full-window twap should carry pre-window price");
+        assertFalse(
+            oracle.checkLastPriceVolatility(31, uint32(vm.getBlockTimestamp())), "tail-only twap accepted bad price"
+        );
+
+        oracle.verifyReportIfNecessary(31, uint32(vm.getBlockTimestamp()));
+        assertEq(oracle.lastDecodedPrice(), 60, "twap-invalid price should not be exposed");
+        assertEq(oracle.lastPrices(3), 31, "twap-invalid price should still feed history");
+    }
+
+    /// @dev a TWAP-invalid report is appended to history but does not overwrite the cached (exposed) price.
+    function testTwapInvalidReportDoesNotPoisonStoredPrice() public {
+        int192 basePrice = 100 * 1e10;
+        int192 invalidPrice = 1000 * 1e10;
+
+        oracle.verifyReportIfNecessary(basePrice, uint32(vm.getBlockTimestamp()));
+        assertEq(oracle.lastDecodedPrice(), basePrice, "initial price not stored");
+
+        uint32 firstTimestamp = uint32(vm.getBlockTimestamp());
+        skip(1);
+        oracle.verifyReportIfNecessary(invalidPrice, uint32(vm.getBlockTimestamp()));
+
+        assertEq(oracle.lastDecodedPrice(), basePrice, "invalid report poisoned cached price");
+        assertEq(oracle.lastDecodedValidFromTimestamp(), firstTimestamp, "invalid report poisoned timestamp");
+        assertEq(oracle.updateIndex(), 3, "invalid report was not appended to history");
+        assertEq(oracle.lastPrices(2), uint192(invalidPrice), "invalid report did not feed twap history");
+        assertEq(oracle.getPrice(), basePrice / 1e10, "cached price should remain readable");
+    }
+
+    /// @dev repeated volatile reports eventually pull the TWAP into the new regime and get exposed.
+    function testVolatileMarketCanConvergeToNewPriceRegime() public {
+        oracle = new TWAPOracleMiddleware(300, "oracle", 1);
+
+        vm.warp(12 hours);
+        oracle.verifyReportIfNecessary(100, uint32(vm.getBlockTimestamp()));
+
+        vm.warp(13 hours);
+        oracle.verifyReportIfNecessary(400, uint32(vm.getBlockTimestamp()));
+        assertEq(oracle.lastDecodedPrice(), 100, "first spike should not be exposed");
+
+        vm.warp(13 hours + 30 minutes);
+        oracle.verifyReportIfNecessary(400, uint32(vm.getBlockTimestamp()));
+        assertEq(oracle.lastDecodedPrice(), 100, "twap should not have converged yet");
+
+        vm.warp(14 hours);
+        oracle.verifyReportIfNecessary(400, uint32(vm.getBlockTimestamp()));
+        assertEq(oracle.lastDecodedPrice(), 400, "repeated volatile reports should converge twap");
+        assertEq(oracle.getPrice(), 400, "new accepted regime should be exposed");
     }
 
     //support functions

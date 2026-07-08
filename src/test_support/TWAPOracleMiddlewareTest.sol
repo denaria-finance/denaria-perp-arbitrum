@@ -141,95 +141,57 @@ contract TWAPOracleMiddleware {
         public
         returns (bool acceptable)
     {
-        uint192 twap;
-        uint256 i;
-
-        if (updateIndex == 1) {
+        uint256 twap = _computeTWAP(priceValidFromTimestamp);
+        if (twap == 0) {
             return true;
         }
 
-        uint256 startIndex = 1;
-        uint256 endIndex = 1;
-        uint32 usablePrices;
-
-        // The following for cycle is used to determine how many verified prices have been saved in the period from priceValidFromTimestamp-loockbackPeriod to priceValidFromTimestamp,
-        // in order to know if there are sufficient data point to base the TWAP calculation on.
-        // Pay attention to the fact that the for loops back chronologically, so first we find endIndex, then startIndex, with startIndex <= endIndex (therefore lastTimestamp[startIndex]<=lastTimestamp[endIndex]).
-        for (i = updateIndex - 1; i > 0; --i) {
-            if (lastTimestamps[i] < priceValidFromTimestamp) {
-                // The following if check is the exit condition from the for cycle, that happens if the currently considered lastTimestamp[i] is outside of the loockbackPeriod for the first time.
-                if (lastTimestamps[i] < priceValidFromTimestamp - lookbackPeriod) {
-                    // This could revert if priceValidFromTimestamp < lookbackPeriod, but it would mean that a timestamp in the early 1970s has been passed as an input.
-                    // This is not a timestamp that can be passed by the rest of the perp system, so it is a non-issue.
-                    startIndex = i + 1; // if we know we're exiting from the for cycle, the correct startIndex is the one analyzed in the previous iteration (i+1)
-                    break;
-                }
-
-                if (endIndex == 1) {
-                    // looking back chronologically, we set the endIndex if it has not been set yet.
-                    endIndex = i;
-                }
-
-                usablePrices++; // for each cycle iteration where the lastTimestamps[i] is still in the lookback period, we increment the counter for the found usable prices datapoints.
-            }
-        }
-
-        if (usablePrices == 0) {
-            // if we do not have any usable prices in the lookbackPeriod before the input priceValidFromTimestamp, we cannot verify the TWAP and return true.
-            return true;
-        } else {
-            // if we have at least one usable price in the lookbackPeriod before the input priceValidFromTimestamp, we can proceed with the TWAP calculation.
-
-            for (
-                i = startIndex; // this for loop cycles from the already found startIndex to endIndex (lastPrices[endIndex not yet considered]).
-                i < endIndex;
-                ++i
-            ) {
-                twap += lastPrices[i] * (lastTimestamps[i + 1] - lastTimestamps[i]);
-            }
-
-            twap += lastPrices[endIndex] * (priceValidFromTimestamp - lastTimestamps[endIndex]); // the last contribution from lastTimestamps[endIndex] to priceValidFromTimestamp is added to the twap.
-
-            twap = twap / (priceValidFromTimestamp - lastTimestamps[startIndex]);
-
-            emit DebugEvent(twap); // the twap is divided by the total time period between lastTimestamps[startIndex] and priceValidFromTimestamp.
-
-            return inConfidenceInterval(uint256(int256(priceToCheck)), uint256(twap), TWAPTolerance); // the input priceToCheck is evaluated against the calculated twap.
-        }
+        emit DebugEvent(twap);
+        return inConfidenceInterval(uint256(int256(priceToCheck)), twap, TWAPTolerance);
     }
 
     function getTWAP() public view returns (uint256) {
-        uint256 currentTime = block.timestamp;
-        uint256 windowStart = currentTime - lookbackPeriod;
+        return _computeTWAP(block.timestamp);
+    }
 
+    function _computeTWAP(uint256 priceValidFromTimestamp) internal view returns (uint256) {
+        if (updateIndex == 1) {
+            return 0;
+        }
+
+        uint256 windowStart = priceValidFromTimestamp > lookbackPeriod ? priceValidFromTimestamp - lookbackPeriod : 0;
         uint256 weightedPriceSum = 0;
         uint256 totalTime = 0;
-
         uint256 i = updateIndex - 1;
+        uint256 intervalEnd = priceValidFromTimestamp;
+
+        while (i > 0 && lastTimestamps[i] >= priceValidFromTimestamp) {
+            unchecked {
+                --i;
+            }
+        }
 
         while (i > 0) {
             uint256 price = lastPrices[i];
-            uint256 timestamp;
-            if (i == updateIndex - 1) {
-                timestamp = currentTime;
-            } else {
-                timestamp = lastTimestamps[i + 1];
-            }
-            uint256 prevTimestamp = lastTimestamps[i];
+            uint256 timestamp = lastTimestamps[i];
 
-            // use < not <= so we include the full interval when equal
-            if (prevTimestamp < windowStart) {
-                uint256 overlap = timestamp - windowStart;
+            if (timestamp < windowStart) {
+                uint256 overlap = intervalEnd - windowStart;
                 weightedPriceSum += price * overlap;
                 totalTime += overlap;
                 break;
             }
 
-            uint256 timeDelta = timestamp - prevTimestamp;
-            weightedPriceSum += price * timeDelta;
-            totalTime += timeDelta;
+            if (intervalEnd > timestamp) {
+                uint256 timeDelta = intervalEnd - timestamp;
+                weightedPriceSum += price * timeDelta;
+                totalTime += timeDelta;
+            }
 
-            i--;
+            intervalEnd = timestamp;
+            unchecked {
+                --i;
+            }
         }
 
         if (totalTime == 0) return 0;
@@ -251,9 +213,13 @@ contract TWAPOracleMiddleware {
      * @notice Verifies an unverified data report if at least maxTimeDelta seconds have passed since the last verified price.
      */
     function verifyReportIfNecessary(int192 price, uint32 validFromTimestamp) external {
-        if ((block.timestamp > lastDecodedValidFromTimestamp + maxTimeDelta)) {
+        if (validFromTimestamp > _lastStoredTimestamp()) {
             verifyReport(price, validFromTimestamp);
         }
+    }
+
+    function _lastStoredTimestamp() internal view returns (uint32) {
+        return updateIndex == 1 ? 0 : lastTimestamps[updateIndex - 1];
     }
 
     /**
@@ -276,23 +242,37 @@ contract TWAPOracleMiddleware {
     function verifyReport(int192 price, uint32 validFromTimestamp) private {
         // Thrown when the latest price report contains unacceptable parameters.
         require(
-            (validFromTimestamp >= block.timestamp - maxTimeDelta)
-                && (validFromTimestamp >= lastDecodedValidFromTimestamp),
+            (validFromTimestamp >= block.timestamp - maxTimeDelta) && (validFromTimestamp > _lastStoredTimestamp())
+                && (price >= oracleDecimalsStepdownFactor),
             "Error on verifyReport: UnacceptablePriceParameters"
         );
 
-        // Log price from the verified report
-        //emit DecodedPrice(price);
-
-        //require(checkLastPriceVolatility(price, validFromTimestamp), "new price does not follow time weighted avg price threshold!");
-
-        // Store locally the data from the last report
-        lastDecodedValidFromTimestamp = validFromTimestamp;
-        lastDecodedPrice = price;
+        bool acceptedPrice = _checkLastPriceVolatility(price, validFromTimestamp);
 
         lastPrices[updateIndex] = uint192(price);
         lastTimestamps[updateIndex] = validFromTimestamp;
         updateIndex++;
+
+        if (acceptedPrice) {
+            // Store locally the data from the last accepted report returned by getPrice().
+            lastDecodedValidFromTimestamp = validFromTimestamp;
+            lastDecodedPrice = price;
+        }
+    }
+
+    function _checkLastPriceVolatility(
+        int192 priceToCheck,
+        uint192 priceValidFromTimestamp
+    )
+        private
+        view
+        returns (bool)
+    {
+        uint256 twap = _computeTWAP(priceValidFromTimestamp);
+        if (twap == 0) {
+            return true;
+        }
+        return inConfidenceInterval(uint256(int256(priceToCheck)), twap, TWAPTolerance);
     }
 
     /**
