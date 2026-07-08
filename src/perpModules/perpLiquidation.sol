@@ -36,6 +36,7 @@ abstract contract PerpLiquidation is PerpAutoClose {
         external
         nonReentrant
     {
+        require(user != _msgSender(), "LQ0");
         IOracleMiddleware(oracle).verifyReportIfNecessary(unverifiedReport);
         uint256 spotPrice = getPrice();
         VirtualTraderPosition storage userPosition = userVirtualTraderPosition[user];

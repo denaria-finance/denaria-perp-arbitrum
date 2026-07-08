@@ -51,6 +51,12 @@ impl PerpEngine {
         liquidated_position_size: U256,
         price: U256,
     ) -> Result<(), Vec<u8>> {
+        // Reject self-liquidation (user == liquidator). In the shared body so both the single
+        // (liquidate_impl) and batch (batch_liquidate_impl) paths are covered; a self-liq target
+        // in a batch reverts the whole batch, matching the manager loop's revert-all semantics.
+        if user == liquidator {
+            return Err(err(b"LQ0"));
+        }
         let last_op_ts = U256::from(self.last_operation_timestamp.get());
         self.update_fg(price, last_op_ts)?;
 

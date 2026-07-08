@@ -1805,6 +1805,15 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
     }
 
     /// @dev simple sanity test: batchLiquidate two long traders, their MR improves and the liquidator gets a position
+    ///@dev A user cannot liquidate their own position: the shared liquidate body rejects
+    /// user == msg.sender with LQ0 before any oracle/margin work, so no position setup is needed.
+    function testSelfLiquidationRevert() public {
+        address bob = makeAddr("bob");
+        vm.expectRevert(bytes("LQ0"));
+        vm.prank(bob);
+        perpPair.liquidate(bob, 1000 * 1e18, fakeReport);
+    }
+
     function testBatchLiquidateTwoLongTraders() public {
         uint256 initialPrice = 100;
         oracle.setPrice(initialPrice * oracleDecimals);

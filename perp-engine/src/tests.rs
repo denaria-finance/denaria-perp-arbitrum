@@ -1199,6 +1199,43 @@
         assert_eq!(ea.last_operation_timestamp.get(), eb.last_operation_timestamp.get(), "last_op_ts");
     }
 
+    // Self-liquidation guard (LQ0): the shared liquidate body rejects user == liquidator before
+    // any funding/margin work. Tested directly on liquidate_with_price, so no oracle read is
+    // needed (the guard is position-independent — it fires on identity alone).
+    #[test]
+    fn liquidate_rejects_self_liquidation() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        let actor = addr(0x71);
+        let price = U256::from(300_000_000_000u64);
+        assert_eq!(
+            e.liquidate_with_price(actor, actor, wad, price),
+            Err(err(b"LQ0")),
+            "user == liquidator reverts LQ0"
+        );
+    }
+
+    // A self-liquidating target in a batch reverts the WHOLE batch with LQ0 (revert-all, matching
+    // the manager loop). Goes through batch_liquidate_impl, which reads the oracle -> stub gate.
+    #[cfg(feature = "stub_boundary")]
+    #[test]
+    fn batch_liquidate_reverts_all_on_self_liquidation() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        let liquidator = addr(0x71);
+        assert_eq!(
+            e.batch_liquidate_impl(liquidator, vec![liquidator], vec![wad], Bytes::new()),
+            Err(err(b"LQ0")),
+            "batch with a self-liq target reverts LQ0"
+        );
+    }
+
     // enableAutoClose stores the config (require profitTh>0||lossTh>0); disableAutoClose
     // deletes it. Neither makes external calls, so they run in the default build.
     #[test]
