@@ -912,6 +912,34 @@
         let _ = pnl_sign;
     }
 
+    // Auto-close bad-debt guard (parity): the C1 self-close guard rejects closing a
+    // bad-debt position (loss >= collateral) when is_self_close is set. The auto-close path now
+    // forces is_self_close=true, so a distinct auto-close caller can no longer close a bad-debt
+    // position (which would drain the insurance fund). Verified directly on the shared close body.
+    #[test]
+    fn self_close_rejects_bad_debt_c1() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        let user = addr(0x44);
+        {
+            // Pure over-indebted position: no asset/debt-asset (diff == 0 -> dust, no close-out
+            // trade), only stable debt -> the realized PnL is a straight loss of the debt, well
+            // above collateral. This reaches the C1 guard directly (no trade to revert first).
+            let mut p = e.user_virtual_trader_position.setter(user);
+            p.debt_stable.set(U256::from(100_000u64) * wad); // loss >> collateral
+        }
+        let price = U256::from(300_000_000_000u64); // 3000e8
+        let collateral = U256::from(1_000u64) * wad; // < the loss -> bad debt
+        assert_eq!(
+            e.close_and_withdraw_inner(U256::ZERO, U256::ZERO, addr(0xFE), user, price, collateral, true),
+            Err(err(b"C1")),
+            "self-close (is_self=true) of a bad-debt position reverts C1"
+        );
+    }
+
     // close on a pure long (balanceAsset 1e18, no debt/LP): the engine SELLs the asset
     // (short _trade), so the asset reserve grows by exactly the input size (1e18), the
     // position is cleared, and realized PnL is positive (~residual equity).

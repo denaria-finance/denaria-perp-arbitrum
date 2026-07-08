@@ -101,9 +101,11 @@ impl PerpEngine {
 
         let max_slippage = self.auto_close_users_data.getter(user).max_slippage.get();
         let max_liq_fee = self.auto_close_users_data.getter(user).max_liq_fee.get();
-        let is_self = caller == user;
+        // Force the C1 self-close bad-debt guard on auto-close regardless of caller: a distinct
+        // auto-close caller must not be able to close a bad-debt position (that would drain the
+        // insurance fund). The auto-close fee is still credited to the distinct `caller` above.
         let (cpnl, cpnl_sign) =
-            self.close_and_withdraw_inner(max_slippage, max_liq_fee, frontend_address, user, price, collateral, is_self)?;
+            self.close_and_withdraw_inner(max_slippage, max_liq_fee, frontend_address, user, price, collateral, true)?;
 
         #[cfg(not(feature = "stub_boundary"))]
         {

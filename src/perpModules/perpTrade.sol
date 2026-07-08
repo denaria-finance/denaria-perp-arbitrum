@@ -369,7 +369,7 @@ abstract contract PerpTrade is PerpLiquidity {
     {
         address user = _msgSender();
         IOracleMiddleware(oracle).verifyReportIfNecessary(unverifiedReport);
-        _closeAndWithdraw(maxSlippage, maxLiqFee, frontendAddress, user);
+        _closeAndWithdraw(maxSlippage, maxLiqFee, frontendAddress, user, true);
     }
 
     //Function to be called when exiting the system. It repays all debts (if possible) and returns final pnl
@@ -378,7 +378,15 @@ abstract contract PerpTrade is PerpLiquidity {
     ///@param maxLiqFee Maximum liquidity fee allowd for the liquidity removal by the user.
     ///@param frontendAddress Address that collects the fees due to the frontend used for this operation. Giving address(0) as frontendAddress will skip assigning the fees to a frontend.
     ///@param user User owning the position to close
-    function _closeAndWithdraw(uint256 maxSlippage, uint256 maxLiqFee, address frontendAddress, address user) internal {
+    function _closeAndWithdraw(
+        uint256 maxSlippage,
+        uint256 maxLiqFee,
+        address frontendAddress,
+        address user,
+        bool isSelfClose
+    )
+        internal
+    {
         // A designated frontend is required to close: the short buy-back grosses the stable
         // input up for the full trading fee, which only holds when the forward trade deducts
         // that full fee. The zero-address branch instead rebates the frontend-fee share into
@@ -481,7 +489,7 @@ abstract contract PerpTrade is PerpLiquidity {
         // Calculate PnL
         (uint256 pnl, bool pnlSign) = calcPnL(user, price);
 
-        if (_msgSender() == user && !pnlSign) {
+        if (isSelfClose && !pnlSign) {
             require(pnl < getCollateral(user), "C1"); //If user is closing his own positions (not liquidation) he can't do so if he's in bad debt.
         }
 

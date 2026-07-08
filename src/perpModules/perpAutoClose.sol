@@ -65,7 +65,7 @@ abstract contract PerpAutoClose is PerpTrade {
         userVirtualTraderPosition[user].debtStable += autoCloseFee;
         userVirtualTraderPosition[_msgSender()].balanceStable += autoCloseFee;
         _closeAndWithdraw(
-            autoCloseUsersData[user].maxSlippage, autoCloseUsersData[user].maxLiqFee, frontendAddress, user
+            autoCloseUsersData[user].maxSlippage, autoCloseUsersData[user].maxLiqFee, frontendAddress, user, true
         );
         _disableAutoClose(user);
     }

@@ -109,7 +109,7 @@ abstract contract PerpLiquidation is PerpAutoClose {
         int256 liquidationPnL = UtilMath.signedSumToInt(pnlBefore, !pnlBeforeSign, pnlAfter, pnlAfterSign);
 
         if (fraction == decimals.liquidationDecimals) {
-            _closeAndWithdraw(1e5, 1e10, _msgSender(), user);
+            _closeAndWithdraw(1e5, 1e10, _msgSender(), user, false);
             IVault(vault).removeAllCollateralForUser(user);
         }
 
