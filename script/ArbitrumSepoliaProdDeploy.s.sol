@@ -66,6 +66,9 @@ contract ArbitrumSepoliaProdDeploy is Script {
 
         // 3. LostAndFound (recovery flow the Vault links to).
         LostAndFound lostAndFound = new LostAndFound();
+        // The Vault needs VAULT_ROLE to route unclaimable transfers into recovery; without it the
+        // lost-and-found path reverts.
+        lostAndFound.grantRole(lostAndFound.VAULT_ROLE(), address(vault));
 
         // 4. Solidity-side wiring (pure storage setters — no engine call).
         manager.initializeAddresses(engine, address(vault));
@@ -76,6 +79,10 @@ contract ArbitrumSepoliaProdDeploy is Script {
         // Solidity-only post-deploy assertions (the engine-side checks run via cast).
         require(manager.perpPair() == engine, "manager.perpPair != engine");
         require(manager.vault() == address(vault), "manager.vault != vault");
+        require(
+            lostAndFound.hasRole(lostAndFound.VAULT_ROLE(), address(vault)),
+            "vault missing LostAndFound VAULT_ROLE"
+        );
 
         console2.log("Deployer", deployer);
         console2.log("PerpEngine (wasm, pre-deployed)", engine);
