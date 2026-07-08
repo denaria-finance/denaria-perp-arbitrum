@@ -761,6 +761,12 @@ pub fn compute_liquidity_removal_fee(
     if liquidity_max_fee == U256::ZERO {
         return U256::ZERO;
     }
+    // A fully one-sided pool (one side entirely removed) has no meaningful removal fee; waive it
+    // before the fee curve, which otherwise divides through the zeroed side. The deposit fee
+    // already carries this guard.
+    if initial_stable_liquidity == U256::ZERO || initial_asset_liquidity == U256::ZERO {
+        return U256::ZERO;
+    }
     let ratio_decimals = U256::from(10u64).pow(U256::from(18u64)); // 1e18
     let ten_e18 = U256::from(10u64) * ratio_decimals; // 10e18
     // Fees waived if almost no liquidity is left in the pool.
@@ -1245,6 +1251,57 @@ mod parity {
         assert_eq!(u_or_zero(I256::ZERO), U256::ZERO);
         assert_eq!(u_or_zero(I256::MINUS_ONE), U256::ZERO);
         assert_eq!(u_or_zero(i(U256::from(1u64))), U256::from(1u64));
+    }
+
+    // Removal-fee one-sided-pool guard: a pool with either initial side entirely removed has no
+    // meaningful removal fee and must return 0 (matching the deposit fee's existing guard) instead
+    // of dividing through the zeroed side. Explicit cases + a randomized property check.
+    #[test]
+    fn removal_fee_waives_one_sided_pool() {
+        let od = u256("100000000"); // 1e8
+        let price = u256("300000000000"); // 3000e8
+        let max_fee = u256("500000000"); // 5e8
+        let min_fee = U256::ZERO;
+        let k = u256("10000000000"); // 1e10
+        let fee_dec = u256("10000000000"); // 1e10
+        let some = u256("1000000000000000000000"); // 1000e18
+
+        // asset-only pool (initial stable == 0) -> 0
+        assert_eq!(
+            compute_liquidity_removal_fee(U256::ZERO, some, U256::ZERO, some, price, od, max_fee, min_fee, k, fee_dec),
+            U256::ZERO,
+            "initial stable == 0 waives the removal fee"
+        );
+        // stable-only pool (initial asset == 0) -> 0
+        assert_eq!(
+            compute_liquidity_removal_fee(some, U256::ZERO, some, U256::ZERO, price, od, max_fee, min_fee, k, fee_dec),
+            U256::ZERO,
+            "initial asset == 0 waives the removal fee"
+        );
+
+        // Randomized property: whenever either initial side is 0, the fee is 0 and it never panics.
+        let mut state: u64 = 0xD1B5_4A32_D192_ED03;
+        for _ in 0..50_000 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let s = U256::from(state) * U256::from(1_000_000u64);
+            let a = U256::from(state ^ 0x5555_5555_5555_5555u64) * U256::from(1_000_000u64);
+            let (init_s, init_a) = if state & 1 == 0 { (U256::ZERO, a) } else { (s, U256::ZERO) };
+            let fee = compute_liquidity_removal_fee(
+                s.min(init_s),
+                a.min(init_a),
+                init_s,
+                init_a,
+                price,
+                od,
+                max_fee,
+                min_fee,
+                k,
+                fee_dec,
+            );
+            assert_eq!(fee, U256::ZERO, "one-sided initial pool must waive the fee");
+        }
     }
 
     #[test]

@@ -114,6 +114,11 @@ library FeeManager {
         if (liquidityMaxFee == 0) {
             return 0;
         }
+        // A fully one-sided pool (one side entirely removed) has no meaningful removal fee; waive it
+        // before the fee curve. The deposit fee already carries this guard.
+        if (initialStableLiquidity == 0 || initialAssetLiquidity == 0) {
+            return 0;
+        }
         //Fees are waived if almost no liquidity is left in the pool
         if (
             (initialStableLiquidity - stableLiquidity) < 10e18

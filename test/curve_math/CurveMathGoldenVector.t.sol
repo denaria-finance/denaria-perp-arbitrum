@@ -1402,6 +1402,18 @@ contract CurveMathGoldenVectorTest is Test {
             liqFeeVector("liqfee-maxfee-zero", LiqFeeInput(1e23, 1e20, 2e25, 5e21, 3000e8, 1e8, 0, 0, 1e10, 1e10)),
             count
         );
+        // One-sided pools: a fully-removed side (initial == 0) waives the removal fee (parity with
+        // the deposit fee's existing guard) instead of dividing through the zeroed side.
+        (vectors, count) = append(
+            vectors,
+            liqFeeVector("liqfee-initstable-zero", LiqFeeInput(0, 1e20, 0, 2e25, 3000e8, 1e8, 5e8, 1e7, 1e10, 1e10)),
+            count
+        );
+        (vectors, count) = append(
+            vectors,
+            liqFeeVector("liqfee-initasset-zero", LiqFeeInput(1e24, 0, 2e25, 0, 3000e8, 1e8, 5e8, 1e7, 1e10, 1e10)),
+            count
+        );
         // computeLiquidityDepositFee (FeeManager): full formula (both ratio branches),
         // minFee shortcut, empty-pool (initial==0) and maxFee==0 zero short-circuits.
         (vectors, count) = append(
