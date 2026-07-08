@@ -57,3 +57,16 @@ jobs:
         run: |
           python3 script/selector_dependency_audit.py
         id: selector_audit
+
+      # The deployed contract is the Rust/WASM PerpEngine, but CI previously ran only the
+      # Foundry suite — the engine and curve-math crates (the real deployed logic, with their
+      # unit/differential/golden-vector tests) were ungated. rust-toolchain.toml pins the
+      # toolchain (auto-installed on first cargo call). `stub_boundary` mocks the oracle
+      # boundary so the oracle-path tests (trade/close/liquidation/funding) execute; without
+      # it they compile out.
+      - name: Run Rust engine + curve-math tests
+        run: |
+          rustc --version
+          cargo test -p denaria-curve-math-stylus
+          cargo test -p denaria-perp-engine-stylus --features stub_boundary
+        id: rust_test

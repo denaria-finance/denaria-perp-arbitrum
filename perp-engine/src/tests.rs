@@ -1140,6 +1140,9 @@
     // batch_liquidate_impl must produce state bit-identical to liquidating the same users one
     // by one: the batch only hoists the reentrancy guard and the oracle verify/price read (a
     // no-op under stub_boundary) out of the per-user loop, so the per-user results are unchanged.
+    // Reads the oracle price, so it needs the mocked boundary — same gate as the other
+    // oracle-path tests (get_price_stub, trade_wrapper_long_stub, ...).
+    #[cfg(feature = "stub_boundary")]
     #[test]
     fn batch_liquidate_matches_loop() {
         let wad = U256::from(WAD_U64);
