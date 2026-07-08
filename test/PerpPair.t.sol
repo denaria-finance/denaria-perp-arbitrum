@@ -298,8 +298,8 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         assertTrue(finalCollat > 1000 * 1e18 + 2 * startingStableAmount, "collateral did not go up");
     }
 
-    ///@dev closing requires a designated frontend: a zero frontend reverts "C2".
-    function testCloseAndWithdrawRevertsOnZeroFrontend() public {
+    ///@dev a zero-frontend close is allowed: the corrected gross-up no longer overshoots.
+    function testCloseAndWithdrawAllowsZeroFrontend() public {
         oracle.setPrice(100 * oracleDecimals);
 
         address alice = makeAddr("alice");
@@ -317,8 +317,58 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         perpPair.trade(true, 1000 * 1e18, 100 * 1e5, liq, frontendAddress, 1, fakeReport);
 
         vm.prank(bob);
-        vm.expectRevert(bytes("C2"));
         perpPair.closeAndWithdraw(1e5, 1e10, address(0), fakeReport);
+
+        (, uint256 balanceAsset,,,,,,) = perpPair.userVirtualTraderPosition(bob);
+        assertEq(balanceAsset, 0, "zero-frontend close should clear the position");
+    }
+
+    ///@dev a zero-frontend SHORT close exercises the corrected buy-back gross-up: it closes
+    /// cleanly and pays no frontend fee (the fee share is rebated into the trade).
+    function testCloseAndWithdrawShortWithZeroFrontend() public {
+        oracle.setPrice(100 * oracleDecimals);
+
+        address alice = makeAddr("alice");
+        uint256 aliceLiquidityStable = 1_000_000 * 1e18;
+        uint256 aliceLiquidityAsset = 10_000 * 1e18;
+        vm.prank(alice);
+        perpPair.addLiquidity(aliceLiquidityStable, aliceLiquidityAsset, maxUserLiquidityFee, fakeReport);
+
+        address bob = makeAddr("bob");
+
+        uint256 tradeSize = 1000 * 1e18;
+
+        uint256[] memory collateral = new uint256[](2);
+        collateral[0] = 1000 * 1e6;
+        collateral[1] = 0;
+
+        vm.prank(alice);
+        vault.addCollateral(collateral);
+        vm.prank(alice);
+        perpPair.trade(true, tradeSize, 100 * 1e5, aliceLiquidityAsset, frontendAddress, 1, fakeReport);
+
+        uint256 liq = perpPair.globalLiquidityStable();
+
+        vm.prank(bob);
+        vault.addCollateral(collateral);
+        vm.prank(bob);
+        perpPair.trade(false, tradeSize / 100, 100 * 1e5, liq, frontendAddress, 1, fakeReport);
+
+        skip(1000);
+        oracle.setPrice(90 * oracleDecimals);
+
+        (uint256 frontendStableBefore,,,,,,,) = perpPair.userVirtualTraderPosition(frontendAddress);
+
+        vm.prank(bob);
+        perpPair.closeAndWithdraw(1e5, 1e10, address(0), fakeReport);
+
+        (uint256 balanceStable, uint256 balanceAsset2, uint256 debtStable, uint256 debtAsset,,,,) =
+            perpPair.userVirtualTraderPosition(bob);
+        assertTrue(balanceStable == 0 && balanceAsset2 == 0 && debtStable == 0 && debtAsset == 0, "not closed");
+        (uint256 frontendStableAfter,,,,,,,) = perpPair.userVirtualTraderPosition(frontendAddress);
+        (uint256 zeroStableBalance,,,,,,,) = perpPair.userVirtualTraderPosition(address(0));
+        assertTrue(frontendStableAfter == frontendStableBefore, "frontend fee paid");
+        assertTrue(zeroStableBalance == 0, "zero frontend fee paid");
     }
 
     ///@dev tests the closeAndWithdraw function in a scenario where the trader went long and made profit.

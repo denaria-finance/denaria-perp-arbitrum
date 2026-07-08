@@ -979,10 +979,10 @@
         assert!(pnl > U256::from(2_900u64) * wad && pnl < U256::from(3_000u64) * wad, "PnL ~2999e18: got {pnl}");
     }
 
-    // Closing requires a designated (non-zero) frontend: a zero frontend reverts "C2"
-    // before any trade, while the same position closes cleanly with a non-zero frontend.
+    // A zero-frontend close is allowed again (no C2): the corrected buy-back gross-up accounts
+    // for the frontend-fee rebate so it no longer overshoots. The position closes cleanly.
     #[test]
-    fn close_requires_nonzero_frontend() {
+    fn close_allows_zero_frontend() {
         let wad = U256::from(WAD_U64);
         let vm = TestVM::new();
         vm.set_block_timestamp(1_700_000_000);
@@ -994,27 +994,14 @@
             let mut p = e.user_virtual_trader_position.setter(user);
             p.balance_asset.set(wad);
         }
-        // zero frontend -> rejected up front, position untouched
-        let err_c2 = e
-            .close_and_withdraw_inner(
-                U256::from(1_000u64), U256::ZERO, Address::ZERO, user, U256::from(300_000_000_000u64),
-                U256::from(1_000u64) * wad, true,
-            )
-            .expect_err("zero frontend must revert");
-        assert_eq!(err_c2, err(b"C2"), "zero frontend close reverts C2");
-        assert_eq!(
-            e.user_virtual_trader_position.getter(user).balance_asset.get(), wad,
-            "rejected close leaves the position untouched",
-        );
-        // same position, non-zero frontend -> closes
         e.close_and_withdraw_inner(
-            U256::from(1_000u64), U256::ZERO, addr(0xFE), user, U256::from(300_000_000_000u64),
+            U256::from(1_000u64), U256::ZERO, Address::ZERO, user, U256::from(300_000_000_000u64),
             U256::from(1_000u64) * wad, true,
         )
-        .expect("non-zero frontend close should succeed");
+        .expect("zero-frontend close should succeed");
         assert_eq!(
             e.user_virtual_trader_position.getter(user).balance_asset.get(), U256::ZERO,
-            "position cleared after a valid close",
+            "position cleared after a valid zero-frontend close",
         );
     }
 

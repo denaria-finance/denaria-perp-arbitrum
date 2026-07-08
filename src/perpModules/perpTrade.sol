@@ -387,11 +387,6 @@ abstract contract PerpTrade is PerpLiquidity {
     )
         internal
     {
-        // A designated frontend is required to close: the short buy-back grosses the stable
-        // input up for the full trading fee, which only holds when the forward trade deducts
-        // that full fee. The zero-address branch instead rebates the frontend-fee share into
-        // the trade, so the buy-back would overshoot.
-        require(frontendAddress != address(0), "C2");
         uint256 price = getPrice();
         (uint256 lpStableBalance, uint256 lpAssetBalance) = getLpLiquidityBalance(user);
         VirtualTraderPosition storage pos = userVirtualTraderPosition[user];
@@ -450,21 +445,40 @@ abstract contract PerpTrade is PerpLiquidity {
                     delete dy0;
                     delete dx0;
                 }
-                uint256 inputNeeded =
-                    ((_computeExactAmountInLong(
-                                    pos.debtAsset + dx0,
-                                    price,
-                                    oracleDecimals,
-                                    globalLiquidityStable,
-                                    globalLiquidityStable,
-                                    globalLiquidityAsset,
-                                    curveParameters.longCurveParameterA,
-                                    curveParameters.longCurveParameterB,
-                                    1e8
-                                )
-                                - dy0
-                                + flatTradingFee)
-                            * decimals.tradingFeeDecimals) / (decimals.tradingFeeDecimals - tradingFee);
+                uint256 exactAmountIn = _computeExactAmountInLong(
+                    pos.debtAsset + dx0,
+                    price,
+                    oracleDecimals,
+                    globalLiquidityStable,
+                    globalLiquidityStable,
+                    globalLiquidityAsset,
+                    curveParameters.longCurveParameterA,
+                    curveParameters.longCurveParameterB,
+                    1e8
+                ) - dy0;
+                uint256 inputNeeded;
+                if (frontendAddress == address(0) && feeFrontend > 0) {
+                    // Zero-frontend close: the forward trade rebates the frontend-fee share, so the
+                    // buy-back gross-up must not charge it. Two-term mulDiv-ceil.
+                    uint256 feeChargedFraction = decimals.feeFractionsDecimals - feeFrontend;
+                    uint256 feeDenominator =
+                        decimals.tradingFeeDecimals * decimals.feeFractionsDecimals - tradingFee * feeChargedFraction;
+                    inputNeeded = Math.mulDiv(
+                        exactAmountIn,
+                        decimals.tradingFeeDecimals * decimals.feeFractionsDecimals,
+                        feeDenominator,
+                        Math.Rounding.Ceil
+                    )
+                    + Math.mulDiv(
+                        flatTradingFee * feeChargedFraction,
+                        decimals.tradingFeeDecimals,
+                        feeDenominator,
+                        Math.Rounding.Ceil
+                    );
+                } else {
+                    inputNeeded = ((exactAmountIn + flatTradingFee) * decimals.tradingFeeDecimals)
+                        / (decimals.tradingFeeDecimals - tradingFee);
+                }
 
                 uint256 minTradeReturn = inputNeeded * oracleDecimals / price * (1e5 - maxSlippage) / 1e5;
                 unchecked {

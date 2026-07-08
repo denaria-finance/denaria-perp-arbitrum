@@ -77,6 +77,19 @@ pub fn md(a: U256, b: U256, c: U256) -> U256 {
     a * b / c
 }
 
+/// `ceil(a*b/c)`. Bit-exact with OZ `Math.mulDiv(a, b, c, Math.Rounding.Ceil)` whenever the
+/// product `a*b` fits in 256 bits — the same non-overflow assumption [`md`] already relies on.
+#[inline(never)]
+pub fn md_ceil(a: U256, b: U256, c: U256) -> U256 {
+    let p = a * b;
+    let q = p / c;
+    if p % c != U256::ZERO {
+        q + U256::from(1u64)
+    } else {
+        q
+    }
+}
+
 fn signed_parts(v: I256) -> (I256, bool) {
     if v < I256::ZERO {
         (-v, false)

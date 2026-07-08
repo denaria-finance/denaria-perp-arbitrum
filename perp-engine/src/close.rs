@@ -20,13 +20,6 @@ impl PerpEngine {
         collateral: U256,
         is_self_close: bool,
     ) -> Result<(U256, bool), Vec<u8>> {
-        // A designated frontend is required to close: the short buy-back grosses the
-        // stable input up for the full trading fee, which only holds when the forward
-        // trade deducts that full fee. The zero-address branch instead rebates the
-        // frontend-fee share into the trade, so the buy-back would overshoot.
-        if frontend_address == Address::ZERO {
-            return Err(err(b"C2"));
-        }
         let oracle_dec = U256::from(self.oracle_decimals.get());
         let dust = U256::from(10_000_000_000u64); // 1e10
         let bps = U256::from(100_000u64); // 1e5
@@ -106,8 +99,19 @@ impl PerpEngine {
                 let trading_fee = self.trading_fee.get();
                 let trading_fee_dec = U256::from(1_000_000_000_000_000_000u64);
                 let exact_in = self.compute_exact_amount_in_long(da2 + dx0, price, oracle_dec, gs, gs, ga, long_a, long_b);
-                let input_needed =
-                    cm::md(exact_in - dy0 + flat_fee, trading_fee_dec, trading_fee_dec - trading_fee);
+                let exact_amount_in = exact_in - dy0;
+                let fee_frontend = U256::from(self.fee_frontend.get());
+                let input_needed = if frontend_address == Address::ZERO && fee_frontend > U256::ZERO {
+                    // Zero-frontend close: the forward trade rebates the frontend-fee share, so the
+                    // buy-back gross-up must not charge it. Mirrors the Solidity two-term mulDiv-ceil.
+                    let ratio_dec = self.fee_fractions_decimals.get();
+                    let fee_charged_fraction = ratio_dec - fee_frontend;
+                    let fee_denominator = trading_fee_dec * ratio_dec - trading_fee * fee_charged_fraction;
+                    cm::md_ceil(exact_amount_in, trading_fee_dec * ratio_dec, fee_denominator)
+                        + cm::md_ceil(flat_fee * fee_charged_fraction, trading_fee_dec, fee_denominator)
+                } else {
+                    cm::md(exact_amount_in + flat_fee, trading_fee_dec, trading_fee_dec - trading_fee)
+                };
                 let min_trade_return = cm::md(cm::md(input_needed, oracle_dec, price), bps - max_slippage, bps);
                 let tr = self.execute_trade(true, input_needed, min_trade_return, ga, frontend_address, user, price)?;
                 self.emit(ExecutedTrade {

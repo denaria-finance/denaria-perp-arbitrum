@@ -156,7 +156,7 @@ contract LiquidationDifferentialTest is Test {
         vm.prank(user);
         ref.enableAutoClose(0, LOSS_TH, MAX_SLIP, MAX_LIQ_FEE);
         vm.prank(keeper);
-        ref.autoCloseUserPosition(user, address(0xFE), "");
+        ref.autoCloseUserPosition(user, address(0), "");
 
         string memory head = string.concat(
             '{"kind":"autoclose","user":"',

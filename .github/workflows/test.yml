@@ -38,9 +38,12 @@ jobs:
         # Size-gate the DEPLOYABLE contracts only. The differential-test reference contracts
         # under test/ inherit the full Solidity PerpPair plus fixture-generation helpers, so
         # they run over EIP-170; they are never deployed (Foundry deploys them for tests
-        # regardless of size). src/ still covers every real deployable, including PerpPair.
+        # regardless of size). src/PerpPair.sol is likewise a non-deployed reference — the
+        # deployed engine is the Rust/WASM PerpEngine, and the deployable Solidity lives in
+        # the denaria-perp repo — so it is excluded too. The remaining src/ contracts
+        # (manager, Vault, oracle, LostAndFound) are the real deployables.
         run: |
-          forge build --sizes --skip 'test/**'
+          forge build --sizes --skip 'test/**' 'src/PerpPair.sol'
         id: build
 
       - name: Run Forge tests
