@@ -854,4 +854,90 @@ contract VaultTest is Test, PerpPairTestDeploymentHelper {
         vm.prank(MasterMinter);
         FiatTokenV2(stableCoin).mint(user, amount);
     }
+
+    ///@dev A non-MOD account cannot pause the vault.
+    function testPauseUnauthorized() public {
+        vm.expectRevert();
+        vm.prank(alice);
+        vault.pause();
+    }
+
+    ///@dev A non-MOD account cannot unpause the vault.
+    function testUnpauseUnauthorized() public {
+        vault.grantRole(vault.MOD_ROLE(), MasterMinter);
+        vm.prank(MasterMinter);
+        vault.pause();
+
+        vm.expectRevert();
+        vm.prank(alice);
+        vault.unpause();
+    }
+
+    ///@dev removeCollateral reverts when the vault is paused.
+    function testRemoveCollateralWhenPaused() public {
+        uint256[] memory amounts = new uint256[](numStableCoins);
+        amounts[0] = 4000 * 1e6;
+        amounts[1] = 6000 * 1e18;
+        vm.prank(alice);
+        vault.addCollateral(amounts);
+
+        vault.grantRole(vault.MOD_ROLE(), MasterMinter);
+        vm.prank(MasterMinter);
+        vault.pause();
+
+        vm.expectRevert(); // EnforcedPause
+        vm.prank(alice);
+        vault.removeCollateral(1000 * 1e18, fakeReportData);
+    }
+
+    ///@dev removeAllCollateral also reverts when paused (it calls removeCollateral internally).
+    function testRemoveAllCollateralWhenPaused() public {
+        uint256[] memory amounts = new uint256[](numStableCoins);
+        amounts[0] = 4000 * 1e6;
+        amounts[1] = 6000 * 1e18;
+        vm.prank(alice);
+        vault.addCollateral(amounts);
+
+        vault.grantRole(vault.MOD_ROLE(), MasterMinter);
+        vm.prank(MasterMinter);
+        vault.pause();
+
+        vm.expectRevert();
+        vm.prank(alice);
+        vault.removeAllCollateral(fakeReportData);
+    }
+
+    ///@dev addCollateral still works when paused (only removeCollateral is pausable).
+    function testAddCollateralWhenPaused() public {
+        vault.grantRole(vault.MOD_ROLE(), MasterMinter);
+        vm.prank(MasterMinter);
+        vault.pause();
+
+        uint256[] memory amounts = new uint256[](numStableCoins);
+        amounts[0] = 4000 * 1e6;
+        amounts[1] = 6000 * 1e18;
+
+        vm.prank(alice);
+        vault.addCollateral(amounts);
+
+        assertTrue(vault.userCollateral(alice) == 10_000 * collateralDecimals, "add collateral should work when paused");
+    }
+
+    ///@dev removeAllCollateralForUser (perpPair-initiated, e.g. liquidations) still works when paused.
+    function testRemoveAllCollateralForUserWhenPaused() public {
+        uint256[] memory amounts = new uint256[](numStableCoins);
+        amounts[0] = 4000 * 1e6;
+        amounts[1] = 6000 * 1e18;
+        vm.prank(alice);
+        vault.addCollateral(amounts);
+
+        vault.grantRole(vault.MOD_ROLE(), MasterMinter);
+        vm.prank(MasterMinter);
+        vault.pause();
+
+        vm.prank(address(perpPair));
+        vault.removeAllCollateralForUser(alice);
+
+        assertTrue(vault.userCollateral(alice) == 0, "perpPair removal should work when paused");
+    }
 }

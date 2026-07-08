@@ -14,6 +14,7 @@ import "./CL_oracle_middleware/interfaces/IOracleMiddleware.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/metatx/ERC2771Context.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 
 /**
  *     Vault contract associated to a PerpPair contract. This contract holds the stablecoin of the users and provides the collateral information to the PerpPair contract.
@@ -33,7 +34,7 @@ import "@openzeppelin/contracts/metatx/ERC2771Context.sol";
  *     | UNINIT1    | Contract already initialized.                                               |
  *     | OnlyPerp   | Caller is not the PerpPair contract.                                         |
  */
-contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context {
+contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context, Pausable {
     using Math for uint256;
     using SignedMath for int256;
     using SafeERC20 for IERC20;
@@ -190,7 +191,7 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context {
     /// @notice Remove collateral from msg.sender balance in the vault. We try to give the collateral back with the ratio the user has put it in, but if its removal unbalances the vault too much the collateral is withdrawn with the same ratio of the vault.
     /// @param amount Amount of collateral to remove from the vault.
     /// @param unverifiedReport Chainlink report to verify price.
-    function removeCollateral(uint256 amount, bytes memory unverifiedReport) public nonReentrant {
+    function removeCollateral(uint256 amount, bytes memory unverifiedReport) public nonReentrant whenNotPaused {
         IPerpPair(perpPair).updateFG(unverifiedReport);
         address user = _msgSender();
         require(amount <= userCollateral[user], "RC1"); //Error on removeCollateral: Amount exceeds user collateral
@@ -521,6 +522,17 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context {
     function modifyRatioLockTime(uint256 _ratioLockTime) external onlyRole(MOD_ROLE) {
         ratioLockTime = _ratioLockTime;
         emit ChangedRatioLockTime(_ratioLockTime);
+    }
+
+    /// @notice Pause protocol-facing collateral withdrawals (`removeCollateral`). Deposits and
+    /// perpPair-initiated removals (e.g. liquidations via `removeAllCollateralForUser`) are
+    /// unaffected.
+    function pause() external onlyRole(MOD_ROLE) {
+        _pause();
+    }
+
+    function unpause() external onlyRole(MOD_ROLE) {
+        _unpause();
     }
 
     //Ratios need to be higher (or even allow everything) at the start to decide good composition of collateral
