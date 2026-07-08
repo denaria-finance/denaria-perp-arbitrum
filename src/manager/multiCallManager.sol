@@ -35,7 +35,7 @@ contract PerpMultiCalls is Initializable, EIP712, AccessControl, ReentrancyGuard
         "relayerModifyLiquidityPosition(address from,uint256 newStable,uint256 newAsset,uint256 maxFeeValue,bytes unverifiedReport,uint256 deadline,uint256 nonce)"
     );
     bytes32 public immutable ADD_COLLATERAL_OPEN_TRADE_TYPEHASH = keccak256(
-        "relayerAddCollateralOpenTrade(address from,uint256[] collateral,uint256 tradeSize,bool direction,uint256 minTradeReturn,uint256 initialGuess,address frontendAddress,uint8 leverage,bytes unverifiedReport,uint256 deadline,uint256 nonce)"
+        "relayerAddCollateralOpenTrade(address from,uint256[] collateral,uint256 tradeSize,bool direction,uint256 minTradeReturn,uint256 initialGuess,address frontendAddress,uint8 leverage,bytes unverifiedReport,uint256[] permitDeadline,uint8[] v,bytes32[] r,bytes32[] s,uint256 deadline,uint256 nonce)"
     );
     bytes32 public immutable ADD_COLLATERAL_ADD_LIQUIDITY_TYPEHASH = keccak256(
         "relayerAddCollateralAddLiquidity(address from,uint256[] collateral,uint256 liquidityStable,uint256 liquidityAsset,uint256 maxFeeValue,bytes unverifiedReport,uint256 deadline,uint256 nonce)"

@@ -98,7 +98,7 @@ contract StylusPerpMultiCalls is Initializable, EIP712, AccessControl, Reentranc
     address public vault;
 
     bytes32 public immutable ADD_COLLATERAL_OPEN_TRADE_TYPEHASH = keccak256(
-        "relayerAddCollateralOpenTrade(address from,uint256[] collateral,uint256 tradeSize,bool direction,uint256 minTradeReturn,uint256 initialGuess,address frontendAddress,uint8 leverage,bytes unverifiedReport,uint256 deadline,uint256 nonce)"
+        "relayerAddCollateralOpenTrade(address from,uint256[] collateral,uint256 tradeSize,bool direction,uint256 minTradeReturn,uint256 initialGuess,address frontendAddress,uint8 leverage,bytes unverifiedReport,uint256[] permitDeadline,uint8[] v,bytes32[] r,bytes32[] s,uint256 deadline,uint256 nonce)"
     );
     bytes32 public immutable ADD_COLLATERAL_ADD_LIQUIDITY_TYPEHASH = keccak256(
         "relayerAddCollateralAddLiquidity(address from,uint256[] collateral,uint256 liquidityStable,uint256 liquidityAsset,uint256 maxFeeValue,bytes unverifiedReport,uint256 deadline,uint256 nonce)"
@@ -333,12 +333,8 @@ contract StylusPerpMultiCalls is Initializable, EIP712, AccessControl, Reentranc
         external
         nonReentrant
     {
-        // EIP712 structHash encodes exactly the fields declared in the typehash string
-        // (the permit arrays are NOT signed: the user's permit sigs self-verify and the
-        // collateral amounts are bound via keccak256(collateral), so a relayer cannot
-        // tamper). The original Solidity manager over-encoded permitDeadline/v/r/s —
-        // fields absent from its own typehash string (an internal EIP712 inconsistency);
-        // not reproduced (cross-contract sig reuse is impossible anyway — distinct domain).
+        // EIP712 structHash binds the permit arrays (permitDeadline/v/r/s) alongside the trade
+        // fields, matching the fields declared in the typehash string.
         bytes32 structHash = keccak256(
             abi.encode(
                 ADD_COLLATERAL_OPEN_TRADE_TYPEHASH,
@@ -346,6 +342,10 @@ contract StylusPerpMultiCalls is Initializable, EIP712, AccessControl, Reentranc
                 keccak256(abi.encodePacked(collateral)),
                 tradeData,
                 keccak256(unverifiedReport),
+                keccak256(abi.encodePacked(permitDeadline)),
+                keccak256(abi.encodePacked(v)),
+                keccak256(abi.encodePacked(r)),
+                keccak256(abi.encodePacked(s)),
                 deadline,
                 nonce
             )
