@@ -1026,6 +1026,61 @@
         assert_eq!(e.get_lp_liquidity_balance(user), (s, a), "LP balance == deposit");
     }
 
+    // Funding-dilution guard: add_liquidity settles global funding on the PRE-deposit
+    // liquidity denominator. `distribute_liquidity_fee` credits the deposit fee to global
+    // stable liquidity, so settling funding AFTER it would compute the funding coefficient
+    // on an inflated denominator and shrink every trader's accrued funding. `update_fg`
+    // runs before the fee/deposit mutations; this pins that ordering.
+    #[test]
+    fn add_liquidity_settles_funding_on_pre_deposit_denominator() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+
+        // Funding config with open trader exposure, so a non-zero rate accrues over time.
+        e.total_trader_exposure.set(U256::from(100u64) * wad);
+        e.total_trader_exposure_sign.set(true);
+        e.funding_c.set(U32::from(1_000_000u32));
+        e.funding_interval.set(U64::from(86_400u64));
+        e.funding_c_decimals.set(U256::from(100_000u64));
+        e.funding_rate_decimals.set(wad);
+
+        // Bootstrap the pool from empty (fee-free) so the LP has a valid snapshot + matrix.
+        e.global_liquidity_stable.set(U256::ZERO);
+        e.global_liquidity_asset.set(U256::ZERO);
+        let lp = addr(0x61);
+        let price = U256::from(300_000_000_000u64);
+        e.add_liquidity(U256::from(18_000_000u64) * wad, U256::from(6_000u64) * wad, U256::ZERO, price, lp)
+            .expect("bootstrap add");
+
+        // Fresh funding accrual over a 3600s window on the (now non-empty) pool.
+        e.funding_rate.set(U256::ZERO);
+        e.funding_rate_sign.set(true);
+        vm.set_block_timestamp(4600);
+        let last_op = U256::from(e.last_operation_timestamp.get());
+
+        // What funding SHOULD settle to: the coefficient on the current (pre-deposit) denominator.
+        let (expected_fr, expected_sign) = e.compute_funding_rate(price, last_op).expect("pre-deposit fr");
+        assert!(expected_fr > U256::ZERO, "test needs a non-zero funding rate to be meaningful");
+
+        // Guard: crediting the fee to global stable FIRST would move the coefficient, so the
+        // final assertion genuinely distinguishes the fixed ordering from the buggy one.
+        let fee = U256::from(6_000_000u64) * wad;
+        let gs_pre = e.global_liquidity_stable.get();
+        e.global_liquidity_stable.set(gs_pre + fee);
+        let (diluted_fr, _) = e.compute_funding_rate(price, last_op).expect("diluted fr");
+        e.global_liquidity_stable.set(gs_pre);
+        assert_ne!(diluted_fr, expected_fr, "fee must shift the funding coefficient");
+
+        // Second add WITH that fee: funding settles before the fee dilutes global stable.
+        e.add_liquidity(U256::from(1_000u64) * wad, U256::ZERO, fee, price, lp).expect("second add with fee");
+
+        assert_eq!(e.funding_rate.get(), expected_fr, "funding settled on pre-deposit denominator");
+        assert_eq!(e.funding_rate_sign.get(), expected_sign, "funding sign preserved");
+    }
+
     // Round-trip invariant: deposit then withdraw the same amounts (fees waived) from an
     // empty pool. Because an LP deposit is DEBT-financed, removing it repays the debt
     // exactly — net-zero to the trader balance — and the pool returns to empty.

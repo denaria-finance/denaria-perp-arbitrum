@@ -199,6 +199,10 @@ impl PerpEngine {
             pos.funding_fee_sign.set(nffs);
         }
 
+        // Settle global funding on the pre-deposit liquidity denominator, before this
+        // deposit's fee and balance dilute it.
+        self.update_fg(spot_price, last_op_ts)?;
+
         // LP debt grows by the deposited amounts (it is borrowed against collateral).
         {
             let mut lp = self.liquidity_position.setter(sender);
@@ -219,7 +223,6 @@ impl PerpEngine {
         }
 
         self.distribute_liquidity_fee(fee_value, spot_price);
-        self.update_fg(spot_price, last_op_ts)?;
 
         // Remove the LP's OLD balance to re-add it folded with the new deposit.
         let (old_lp_stable, old_lp_asset) = self.get_lp_liquidity_balance(sender);

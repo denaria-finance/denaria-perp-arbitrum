@@ -110,6 +110,10 @@ abstract contract PerpLiquidity is InternalPerpLogic {
         (position.fundingFee, position.fundingFeeSign) =
             UtilMath.signedSum(position.fundingFee, position.fundingFeeSign, localFundingFee, localFundingFeeSign);
 
+        // Settle global funding on the pre-deposit liquidity denominator, before this
+        // deposit's fee and balance dilute it.
+        _updateFG(spotPrice, lastOperationTimestamp);
+
         LiquidityPosition storage liquidityPos = liquidityPosition[sender];
         liquidityPos.debtStable += liquidityStable;
         liquidityPos.debtAsset += liquidityAsset;
@@ -128,8 +132,6 @@ abstract contract PerpLiquidity is InternalPerpLogic {
 
         // Compute fee distribution between stable and asset LPs
         _distributeLiquidityFee(feeValue, spotPrice);
-
-        _updateFG(getPrice(), lastOperationTimestamp);
 
         // Remove old liquidity to re-add it
         (uint256 oldLpStableBalance, uint256 oldLpAssetBalance) = getLpLiquidityBalance(sender);
