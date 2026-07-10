@@ -1,7 +1,7 @@
 {
   "schema": "denaria.param_hash.parity.v1",
   "vectors": [
-    {"label":"realistic","inputs":{"mmr":"40000","tradingFee":"0","flatTradingFee":"120000000000000000","feeLP":"500000","liquidityMinFee":"0","liquidityMaxFee":"500000000","liquidityFeeK":"10000000000","fundingC":"1000000","clampMinFR":"0","clampMaxFR":"1000000000000000000","clampOffset":"0","paramTimeLock":"10","minimumTradeSize":"48000000000000000000"},"expected":"0x7b8d7a4b872ab7b101bf3b23505728322f7946369fa24b2162f44de96bc517d8"},
-    {"label":"distinct-values","inputs":{"mmr":"1","tradingFee":"2","flatTradingFee":"3","feeLP":"4","liquidityMinFee":"5","liquidityMaxFee":"6","liquidityFeeK":"7","fundingC":"8","clampMinFR":"9","clampMaxFR":"10","clampOffset":"11","paramTimeLock":"12","minimumTradeSize":"13"},"expected":"0x9c051cc6ff109332f0edf7c7e00dec20f3c8a959b61f31cceadb06a1075792ab"}
+    {"label":"realistic","inputs":{"mmr":"40000","tradingFee":"0","flatTradingFee":"120000000000000000","feeLP":"500000","liquidityMinFee":"0","liquidityMaxFee":"500000000","liquidityFeeK":"10000000000","fundingC":"1000000","paramTimeLock":"10","minimumTradeSize":"48000000000000000000"},"expected":"0x985639c9926d402bed928bfaf90f2a10ffb80adc7f34f49fb1661704c7e85f79"},
+    {"label":"distinct-values","inputs":{"mmr":"1","tradingFee":"2","flatTradingFee":"3","feeLP":"4","liquidityMinFee":"5","liquidityMaxFee":"6","liquidityFeeK":"7","fundingC":"8","paramTimeLock":"12","minimumTradeSize":"13"},"expected":"0x3f2e5f838a9eaeb48199247cd0ec422a655e6af7018c4b1d95e927a9bcc115c9"}
   ]
 }

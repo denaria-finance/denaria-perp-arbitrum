@@ -168,9 +168,6 @@ interface IPerpEngine {
         uint256 liquidity_max_fee,
         uint256 liquidity_fee_k,
         uint256 funding_c,
-        uint256 clamp_min_fr,
-        uint256 clamp_max_fr,
-        uint256 clamp_offset,
         uint256 param_time_lock,
         uint256 minimum_trade_size
     )
@@ -185,9 +182,6 @@ interface IPerpEngine {
         uint256 liquidity_max_fee,
         uint256 liquidity_fee_k,
         uint256 funding_c,
-        uint256 clamp_min_fr,
-        uint256 clamp_max_fr,
-        uint256 clamp_offset,
         uint256 param_time_lock,
         uint256 minimum_trade_size
     )
@@ -255,12 +249,6 @@ interface IPerpEngine {
         view
         returns (uint256, bool);
 
-    struct ClampParameters {
-        uint256 minFR;
-        uint256 maxFR;
-        uint256 offset;
-    }
-
     event ExecutedTrade(
         address indexed user,
         bool direction,
@@ -303,7 +291,6 @@ interface IPerpEngine {
         uint256 _liquidityMaxFee,
         uint256 _liquidityFeeK,
         uint256 _fundingC,
-        ClampParameters _clampParams,
         uint256 _paramTimeLock,
         uint256 _minimumTradeSize
     );

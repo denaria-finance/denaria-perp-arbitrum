@@ -29,10 +29,7 @@ library FundingRef {
         uint256 fundingC,
         uint256 fundingInterval,
         uint256 fundingCDecimals,
-        uint256 fundingRateDecimals,
-        uint256 clampMinFR,
-        uint256 clampMaxFR,
-        uint256 clampOffset
+        uint256 fundingRateDecimals
     )
         internal
         pure
@@ -48,8 +45,8 @@ library FundingRef {
         uint256 denomAsset = assetLiq * priceO / 1e18;
         uint256 denom = fundingC * (denomAsset + stableLiq);
 
-        UtilMath.ClampParameters memory cp = UtilMath.ClampParameters(clampMinFR, clampMaxFR, clampOffset);
-        (uint256 coeff, bool coeffSign) = UtilMath.clamp(raw / denom, cp, totalTraderExposureSign);
+        uint256 coeff = raw / denom;
+        bool coeffSign = totalTraderExposureSign;
 
         uint256 delta = blockTs - timestamp;
         uint256 newRate = coeff * delta / fundingInterval;
@@ -143,9 +140,6 @@ contract FundingGoldenVectorTest is Test {
         uint256 fundingInterval;
         uint256 fundingCDecimals;
         uint256 fundingRateDecimals;
-        uint256 clampMinFR;
-        uint256 clampMaxFR;
-        uint256 clampOffset;
     }
 
     function testWriteFundingFixture() public {
@@ -169,10 +163,7 @@ contract FundingGoldenVectorTest is Test {
                     1e6,
                     86_400,
                     1e5,
-                    1e18,
-                    0,
-                    1e30,
-                    0
+                    1e18
                 )
             ),
             count
@@ -195,10 +186,7 @@ contract FundingGoldenVectorTest is Test {
                     1e6,
                     86_400,
                     1e5,
-                    1e18,
-                    1e12,
-                    1e15,
-                    1e14
+                    1e18
                 )
             ),
             count
@@ -221,10 +209,7 @@ contract FundingGoldenVectorTest is Test {
                     1e6,
                     86_400,
                     1e5,
-                    1e18,
-                    1e12,
-                    1e15,
-                    1e14
+                    1e18
                 )
             ),
             count
@@ -234,24 +219,7 @@ contract FundingGoldenVectorTest is Test {
         (vectors, count) = append(
             vectors,
             rateVector(
-                RateInput(
-                    "rate-zero-liq",
-                    300_000_000_000,
-                    1000,
-                    5000,
-                    0,
-                    0,
-                    100e18,
-                    true,
-                    1e8,
-                    1e6,
-                    86_400,
-                    1e5,
-                    1e18,
-                    0,
-                    1e30,
-                    0
-                )
+                RateInput("rate-zero-liq", 300_000_000_000, 1000, 5000, 0, 0, 100e18, true, 1e8, 1e6, 86_400, 1e5, 1e18)
             ),
             count
         );
@@ -341,10 +309,7 @@ contract FundingGoldenVectorTest is Test {
             v.fundingC,
             v.fundingInterval,
             v.fundingCDecimals,
-            v.fundingRateDecimals,
-            v.clampMinFR,
-            v.clampMaxFR,
-            v.clampOffset
+            v.fundingRateDecimals
         );
         return string(
             abi.encodePacked(
@@ -375,12 +340,6 @@ contract FundingGoldenVectorTest is Test {
                 v.fundingCDecimals.toString(),
                 '","fundingRateDecimals":"',
                 v.fundingRateDecimals.toString(),
-                '","clampMinFR":"',
-                v.clampMinFR.toString(),
-                '","clampMaxFR":"',
-                v.clampMaxFR.toString(),
-                '","clampOffset":"',
-                v.clampOffset.toString(),
                 '"},"expected":{"rate":"',
                 rate.toString(),
                 '","rateSign":',

@@ -716,29 +716,6 @@ pub fn div_ceil(a: I256, b: I256) -> I256 {
     }
 }
 
-/// Funding-rate clamp. Solidity `UtilMath.clamp` (ClampParameters passed flat as
-/// min_fr/max_fr/offset, matching the engine's flattened storage).
-#[allow(dead_code)]
-pub fn clamp(funding_rate_parameter: U256, min_fr: U256, max_fr: U256, offset: U256, sign: bool) -> (U256, bool) {
-    if funding_rate_parameter > max_fr {
-        if sign {
-            (max_fr, true)
-        } else {
-            signed_sum(max_fr, false, offset, true)
-        }
-    } else if funding_rate_parameter < min_fr {
-        if sign {
-            (min_fr, true)
-        } else {
-            signed_sum(min_fr, false, offset, true)
-        }
-    } else if sign {
-        (funding_rate_parameter, true)
-    } else {
-        signed_sum(funding_rate_parameter, false, offset, true)
-    }
-}
-
 /// Reduce `a` by `b`: returns `(max(a-b,0), max(b-a,0))`. Solidity
 /// `UtilMath.reduceValue` (used by `_removeLiquidity` to repay LP debt before
 /// crediting balances). Saturating, matching the Yul `unchecked` branches.
@@ -1531,22 +1508,6 @@ mod parity {
                             let wz = idec(exp["z"].as_str().unwrap());
                             if z != wz {
                                 failures.push(format!("[util] {label} divCeil: got {z}, expected {wz}"));
-                            }
-                        }
-                        "clamp" => {
-                            let (z, zs) = clamp(
-                                u256(inp["param"].as_str().unwrap()),
-                                u256(inp["minFR"].as_str().unwrap()),
-                                u256(inp["maxFR"].as_str().unwrap()),
-                                u256(inp["offset"].as_str().unwrap()),
-                                inp["sign"].as_bool().unwrap(),
-                            );
-                            let wz = u256(exp["z"].as_str().unwrap());
-                            let wzs = exp["zs"].as_bool().unwrap();
-                            if z != wz || zs != wzs {
-                                failures.push(format!(
-                                    "[util] {label} clamp: got ({z},{zs}), expected ({wz},{wzs})"
-                                ));
                             }
                         }
                         "reduceValue" => {

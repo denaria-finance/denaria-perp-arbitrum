@@ -43,9 +43,6 @@ use alloy_sol_types::{sol, SolEvent};
 // SIGNATURE_HASH (topic0) is computed from the canonical type signature, so it
 // matches Solidity as long as the parameter type lists match (verified in 9b).
 sol! {
-    #[derive(Debug)]
-    struct ClampParameters { uint256 minFR; uint256 maxFR; uint256 offset; }
-
     event ExecutedTrade(address indexed user, bool direction, uint256 tradeSize, uint256 tradeReturn, uint256 currentPrice, uint256 leverage);
     event ClosedPosition(address indexed user, uint256 pnl, bool pnlSign);
     event LiquidityMoved(address indexed user, uint256 liquidityStable, uint256 liquidityAsset, uint256 fee, bool added);
@@ -53,7 +50,7 @@ sol! {
     event EnabledAutoClose(address indexed user, uint256 profitTh, uint256 lossTh);
     event RealizedPnL(address indexed user, uint256 pnl, bool pnlSign);
     event ParametersUpdated(address _oracle, uint256 _feeFrontend, address _feeProtocolAddr, uint256 _insuranceFundCap, uint256 _maxLeverage, uint256 _liquidationDiscount);
-    event LockedParameterUpdate(uint256 paramLockedUntil, uint256 _MMR, uint256 _tradingFee, uint256 _flatTradingFee, uint256 _feeLP, uint256 _liquidityMinFee, uint256 _liquidityMaxFee, uint256 _liquidityFeeK, uint256 _fundingC, ClampParameters _clampParams, uint256 _paramTimeLock, uint256 _minimumTradeSize);
+    event LockedParameterUpdate(uint256 paramLockedUntil, uint256 _MMR, uint256 _tradingFee, uint256 _flatTradingFee, uint256 _feeLP, uint256 _liquidityMinFee, uint256 _liquidityMaxFee, uint256 _liquidityFeeK, uint256 _fundingC, uint256 _paramTimeLock, uint256 _minimumTradeSize);
     // Stylus-specific: the explicit-sender `*For` topology has a SETTABLE trusted forwarder
     // (OZ ERC2771's forwarder is immutable, so there is no Solidity counterpart). The
     // forwarder is a critical privileged address — every `*For` entrypoint trusts it — so
@@ -146,11 +143,6 @@ sol_storage! {
         int256  liquidity_m_decimals;
         uint256 trading_fee_decimals;
         uint256 liquidity_g_decimals;
-
-        // --- ClampParameters (funding clamp config) ---
-        uint256 clamp_min_fr;
-        uint256 clamp_max_fr;
-        uint256 clamp_offset;
 
         // --- roles / misc ---
         bytes32 mod_role;
@@ -660,9 +652,6 @@ impl PerpEngine {
         liquidity_max_fee: U256,
         liquidity_fee_k: U256,
         funding_c: U256,
-        clamp_min_fr: U256,
-        clamp_max_fr: U256,
-        clamp_offset: U256,
         param_time_lock: U256,
         minimum_trade_size: U256,
     ) -> Result<(), Vec<u8>> {
@@ -673,7 +662,6 @@ impl PerpEngine {
         let one_e10 = U256::from(10_000_000_000u64);
         let wad = U256::from(WAD_U64);
         if !(mmr < one_e6
-            && clamp_min_fr <= clamp_max_fr
             && fee_lp <= fee_frac_dec - U256::from(self.fee_frontend.get())
             && trading_fee < trading_fee_dec
             && flat_trading_fee * wad < (trading_fee_dec - trading_fee) * minimum_trade_size
@@ -688,7 +676,7 @@ impl PerpEngine {
         self.param_locked_until.set(unlock);
         let hash = self.time_locked_param_hash(
             mmr, trading_fee, flat_trading_fee, fee_lp, liquidity_min_fee, liquidity_max_fee,
-            liquidity_fee_k, funding_c, clamp_min_fr, clamp_max_fr, clamp_offset, param_time_lock, minimum_trade_size,
+            liquidity_fee_k, funding_c, param_time_lock, minimum_trade_size,
         );
         self.param_hash.set(hash);
         self.emit(LockedParameterUpdate {
@@ -701,7 +689,6 @@ impl PerpEngine {
             _liquidityMaxFee: liquidity_max_fee,
             _liquidityFeeK: liquidity_fee_k,
             _fundingC: funding_c,
-            _clampParams: ClampParameters { minFR: clamp_min_fr, maxFR: clamp_max_fr, offset: clamp_offset },
             _paramTimeLock: param_time_lock,
             _minimumTradeSize: minimum_trade_size,
         });
@@ -722,16 +709,13 @@ impl PerpEngine {
         liquidity_max_fee: U256,
         liquidity_fee_k: U256,
         funding_c: U256,
-        clamp_min_fr: U256,
-        clamp_max_fr: U256,
-        clamp_offset: U256,
         param_time_lock: U256,
         minimum_trade_size: U256,
     ) -> Result<(), Vec<u8>> {
         self.only_role(self.mod_role.get())?;
         let new_hash = self.time_locked_param_hash(
             mmr, trading_fee, flat_trading_fee, fee_lp, liquidity_min_fee, liquidity_max_fee,
-            liquidity_fee_k, funding_c, clamp_min_fr, clamp_max_fr, clamp_offset, param_time_lock, minimum_trade_size,
+            liquidity_fee_k, funding_c, param_time_lock, minimum_trade_size,
         );
         if !(U256::from(self.vm().block_timestamp()) >= U256::from(self.param_locked_until.get())
             && new_hash == self.param_hash.get())
@@ -750,9 +734,6 @@ impl PerpEngine {
         self.liquidity_max_fee.set(liquidity_max_fee);
         self.liquidity_fee_k.set(liquidity_fee_k);
         self.funding_c.set(U32::from(u32::try_from(funding_c).map_err(|_| err(b"C"))?));
-        self.clamp_min_fr.set(clamp_min_fr);
-        self.clamp_max_fr.set(clamp_max_fr);
-        self.clamp_offset.set(clamp_offset);
         self.param_time_lock.set(U64::from(u64::try_from(param_time_lock).map_err(|_| err(b"C"))?));
         self.minimum_trade_size.set(minimum_trade_size);
         Ok(())

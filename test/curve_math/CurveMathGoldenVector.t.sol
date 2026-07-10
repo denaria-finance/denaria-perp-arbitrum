@@ -1350,12 +1350,6 @@ contract CurveMathGoldenVectorTest is Test {
         (vectors, count) = append(vectors, divCeilVector("util-divceil-pos-norem", 6, 2), count);
         (vectors, count) = append(vectors, divCeilVector("util-divceil-neg-num", -7, 2), count);
         (vectors, count) = append(vectors, divCeilVector("util-divceil-both-neg", -7, -2), count);
-        // clamp (offset applied when sign is negative)
-        (vectors, count) = append(vectors, clampVector("util-clamp-within-pos", 150, 100, 200, 50, true), count);
-        (vectors, count) = append(vectors, clampVector("util-clamp-above-pos", 250, 100, 200, 50, true), count);
-        (vectors, count) = append(vectors, clampVector("util-clamp-above-neg", 250, 100, 200, 50, false), count);
-        (vectors, count) = append(vectors, clampVector("util-clamp-below-neg", 50, 100, 200, 50, false), count);
-        (vectors, count) = append(vectors, clampVector("util-clamp-within-neg", 150, 100, 200, 50, false), count);
         // reduceValue (saturating subtraction, used by _removeLiquidity)
         (vectors, count) = append(vectors, reduceValueVector("util-reduceval-agtb", 100, 30), count);
         (vectors, count) = append(vectors, reduceValueVector("util-reduceval-altb", 30, 100), count);
@@ -1657,42 +1651,6 @@ contract CurveMathGoldenVectorTest is Test {
                 '"},"expected":{"z":"',
                 intStr(z),
                 '"}}'
-            )
-        );
-    }
-
-    function clampVector(
-        string memory label,
-        uint256 param,
-        uint256 minFR,
-        uint256 maxFR,
-        uint256 offset,
-        bool sign
-    )
-        internal
-        pure
-        returns (string memory)
-    {
-        (uint256 z, bool zSign) = UtilMath.clamp(param, UtilMath.ClampParameters(minFR, maxFR, offset), sign);
-        return string(
-            abi.encodePacked(
-                '    {"kind":"util","label":"',
-                label,
-                '","op":"clamp","inputs":{"param":"',
-                param.toString(),
-                '","minFR":"',
-                minFR.toString(),
-                '","maxFR":"',
-                maxFR.toString(),
-                '","offset":"',
-                offset.toString(),
-                '","sign":',
-                boolJson(sign),
-                '},"expected":{"z":"',
-                z.toString(),
-                '","zs":',
-                boolJson(zSign),
-                "}}"
             )
         );
     }

@@ -23,9 +23,6 @@ contract ParamHashGoldenVectorTest is Test {
         uint256 liquidityMaxFee;
         uint256 liquidityFeeK;
         uint256 fundingC;
-        uint256 clampMinFR;
-        uint256 clampMaxFR;
-        uint256 clampOffset;
         uint256 paramTimeLock;
         uint256 minimumTradeSize;
     }
@@ -39,7 +36,6 @@ contract ParamHashGoldenVectorTest is Test {
                 v.liquidityMaxFee,
                 v.liquidityFeeK,
                 v.fundingC,
-                UtilMath.ClampParameters(v.clampMinFR, v.clampMaxFR, v.clampOffset),
                 v.paramTimeLock,
                 v.minimumTradeSize
             )
@@ -48,8 +44,8 @@ contract ParamHashGoldenVectorTest is Test {
 
     function testWriteParamHashFixture() public {
         // Realistic config + a distinct-values vector (so a wrong field order would diverge).
-        Vec memory a = Vec(40_000, 0, 12e16, 500_000, 0, 5e8, 1e10, 1e6, 0, 1e18, 0, 10, 48e18);
-        Vec memory b = Vec(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
+        Vec memory a = Vec(40_000, 0, 12e16, 500_000, 0, 5e8, 1e10, 1e6, 10, 48e18);
+        Vec memory b = Vec(1, 2, 3, 4, 5, 6, 7, 8, 12, 13);
 
         string memory json = string(
             abi.encodePacked(
@@ -90,12 +86,6 @@ contract ParamHashGoldenVectorTest is Test {
             abi.encodePacked(
                 '","fundingC":"',
                 v.fundingC.toString(),
-                '","clampMinFR":"',
-                v.clampMinFR.toString(),
-                '","clampMaxFR":"',
-                v.clampMaxFR.toString(),
-                '","clampOffset":"',
-                v.clampOffset.toString(),
                 '","paramTimeLock":"',
                 v.paramTimeLock.toString(),
                 '","minimumTradeSize":"',

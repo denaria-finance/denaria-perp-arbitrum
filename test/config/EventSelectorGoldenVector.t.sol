@@ -54,7 +54,6 @@ contract EventSelectorGoldenVectorTest is Test {
         uint256 _liquidityMaxFee,
         uint256 _liquidityFeeK,
         uint256 _fundingC,
-        UtilMath.ClampParameters _clampParams,
         uint256 _paramTimeLock,
         uint256 _minimumTradeSize
     );

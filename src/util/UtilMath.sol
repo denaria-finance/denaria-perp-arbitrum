@@ -43,12 +43,6 @@ library UtilMath {
     /// @dev The operation failed, either due to a multiplication overflow, or a division by a zero.
     error MulDivFailed();
 
-    struct ClampParameters {
-        uint256 minFR;
-        uint256 maxFR;
-        uint256 offset;
-    }
-
     struct TradeParams {
         address user;
         bool direction;
@@ -695,40 +689,6 @@ library UtilMath {
                 longCurveParamB,
                 curveParameterDecimals
             );
-    }
-
-    ///@dev Clamp function. Restricts the funding rate to inside a range (minY, maxY)
-    ///@param fundingRateParameter the funding rate value to clamp
-    ///@param params the parameters of the clamp: max, min and offset.
-    ///@param sign sign of fundingRateParameter.
-    function clamp(
-        uint256 fundingRateParameter,
-        ClampParameters memory params,
-        bool sign
-    )
-        internal
-        pure
-        returns (uint256, bool)
-    {
-        if (fundingRateParameter > params.maxFR) {
-            if (sign) {
-                return (params.maxFR, sign);
-            } else {
-                return signedSum(params.maxFR, false, params.offset, true);
-            }
-        }
-        if (fundingRateParameter < params.minFR) {
-            if (sign) {
-                return (params.minFR, sign);
-            } else {
-                return signedSum(params.minFR, false, params.offset, true);
-            }
-        }
-        if (sign) {
-            return (fundingRateParameter, sign);
-        } else {
-            return signedSum(fundingRateParameter, false, params.offset, true);
-        }
     }
 
     ///@notice Staticcall method to get the user virtual trader position from perpPair

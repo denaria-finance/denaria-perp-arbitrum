@@ -634,18 +634,16 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
     ///@dev test the testModifyLiquidity multicall.
     function testModifyLiquidity() public {
-        UtilMath.ClampParameters memory clampParams = UtilMath.ClampParameters(0, 1e20, 0);
-
         (uint256 tradFee, uint256 flatFee,,,,,) = perpPair.ReadFees();
 
         perpPair.prepareTimeLockedParameters(
-            perpPair.MMR(), tradFee, flatFee, 0, 0, 5 * 1e10 / 100, 1e10, 1e5 / 10, clampParams, 0, 10e18
+            perpPair.MMR(), tradFee, flatFee, 0, 0, 5 * 1e10 / 100, 1e10, 1e5 / 10, 0, 10e18
         );
 
         skip(604_810);
 
         perpPair.setTimeLockedParameters(
-            perpPair.MMR(), tradFee, flatFee, 0, 0, 5 * 1e10 / 100, 1e10, 1e5 / 10, clampParams, 0, 10e18
+            perpPair.MMR(), tradFee, flatFee, 0, 0, 5 * 1e10 / 100, 1e10, 1e5 / 10, 0, 10e18
         );
 
         uint256 price = 63_000 * oracleDecimals;
@@ -773,8 +771,6 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
     ///@dev test the testModifyLiquidity multicall.
     function testRelayerModifyLiquidity() public {
 
-        UtilMath.ClampParameters memory clampParams = UtilMath.ClampParameters(0,1e20,0);
-
         perpPair.prepareTimeLockedParameters(
             perpPair.MMR(),
             MMR / 2,
@@ -785,7 +781,6 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
             0,
             perpPair.liquidityFeeK(),
             perpPair.fundingC(),
-            clampParams,
             0,
             uint256(1e6/2),
             perpPair.minimumTradeSize()
@@ -803,7 +798,6 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
             0,
             perpPair.liquidityFeeK(),
             perpPair.fundingC(),
-            clampParams,
             0,
             uint256(1e6/2),
             perpPair.minimumTradeSize()

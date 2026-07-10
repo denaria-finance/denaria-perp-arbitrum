@@ -106,10 +106,6 @@
         e.trading_fee_decimals.set(U256::from(308));
         e.liquidity_g_decimals.set(U256::from(309));
 
-        e.clamp_min_fr.set(U256::from(401));
-        e.clamp_max_fr.set(U256::from(402));
-        e.clamp_offset.set(U256::from(403));
-
         e.mod_role.set(B256::repeat_byte(0xAA));
         e.param_hash.set(B256::repeat_byte(0xBB));
         e.ticker_asset_currency.set(B256::repeat_byte(0xCC));
@@ -218,10 +214,6 @@
         assert_eq!(e.trading_fee_decimals.get(), U256::from(308), "trading_fee_decimals");
         assert_eq!(e.liquidity_g_decimals.get(), U256::from(309), "liquidity_g_decimals");
 
-        assert_eq!(e.clamp_min_fr.get(), U256::from(401), "clamp_min_fr");
-        assert_eq!(e.clamp_max_fr.get(), U256::from(402), "clamp_max_fr");
-        assert_eq!(e.clamp_offset.get(), U256::from(403), "clamp_offset");
-
         assert_eq!(e.mod_role.get(), B256::repeat_byte(0xAA), "mod_role");
         assert_eq!(e.param_hash.get(), B256::repeat_byte(0xBB), "param_hash");
         assert_eq!(e.ticker_asset_currency.get(), B256::repeat_byte(0xCC), "ticker_asset_currency");
@@ -319,9 +311,6 @@
             e.funding_interval.set(U64::from(inp["fundingInterval"].as_str().unwrap().parse::<u64>().unwrap()));
             e.funding_c_decimals.set(u256s(inp["fundingCDecimals"].as_str().unwrap()));
             e.funding_rate_decimals.set(u256s(inp["fundingRateDecimals"].as_str().unwrap()));
-            e.clamp_min_fr.set(u256s(inp["clampMinFR"].as_str().unwrap()));
-            e.clamp_max_fr.set(u256s(inp["clampMaxFR"].as_str().unwrap()));
-            e.clamp_offset.set(u256s(inp["clampOffset"].as_str().unwrap()));
 
             let price = u256s(inp["price"].as_str().unwrap());
             let timestamp = u256s(inp["timestamp"].as_str().unwrap());
@@ -474,9 +463,6 @@
         e.funding_interval.set(U64::from(86_400u64));
         e.funding_c_decimals.set(U256::from(100_000u64));
         e.funding_rate_decimals.set(wad);
-        e.clamp_min_fr.set(U256::ZERO);
-        e.clamp_max_fr.set(U256::from(10u64).pow(U256::from(30u64)));
-        e.clamp_offset.set(U256::ZERO);
 
         // G-update params
         e.liquidity_g_decimals.set(U256::from(10_000_000_000u64)); // 1e10
@@ -529,7 +515,6 @@
         e.funding_c.set(U32::from(1_000_000u32));
         e.funding_interval.set(U64::from(86_400u64));
         e.funding_c_decimals.set(U256::from(100_000u64));
-        e.clamp_max_fr.set(U256::from(10u64).pow(U256::from(30u64)));
         e.total_trader_exposure_sign.set(true);
         e.funding_rate_sign.set(true);
         e.insurance_fund_sign.set(true);
@@ -1352,7 +1337,7 @@
             let got = e.time_locked_param_hash(
                 g("mmr"), g("tradingFee"), g("flatTradingFee"), g("feeLP"),
                 g("liquidityMinFee"), g("liquidityMaxFee"), g("liquidityFeeK"), g("fundingC"),
-                g("clampMinFR"), g("clampMaxFR"), g("clampOffset"), g("paramTimeLock"), g("minimumTradeSize"),
+                g("paramTimeLock"), g("minimumTradeSize"),
             );
             let want = B256::from_str(v["expected"].as_str().unwrap()).expect("hex hash");
             assert_eq!(got, want, "param hash mismatch for {}", v["label"].as_str().unwrap());
@@ -1568,21 +1553,20 @@
         e.initialize_benchmark(addr(0x01), addr(0x02), addr(0x03)).expect("init"); // grants MOD_ROLE; param_time_lock=10
         let (mmr, tf, flat, flp) = (U256::from(30_000u64), U256::ZERO, U256::from(120_000_000_000_000_000u64), U256::from(500_000u64));
         let (lmin, lmax, lk, fc) = (U256::ZERO, U256::from(500_000_000u64), U256::from(10_000_000_000u64), U256::from(1_000_000u64));
-        let (cmin, cmax, coff) = (U256::ZERO, wad, U256::ZERO);
         let (ptl, mts) = (U256::from(20u64), U256::from(48u64) * wad);
 
-        e.prepare_time_locked_parameters(mmr, tf, flat, flp, lmin, lmax, lk, fc, cmin, cmax, coff, ptl, mts)
+        e.prepare_time_locked_parameters(mmr, tf, flat, flp, lmin, lmax, lk, fc, ptl, mts)
             .expect("prepare");
         assert_eq!(e.param_locked_until.get(), U64::from(1010u64), "lock = now(1000) + storage paramTimeLock(10)");
 
-        let early = e.set_time_locked_parameters(mmr, tf, flat, flp, lmin, lmax, lk, fc, cmin, cmax, coff, ptl, mts);
+        let early = e.set_time_locked_parameters(mmr, tf, flat, flp, lmin, lmax, lk, fc, ptl, mts);
         assert_eq!(early, Err(err(b"C")), "before unlock reverts C");
 
         vm.set_block_timestamp(1010);
-        let mismatch = e.set_time_locked_parameters(U256::from(31_000u64), tf, flat, flp, lmin, lmax, lk, fc, cmin, cmax, coff, ptl, mts);
+        let mismatch = e.set_time_locked_parameters(U256::from(31_000u64), tf, flat, flp, lmin, lmax, lk, fc, ptl, mts);
         assert_eq!(mismatch, Err(err(b"C")), "hash mismatch reverts C");
 
-        e.set_time_locked_parameters(mmr, tf, flat, flp, lmin, lmax, lk, fc, cmin, cmax, coff, ptl, mts)
+        e.set_time_locked_parameters(mmr, tf, flat, flp, lmin, lmax, lk, fc, ptl, mts)
             .expect("apply at unlock with matching hash");
         assert_eq!(e.mmr.get(), U32::from(30_000u32), "mmr applied");
         assert_eq!(e.minimum_trade_size.get(), mts, "minimumTradeSize applied");
@@ -1612,9 +1596,9 @@
             vm.set_block_timestamp(ts);
             let mut e = PerpEngine::from(&vm);
             e.initialize_benchmark(addr(0x01), addr(0x02), addr(0x03)).expect("init");
-            e.prepare_time_locked_parameters(mmr, tf, flat, flp, lmin, lmax, lk, fc, cmin, cmax, coff, ptl, mts).expect("prepare");
+            e.prepare_time_locked_parameters(mmr, tf, flat, flp, lmin, lmax, lk, fc, ptl, mts).expect("prepare");
             vm.set_block_timestamp(ts + 10); // storage paramTimeLock == 10
-            (e.set_time_locked_parameters(mmr, tf, flat, flp, lmin, lmax, lk, fc, cmin, cmax, coff, ptl, mts), e)
+            (e.set_time_locked_parameters(mmr, tf, flat, flp, lmin, lmax, lk, fc, ptl, mts), e)
         };
 
         // funding_c just over u32::MAX -> set reverts C (narrowing, not truncation)

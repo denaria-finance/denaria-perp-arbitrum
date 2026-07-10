@@ -29,13 +29,9 @@ impl PerpEngine {
         let denom_asset = cm::md(asset_liq, price_o, wad);
         let denom = U256::from(self.funding_c.get()) * (denom_asset + stable_liq);
 
-        let (coeff, coeff_sign) = cm::clamp(
-            raw / denom,
-            self.clamp_min_fr.get(),
-            self.clamp_max_fr.get(),
-            self.clamp_offset.get(),
-            self.total_trader_exposure_sign.get(),
-        );
+        // Raw (unclamped) signed funding coefficient.
+        let coeff = raw / denom;
+        let coeff_sign = self.total_trader_exposure_sign.get();
 
         let delta = block_ts - timestamp;
         let new_rate = cm::md(coeff, delta, U256::from(self.funding_interval.get()));

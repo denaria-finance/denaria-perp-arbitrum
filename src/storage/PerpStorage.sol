@@ -168,7 +168,6 @@ abstract contract PerpStorage {
     Decimals internal decimals;
     /// @dev Structure that holds the parameters used in the curve equations.
     CurveParameters public curveParameters;
-    UtilMath.ClampParameters internal clampParameters;
 
     /// @dev Optional external CurveMath adapter. If unset, the contract uses the in-Solidity CurveMath library.
     address public curveMathAdapter;

@@ -43,8 +43,8 @@ impl PerpEngine {
         self.liquidity_m_decimals.set(cm::i(liq_m_dec));
         self.liquidity_m00.set(cm::i(liq_m_dec));
         self.liquidity_m11.set(cm::i(liq_m_dec));
-        // Decimals + clamp matching the real PerpPair constructor:
-        // Decimals(1e6,1e6,1e6,1e10,1e18,1e5,1e22,1e18,1e24); clampParameters(0,1e18,0).
+        // Decimals matching the real PerpPair constructor:
+        // Decimals(1e6,1e6,1e6,1e10,1e18,1e5,1e22,1e18,1e24).
         self.mmr_decimals.set(U256::from(1_000_000u64)); // 1e6
         self.liquidation_decimals.set(U256::from(1_000_000u64)); // 1e6
         self.liquidity_fee_decimals.set(U256::from(10_000_000_000u64)); // 1e10
@@ -53,9 +53,6 @@ impl PerpEngine {
         self.liquidity_g_decimals.set(U256::from(10u64).pow(U256::from(24u64))); // 1e24
         self.funding_c.set(U32::from(1_000_000u32)); // 10*1e5
         self.funding_interval.set(U64::from(86_400u64));
-        self.clamp_min_fr.set(U256::ZERO);
-        self.clamp_max_fr.set(wad); // 1e18
-        self.clamp_offset.set(U256::ZERO);
         self.param_time_lock.set(U64::from(10u64)); // real default
     }
 
@@ -72,7 +69,7 @@ impl PerpEngine {
 
     /// Bit-exact `keccak256(abi.encode(keccak256(abi.encodePacked(MMR, tradingFee,
     /// flatTradingFee, feeLP)), liquidityMinFee, liquidityMaxFee, liquidityFeeK,
-    /// fundingC, clampParams(minFR,maxFR,offset), paramTimeLock, minimumTradeSize))`.
+    /// fundingC, paramTimeLock, minimumTradeSize))`.
     /// All operands are uint256 ABI words, so abi.encode == 32-byte big-endian
     /// concatenation and abi.encodePacked of uint256 == the same 32-byte words.
     #[allow(clippy::too_many_arguments)]
@@ -80,7 +77,6 @@ impl PerpEngine {
         &self,
         mmr: U256, trading_fee: U256, flat_trading_fee: U256, fee_lp: U256,
         liq_min_fee: U256, liq_max_fee: U256, liq_fee_k: U256, funding_c: U256,
-        clamp_min: U256, clamp_max: U256, clamp_offset: U256,
         param_time_lock: U256, minimum_trade_size: U256,
     ) -> B256 {
         let mut packed = Vec::with_capacity(128);
@@ -88,12 +84,9 @@ impl PerpEngine {
             packed.extend_from_slice(&v.to_be_bytes::<32>());
         }
         let inner = keccak256(&packed);
-        let mut enc = Vec::with_capacity(32 * 10);
+        let mut enc = Vec::with_capacity(32 * 7);
         enc.extend_from_slice(inner.as_slice());
-        for v in [
-            liq_min_fee, liq_max_fee, liq_fee_k, funding_c,
-            clamp_min, clamp_max, clamp_offset, param_time_lock, minimum_trade_size,
-        ] {
+        for v in [liq_min_fee, liq_max_fee, liq_fee_k, funding_c, param_time_lock, minimum_trade_size] {
             enc.extend_from_slice(&v.to_be_bytes::<32>());
         }
         keccak256(&enc)

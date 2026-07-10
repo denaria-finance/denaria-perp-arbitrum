@@ -29,7 +29,6 @@ abstract contract PerpConfig is PerpStorage, AccessControl, ERC2771Context {
         uint256 _liquidityMaxFee,
         uint256 _liquidityFeeK,
         uint256 _fundingC,
-        UtilMath.ClampParameters _clampParams,
         uint256 _paramTimeLock,
         uint256 _minimumTradeSize
     );
@@ -45,7 +44,6 @@ abstract contract PerpConfig is PerpStorage, AccessControl, ERC2771Context {
     ///@param _liquidityMaxFee maximum liquidity fee allowed
     ///@param _liquidityFeeK K parameter of the liquidity fee formula
     ///@param _fundingC C parameter of the funding rate formula
-    ///@param _clampParams parameters of the funding rate clamp function
     ///@param _paramTimeLock time lock duration for setting parameters
     ///@param _minimumTradeSize minimum trade size allowed in openTrade.
     function prepareTimeLockedParameters(
@@ -57,7 +55,6 @@ abstract contract PerpConfig is PerpStorage, AccessControl, ERC2771Context {
         uint256 _liquidityMaxFee,
         uint256 _liquidityFeeK,
         uint256 _fundingC,
-        UtilMath.ClampParameters memory _clampParams,
         uint256 _paramTimeLock,
         uint256 _minimumTradeSize
     )
@@ -65,8 +62,8 @@ abstract contract PerpConfig is PerpStorage, AccessControl, ERC2771Context {
         onlyRole(MOD_ROLE)
     {
         require(
-            _MMR < 1e6 && _clampParams.minFR <= _clampParams.maxFR
-                && _feeLP <= decimals.feeFractionsDecimals - feeFrontend && _tradingFee < decimals.tradingFeeDecimals
+            _MMR < 1e6 && _feeLP <= decimals.feeFractionsDecimals - feeFrontend
+                && _tradingFee < decimals.tradingFeeDecimals
                 && _flatTradingFee * 1e18 < (decimals.tradingFeeDecimals - _tradingFee) * _minimumTradeSize
                 && _liquidityMinFee <= _liquidityMaxFee && _liquidityMaxFee <= 1e10,
             "C"
@@ -79,7 +76,6 @@ abstract contract PerpConfig is PerpStorage, AccessControl, ERC2771Context {
                 _liquidityMaxFee,
                 _liquidityFeeK,
                 _fundingC,
-                _clampParams,
                 _paramTimeLock,
                 _minimumTradeSize
             )
@@ -94,7 +90,6 @@ abstract contract PerpConfig is PerpStorage, AccessControl, ERC2771Context {
             _liquidityMaxFee,
             _liquidityFeeK,
             _fundingC,
-            _clampParams,
             _paramTimeLock,
             _minimumTradeSize
         );
@@ -109,7 +104,6 @@ abstract contract PerpConfig is PerpStorage, AccessControl, ERC2771Context {
     ///@param _liquidityMaxFee maximum liquidity fee allowed
     ///@param _liquidityFeeK K parameter of the liquidity fee formula
     ///@param _fundingC C parameter of the funding rate formula
-    ///@param _clampParams parameters of the funding rate clamp function
     ///@param _paramTimeLock time lock duration for setting parameters
     ///@param _minimumTradeSize minimum trade size allowed in openTrade.
     function setTimeLockedParameters(
@@ -121,7 +115,6 @@ abstract contract PerpConfig is PerpStorage, AccessControl, ERC2771Context {
         uint256 _liquidityMaxFee,
         uint256 _liquidityFeeK,
         uint256 _fundingC,
-        UtilMath.ClampParameters memory _clampParams,
         uint256 _paramTimeLock,
         uint256 _minimumTradeSize
     )
@@ -135,7 +128,6 @@ abstract contract PerpConfig is PerpStorage, AccessControl, ERC2771Context {
                 _liquidityMaxFee,
                 _liquidityFeeK,
                 _fundingC,
-                _clampParams,
                 _paramTimeLock,
                 _minimumTradeSize
             )
@@ -150,7 +142,6 @@ abstract contract PerpConfig is PerpStorage, AccessControl, ERC2771Context {
         liquidityMaxFee = _liquidityMaxFee;
         liquidityFeeK = _liquidityFeeK;
         fundingC = _fundingC;
-        clampParameters = _clampParams;
         paramTimeLock = _paramTimeLock;
         minimumTradeSize = _minimumTradeSize;
     }

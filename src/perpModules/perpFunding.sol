@@ -45,9 +45,9 @@ abstract contract PerpFunding is PerpConfig {
         uint256 denomAsset = assetLiq * priceO / 1e18;
         uint256 denom = fundingC * (denomAsset + stableLiq);
 
-        // 5. Clamp coefficient
-        UtilMath.ClampParameters memory cp = clampParameters;
-        (uint256 coeff, bool coeffSign) = UtilMath.clamp(raw / denom, cp, totalTraderExposureSign);
+        // 5. Compute signed coefficient
+        uint256 coeff = raw / denom;
+        bool coeffSign = totalTraderExposureSign;
 
         // 6. Time-weighted rate
         uint256 delta = block.timestamp - timestamp;

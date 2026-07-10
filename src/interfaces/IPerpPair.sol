@@ -8,12 +8,6 @@ import "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 
 interface IPerpPair {
-    struct ClampParameters {
-        uint256 minFR;
-        uint256 maxFR;
-        uint256 offset;
-    }
-
     error AccessControlBadConfirmation();
     error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
     error ReentrancyGuardReentrantCall();
@@ -81,7 +75,6 @@ interface IPerpPair {
         uint256 _liquidityMaxFee,
         uint256 _liquidityFeeK,
         uint256 _fundingC,
-        ClampParameters _clampParams,
         uint256 _paramTimeLock,
         uint256 _minimumTradeSize
     );
@@ -122,7 +115,6 @@ interface IPerpPair {
         view
         returns (bool authorized, uint256 profitTh, uint256 lossTh, uint256 maxSlippage, uint256 maxLiqFee);
     function calcPnL(address user, uint256 price) external view returns (uint256, bool);
-    function clampParameters() external view returns (uint256 minFR, uint256 maxFR, uint256 offset);
     function closeAndWithdraw(
         uint256 maxSlippage,
         uint256 maxLiqFee,
@@ -231,7 +223,6 @@ interface IPerpPair {
         uint256 _liquidityMaxFee,
         uint256 _liquidityFeeK,
         uint256 _fundingC,
-        ClampParameters memory _clampParams,
         uint256 _paramTimeLock,
         uint256 _partialLiquidationFraction,
         uint256 _minimumTradeSize
@@ -268,7 +259,6 @@ interface IPerpPair {
         uint256 _liquidityMaxFee,
         uint256 _liquidityFeeK,
         uint256 _fundingC,
-        ClampParameters memory _clampParams,
         uint256 _paramTimeLock,
         uint256 _partialLiquidationFraction,
         uint256 _minimumTradeSize

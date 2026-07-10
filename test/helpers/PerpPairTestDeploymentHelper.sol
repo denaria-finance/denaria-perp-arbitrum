@@ -44,7 +44,6 @@ abstract contract PerpPairTestDeploymentHelper {
         );
         // Timelocked: restore fundingC and minimumTradeSize; pass the suite's constructor
         // values and the live PerpStorage values through for the rest.
-        UtilMath.ClampParameters memory clamp = UtilMath.ClampParameters(0, 1e18, 0);
         pair.prepareTimeLockedParameters(
             mmr_,
             tradingFee_,
@@ -54,14 +53,11 @@ abstract contract PerpPairTestDeploymentHelper {
             5 * 1e10 / 100, // liquidityMaxFee: live value
             1e10, // liquidityFeeK: live value
             1e4, // fundingC: test-era value
-            clamp,
             10, // paramTimeLock: live value
             1e18 // minimumTradeSize: test-era value
         );
         FIXTURE_VM.warp(block.timestamp + 10);
-        pair.setTimeLockedParameters(
-            mmr_, tradingFee_, flatTradingFee_, feeLP_, 0, 5 * 1e10 / 100, 1e10, 1e4, clamp, 10, 1e18
-        );
+        pair.setTimeLockedParameters(mmr_, tradingFee_, flatTradingFee_, feeLP_, 0, 5 * 1e10 / 100, 1e10, 1e4, 10, 1e18);
     }
 
     function _deployPerpPairForTest(
