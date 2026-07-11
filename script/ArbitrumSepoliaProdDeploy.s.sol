@@ -56,7 +56,6 @@ contract ArbitrumSepoliaProdDeploy is Script {
         stableDecimalsArr[0] = stableDecimals;
         Vault vault = new Vault(
             address(manager),
-            oracle,
             minCollateralMovement,
             stableCoins,
             depositThresholds,

@@ -62,13 +62,7 @@ contract DemoScenarioGasBenchTest is Test, PerpPairTestDeploymentHelper {
         oracle = new TestPriceProvider();
         multiCallManager = new PerpMultiCalls();
         vault = new Vault(
-            address(multiCallManager),
-            address(oracle),
-            1e17,
-            stableCoins,
-            depositThresholds,
-            withdrowalThresholds,
-            stableDecimals
+            address(multiCallManager), 1e17, stableCoins, depositThresholds, withdrowalThresholds, stableDecimals
         );
         perpPair = _deployPerpPairForTest(
             address(oracle),

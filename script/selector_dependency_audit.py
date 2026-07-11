@@ -307,7 +307,7 @@ def main():
 
     # --- directions A + B + D: typed calls in the Solidity stack ---
     # The cast argument allows ONE level of nested parens so forms like
-    # `IOracleMiddleware(IVault(vault).oracle()).verifyReportIfNecessary(...)`
+    # `IOracleMiddleware(IPerpPair(perpPair).oracle()).verifyReportIfNecessary(...)`
     # are extracted (the flat pattern missed them).
     call_pat = re.compile(
         r"\b(" + "|".join(IFACE_BINDINGS) + r")\s*\((?:[^()]|\([^()]*\))*\)\s*\.\s*([A-Za-z_]\w*)"

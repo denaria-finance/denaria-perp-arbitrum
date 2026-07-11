@@ -43,8 +43,6 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context, Pausa
     address public perpPair = address(0);
     /// @notice address of the lost and found contract
     address public lostAndFound = address(0);
-    /// @notice address of the oracle
-    address public oracle;
     /// @dev Status of the contract, if false a function to initialize some parameters can be called.
     bool private initialized;
 
@@ -103,7 +101,6 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context, Pausa
 
     constructor(
         address _multiCallManager,
-        address _oracle,
         uint256 _minCollateralMovement,
         address[] memory stableCoinAddresses,
         uint256[] memory depositThresholds,
@@ -117,7 +114,6 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context, Pausa
         ratioDecimals = 1e8;
         collateralDecimals = 1e18;
         oracleDecimals = 1e8;
-        oracle = _oracle;
         minCollateralMovement = _minCollateralMovement;
         for (uint256 i; i < stableCoinAddresses.length; i++) {
             StableCoin memory newStable = StableCoin(
@@ -198,7 +194,7 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context, Pausa
         // Read the oracle price once and reuse it for both the PnL check and the margin check
         // (_checkMR). Nothing between here and the MR check mutates the oracle, so the two former
         // reads returned the same value; this drops one Vault->oracle read per removeCollateral.
-        uint256 price = SafeCast.toUint256(IOracleMiddleware(oracle).getPrice());
+        uint256 price = SafeCast.toUint256(IOracleMiddleware(IPerpPair(perpPair).oracle()).getPrice());
         (uint256 pnl, bool pnlSign) = IPerpPair(perpPair).calcPnL(user, price);
         if (!pnlSign) {
             require(amount + pnl <= userCollateral[user], "RC5");

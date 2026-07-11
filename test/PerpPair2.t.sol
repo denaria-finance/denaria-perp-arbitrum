@@ -79,13 +79,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         oracle = new TestPriceProvider();
         multiCallManager = new PerpMultiCalls();
         vault = new Vault(
-            address(multiCallManager),
-            address(oracle),
-            100,
-            stableCoins,
-            depositThresholds,
-            withdrowalThresholds,
-            stableDecimals
+            address(multiCallManager), 100, stableCoins, depositThresholds, withdrowalThresholds, stableDecimals
         );
         perpPair = _deployPerpPairForTest(
             address(oracle),

@@ -100,13 +100,7 @@ contract C0EnvelopeSweepTest is Test, PerpPairTestDeploymentHelper {
         oracle = new TestPriceProvider();
         multiCallManager = new PerpMultiCalls();
         vault = new Vault(
-            address(multiCallManager),
-            address(oracle),
-            100,
-            stableCoins,
-            depositThresholds,
-            withdrowalThresholds,
-            stableDecimals
+            address(multiCallManager), 100, stableCoins, depositThresholds, withdrowalThresholds, stableDecimals
         );
         // PerpPair constructor hardcodes the PRODUCTION curve params (A=1e8, B=1e7).
         perpPair = _deployPerpPairForTest(

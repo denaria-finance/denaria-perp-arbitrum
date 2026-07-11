@@ -87,13 +87,7 @@ contract VaultTest is Test, PerpPairTestDeploymentHelper {
 
         multiCallManager = new PerpMultiCalls();
         vault = new Vault(
-            address(multiCallManager),
-            address(oracle),
-            100,
-            stableCoins,
-            depositThresholds,
-            withdrowalThresholds,
-            stableDecimals
+            address(multiCallManager), 100, stableCoins, depositThresholds, withdrowalThresholds, stableDecimals
         );
         perpPair = _deployPerpPairForTest(
             address(oracle),
@@ -355,6 +349,50 @@ contract VaultTest is Test, PerpPairTestDeploymentHelper {
         console.log(a);
 
         vm.expectRevert();
+        vm.prank(bob);
+        vault.removeCollateral(1 * 1e18, fakeReportData);
+    }
+
+    ///@dev Single source of truth: the Vault holds NO pinned oracle — it
+    /// reads the engine's oracle on every removeCollateral. A long that is underwater at the
+    /// current price (so the withdrawal reverts) becomes healthy once the engine oracle is
+    /// repointed to a provider quoting a much higher price; the same withdrawal then succeeds.
+    /// A pinned oracle copy would keep the old price and keep reverting — so this fails on the
+    /// old design, and passes only because the Vault follows the engine oracle.
+    function testVaultFollowsEngineOracleNotPinnedCopy() public {
+        oracle.setPrice(100 * oracleDecimals);
+
+        uint256[] memory amounts = new uint256[](numStableCoins);
+        amounts[0] = startingStableAmount * 1e6;
+        amounts[1] = startingStableAmount * 1e18;
+        vm.prank(alice);
+        vault.addCollateral(amounts);
+        vm.prank(alice);
+        perpPair.addLiquidity(100_000 * 1e18, 1000 * 1e18, maxUserLiquidityFee, fakeReportData);
+
+        amounts[0] = 25 * 1e6;
+        amounts[1] = 25 * 1e18;
+        vm.prank(bob);
+        vault.addCollateral(amounts);
+        vm.prank(bob);
+        perpPair.trade(true, 1000 * 1e18, 0, 1000 * 1e18, frontendAddress, 1, fakeReportData);
+
+        skip(20_000);
+
+        // Underwater at price 100 -> the withdrawal reverts (same state as testRemoveCollateralRevertMMR).
+        vm.expectRevert();
+        vm.prank(bob);
+        vault.removeCollateral(1 * 1e18, fakeReportData);
+
+        // Repoint the ENGINE oracle to a second provider quoting a much higher price. bob's long
+        // is now deeply in profit -> healthy.
+        TestPriceProvider oracle2 = new TestPriceProvider();
+        oracle2.setPrice(500 * oracleDecimals);
+        perpPair.setUnguardedParameters(address(oracle2), feeFrontend, feeProtocolAddr, 1e8, 15, 7500, 10, 10);
+        assertEq(perpPair.oracle(), address(oracle2), "engine oracle repointed");
+
+        // The Vault reads the engine oracle -> sees the higher price -> bob healthy -> the same
+        // withdrawal now succeeds. A pinned copy would still see price 100 and revert.
         vm.prank(bob);
         vault.removeCollateral(1 * 1e18, fakeReportData);
     }

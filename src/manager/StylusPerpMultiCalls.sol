@@ -70,6 +70,7 @@ interface IStylusPerpEngine {
     // Public view getters (read paths for modify-liquidity / take-profit bundlers).
     function getLpLiquidityBalance(address user) external view returns (uint256, uint256);
     function getPrice() external view returns (uint256);
+    function oracle() external view returns (address);
     function calcPnL(address user, uint256 price) external view returns (uint256, bool);
     // PerpStorage 8-field tuple: (vault, oracle, minimumTradeSize, minimumLiquidityMovement,
     // feeFrontend, feeLP, insuranceFundCap, tickerAssetCurrency).
@@ -445,7 +446,7 @@ contract StylusPerpMultiCalls is Initializable, EIP712, AccessControl, Reentranc
         // Fixed here: read minimumLiquidityMovement directly, matching `liquidityTh`'s
         // intent.)
         (,,, uint256 liquidityTh,,,,) = IStylusPerpEngine(perpPair).ReadParameters();
-        IOracleMiddleware(IVault(vault).oracle()).verifyReportIfNecessary(unverifiedReport);
+        IOracleMiddleware(IStylusPerpEngine(perpPair).oracle()).verifyReportIfNecessary(unverifiedReport);
         uint256 spotPrice = IStylusPerpEngine(perpPair).getPrice();
         uint256 oracleDecimals = 1e8;
 
@@ -512,8 +513,8 @@ contract StylusPerpMultiCalls is Initializable, EIP712, AccessControl, Reentranc
     }
 
     function _takeProfitRemoveCollateral(address sender, bytes memory unverifiedReport) private {
-        IOracleMiddleware(IVault(vault).oracle()).verifyReportIfNecessary(unverifiedReport);
-        uint256 spotPrice = SafeCast.toUint256(IOracleMiddleware(IVault(vault).oracle()).getPrice());
+        IOracleMiddleware(IStylusPerpEngine(perpPair).oracle()).verifyReportIfNecessary(unverifiedReport);
+        uint256 spotPrice = SafeCast.toUint256(IOracleMiddleware(IStylusPerpEngine(perpPair).oracle()).getPrice());
 
         (uint256 pnl, bool pnlSign) = IStylusPerpEngine(perpPair).calcPnL(sender, spotPrice);
         require(pnlSign, "Pnl must be positive");

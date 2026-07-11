@@ -391,7 +391,7 @@ contract PerpMultiCalls is Initializable, EIP712, AccessControl, ReentrancyGuard
         (uint256 oldStable, uint256 oldAsset) = IPerpPair(perpPair).getLpLiquidityBalance(_msgSender());
 
         (,, uint256 liquidityTh,,,) = IPerpPair(perpPair).ReadParameters();
-        IOracleMiddleware(IVault(vault).oracle()).verifyReportIfNecessary(unverifiedReport);
+        IOracleMiddleware(IPerpPair(perpPair).oracle()).verifyReportIfNecessary(unverifiedReport);
         uint256 spotPrice = IPerpPair(perpPair).getPrice();
         uint256 oracleDecimals = 1e8; // oracle price scale for this market
 
@@ -488,7 +488,7 @@ contract PerpMultiCalls is Initializable, EIP712, AccessControl, ReentrancyGuard
         (uint256 oldStable, uint256 oldAsset) = IPerpPair(perpPair).getLpLiquidityBalance(from);
 
         (,, uint256 liquidityTh,,,) = IPerpPair(perpPair).ReadParameters();
-        IOracleMiddleware(IVault(vault).oracle()).verifyReportIfNecessary(unverifiedReport);
+        IOracleMiddleware(IPerpPair(perpPair).oracle()).verifyReportIfNecessary(unverifiedReport);
         uint256 spotPrice = IPerpPair(perpPair).getPrice();
         uint256 oracleDecimals = 1e8; // oracle price scale for this market
 
@@ -569,8 +569,8 @@ contract PerpMultiCalls is Initializable, EIP712, AccessControl, ReentrancyGuard
     }
 
     function takeProfitRemoveCollateral(bytes memory unverifiedReport) external {
-        IOracleMiddleware(IVault(vault).oracle()).verifyReportIfNecessary(unverifiedReport);
-        uint256 spotPrice = SafeCast.toUint256(IOracleMiddleware(IVault(vault).oracle()).getPrice());
+        IOracleMiddleware(IPerpPair(perpPair).oracle()).verifyReportIfNecessary(unverifiedReport);
+        uint256 spotPrice = SafeCast.toUint256(IOracleMiddleware(IPerpPair(perpPair).oracle()).getPrice());
 
         (uint256 pnl, bool pnlSign) = IPerpPair(perpPair).calcPnL(_msgSender(), spotPrice);
         require(pnlSign, "Pnl must be positive");
@@ -598,8 +598,8 @@ contract PerpMultiCalls is Initializable, EIP712, AccessControl, ReentrancyGuard
         require(signer == from && nonce == nonces[from] && block.timestamp <= deadline, "Invalid/Expired Signature");
         nonces[from] += 1;
 
-        IOracleMiddleware(IVault(vault).oracle()).verifyReportIfNecessary(unverifiedReport);
-        uint256 spotPrice = SafeCast.toUint256(IOracleMiddleware(IVault(vault).oracle()).getPrice());
+        IOracleMiddleware(IPerpPair(perpPair).oracle()).verifyReportIfNecessary(unverifiedReport);
+        uint256 spotPrice = SafeCast.toUint256(IOracleMiddleware(IPerpPair(perpPair).oracle()).getPrice());
 
         (uint256 pnl, bool pnlSign) = IPerpPair(perpPair).calcPnL(from, spotPrice);
         require(pnlSign, "Pnl must be positive");

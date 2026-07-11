@@ -18,7 +18,7 @@ abstract contract PerpStorage {
     /// @dev Sign of the total trader exposure.
     bool public totalTraderExposureSign;
     /// @dev Address of the oracle contract
-    address internal oracle;
+    address public oracle;
     /// @dev Address that collects protocol fees
     address internal feeProtocolAddr;
     /// @dev Maximum leverage allowed, only tied to what comes from the frontend in openTrade

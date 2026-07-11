@@ -807,6 +807,14 @@ impl PerpEngine {
         Ok(U256::from(300_000_000_000u64))
     }
 
+    /// `oracle()` — the engine's price oracle. The Vault and manager read this so the whole
+    /// stack shares one source of truth (`IPerpPair(perpPair).oracle()`) instead of each
+    /// pinning its own oracle address at deploy.
+    #[selector(name = "oracle")]
+    pub fn oracle_public(&self) -> Result<Address, Vec<u8>> {
+        Ok(self.oracle.get())
+    }
+
     /// `internalPerpLogic.calcPnL(user, price)` (close-path, `useSpotPrice=false`)
     /// → (pnl, pnlSign). `price` is the oracle price supplied by the caller.
     #[selector(name = "calcPnL")]

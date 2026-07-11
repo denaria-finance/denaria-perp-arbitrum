@@ -87,13 +87,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         oracle = new TestPriceProvider();
         multiCallManager = new PerpMultiCalls();
         vault = new Vault(
-            address(multiCallManager),
-            address(oracle),
-            100,
-            stableCoins,
-            depositThresholds,
-            withdrowalThresholds,
-            stableDecimals
+            address(multiCallManager), 100, stableCoins, depositThresholds, withdrowalThresholds, stableDecimals
         );
         perpPair = _deployPerpPairForTest(
             address(oracle),
@@ -165,8 +159,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
                 uint256 size = vm.randomUint(200, 1000) * 1e18;
                 isLong = vm.randomBool();
                 if (!isLong) {
-                    size =
-                        size * oracleDecimals / SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice());
+                    size = size * oracleDecimals / SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice());
                 }
                 vm.prank(userAddresses[vm.randomUint(0, 90)]);
                 perpPair.trade(isLong, size, 0, 0, frontendAddress, 1, fakeReport);
@@ -187,9 +180,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
         for (i = 0; i < 100; i++) {
             (pnl, pnlSign) = UtilMath.calcPnLNoExit(
-                userAddresses[i],
-                SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()),
-                address(perpPair)
+                userAddresses[i], SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()), address(perpPair)
             );
             //console.log("exposition");
             if (pnl != 0) {
@@ -205,13 +196,13 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         console.log(lpBalanceStable, lpBalanceAsset, debtStable, debtAsset);
 
         (pnl, pnlSign) =
-            perpPair.calcPnL(feeProtocolAddr, SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()));
+            perpPair.calcPnL(feeProtocolAddr, SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()));
         //console.log("exposition");
         console.log(pnl, pnlSign, "protocol");
         (totalPnl, totalPnlSign) = UtilMath.signedSum(pnl, pnlSign, totalPnl, totalPnlSign);
 
         (pnl, pnlSign) =
-            perpPair.calcPnL(frontendAddress, SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()));
+            perpPair.calcPnL(frontendAddress, SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()));
         //console.log("exposition");
         console.log(pnl, pnlSign, "frontend");
         (totalPnl, totalPnlSign) = UtilMath.signedSum(pnl, pnlSign, totalPnl, totalPnlSign);
@@ -256,8 +247,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
                 uint256 size = vm.randomUint(100_000, 100_000) * 1e18;
                 isLong = vm.randomBool();
                 if (!isLong) {
-                    size =
-                        size * oracleDecimals / SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice());
+                    size = size * oracleDecimals / SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice());
                 }
                 vm.prank(userAddresses[vm.randomUint(0, 90)]);
                 perpPair.trade(isLong, size, 0, 0, frontendAddress, 1, fakeReport);
@@ -333,7 +323,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
                     uint256 size = vm.randomUint(200,1000) * 1e18;
                     isLong = vm.randomBool();
                     if (!isLong){
-                        size = size*oracleDecimals/SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice());
+                        size = size*oracleDecimals/SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice());
                     }
                     vm.prank(userAddresses[vm.randomUint(0,90)]);
                     perpPair.trade(isLong, size, 0, 0, frontendAddress, 1, fakeReport);
@@ -367,7 +357,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
             for (uint256 j = 0; j < vm.randomUint(5,10); j++) {
                 uint256 size = vm.randomUint(200,1000) * 1e18;
-                size = size*oracleDecimals/SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice());
+                size = size*oracleDecimals/SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice());
                 vm.prank(userAddresses[vm.randomUint(0,90)]);
                 perpPair.trade(false, size, 0, 0, frontendAddress, 1, fakeReport);
             }
@@ -375,7 +365,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
             uint256 dx0 = perpPair.dx0();
             (uint256 shortCurveParameterA, uint256 shortCurveParameterB, , , , , , ) = perpPair.curveParameters();
             uint256 tradeReturn = CurveMath.computeShortReturn(
-                tradeSize*oracleDecimals/SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()) + dx0,
+                tradeSize*oracleDecimals/SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()) + dx0,
                 price,
                 oracleDecimals,
                 perpPair.globalLiquidityStable(),
@@ -597,8 +587,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
                 isLong = vm.randomBool();
                 uint256 size = vm.randomUint(200, 1000) * 1e18;
                 if (!isLong) {
-                    size =
-                        size * oracleDecimals / SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice());
+                    size = size * oracleDecimals / SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice());
                 }
                 vm.prank(userAddresses[vm.randomUint(1, 90)]);
                 perpPair.trade(isLong, size, 0, 0, frontendAddress, 1, fakeReport);
@@ -715,8 +704,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
                 isLong = vm.randomBool();
                 uint256 size = vm.randomUint(100, 1000) * 1e18;
                 if (!isLong) {
-                    size =
-                        size * oracleDecimals / SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice());
+                    size = size * oracleDecimals / SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice());
                 }
                 vm.prank(userAddresses[vm.randomUint(1, 90)]);
                 perpPair.trade(isLong, size, 0, 0, frontendAddress, 1, fakeReport);
@@ -763,8 +751,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
                 isLong = vm.randomBool();
                 uint256 size = vm.randomUint(100, 1000) * 1e18;
                 if (!isLong) {
-                    size =
-                        size * oracleDecimals / SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice());
+                    size = size * oracleDecimals / SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice());
                 }
                 vm.prank(userAddresses[vm.randomUint(1, 99)]);
                 perpPair.trade(isLong, size, 0, 0, frontendAddress, 1, fakeReport);
@@ -798,9 +785,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
             vm.prank(userAddresses[i]);
             perpPair.trade(true, minTrade + flatFee + 1e17, 0, totalLiquidityAsset, frontendAddress, 1, fakeReport);
             (fundingFee, fundingFeeSign) = UtilMath.calcPnLNoExit(
-                userAddresses[i],
-                SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()),
-                address(perpPair)
+                userAddresses[i], SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()), address(perpPair)
             );
             (,,,, fundingFee, fundingFeeSign,,) = perpPair.userVirtualTraderPosition(userAddresses[i]);
 
@@ -833,8 +818,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
                 isLong = vm.randomBool();
                 uint256 size = vm.randomUint(100, 1000) * 1e18;
                 if (!isLong) {
-                    size =
-                        size * oracleDecimals / SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice());
+                    size = size * oracleDecimals / SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice());
                 }
                 vm.prank(userAddresses[vm.randomUint(1, 90)]);
                 perpPair.trade(isLong, size, 0, 0, frontendAddress, 1, fakeReport);
@@ -869,9 +853,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
             vm.prank(userAddresses[i]);
             perpPair.trade(true, minTrade + flatFee + 1e17, 0, totalLiquidityAsset, frontendAddress, 1, fakeReport);
             (fundingFee, fundingFeeSign) = UtilMath.calcPnLNoExit(
-                userAddresses[i],
-                SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()),
-                address(perpPair)
+                userAddresses[i], SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()), address(perpPair)
             );
             (,,,, fundingFee, fundingFeeSign,,) = perpPair.userVirtualTraderPosition(userAddresses[i]);
 
@@ -907,7 +889,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         console.log(
             UtilMath.calcMR(
                 userAddresses[0],
-                SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()),
+                SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()),
                 address(perpPair),
                 perpPair.getCollateral(userAddresses[0]),
                 perpPair.lastOperationTimestamp()
@@ -915,10 +897,10 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         );
 
         (uint256 userPnL1, bool userPnLsign1) = UtilMath.calcPnLNoExit(
-            userAddresses[0], SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()), address(perpPair)
+            userAddresses[0], SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()), address(perpPair)
         );
         (uint256 liquidatorPnL1, bool liquidatorPnLsign1) = UtilMath.calcPnLNoExit(
-            userAddresses[1], SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()), address(perpPair)
+            userAddresses[1], SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()), address(perpPair)
         );
         (uint256 totalPnL1, bool totalPnLsign1) =
             UtilMath.signedSum(userPnL1, userPnLsign1, liquidatorPnL1, liquidatorPnLsign1);
@@ -933,10 +915,10 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         perpPair.liquidate(userAddresses[0], balanceAsset - 1, fakeReport);
 
         (uint256 userPnL2, bool userPnLsign2) = UtilMath.calcPnLNoExit(
-            userAddresses[0], SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()), address(perpPair)
+            userAddresses[0], SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()), address(perpPair)
         );
         (uint256 liquidatorPnL2, bool liquidatorPnLsign2) = UtilMath.calcPnLNoExit(
-            userAddresses[1], SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()), address(perpPair)
+            userAddresses[1], SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()), address(perpPair)
         );
         (uint256 totalPnL2, bool totalPnLsign2) =
             UtilMath.signedSum(userPnL2, userPnLsign2, liquidatorPnL2, liquidatorPnLsign2);
@@ -972,7 +954,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         console.log(
             UtilMath.calcMR(
                 userAddresses[0],
-                SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()),
+                SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()),
                 address(perpPair),
                 perpPair.getCollateral(userAddresses[0]),
                 perpPair.lastOperationTimestamp()
@@ -980,10 +962,10 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         );
 
         (uint256 userPnL1, bool userPnLsign1) = UtilMath.calcPnLNoExit(
-            userAddresses[0], SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()), address(perpPair)
+            userAddresses[0], SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()), address(perpPair)
         );
         (uint256 liquidatorPnL1, bool liquidatorPnLsign1) = UtilMath.calcPnLNoExit(
-            userAddresses[1], SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()), address(perpPair)
+            userAddresses[1], SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()), address(perpPair)
         );
         (uint256 totalPnL1, bool totalPnLsign1) =
             UtilMath.signedSum(userPnL1, userPnLsign1, liquidatorPnL1, liquidatorPnLsign1);
@@ -998,10 +980,10 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         perpPair.liquidate(userAddresses[0], debtAsset - 1, fakeReport);
 
         (uint256 userPnL2, bool userPnLsign2) = UtilMath.calcPnLNoExit(
-            userAddresses[0], SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()), address(perpPair)
+            userAddresses[0], SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()), address(perpPair)
         );
         (uint256 liquidatorPnL2, bool liquidatorPnLsign2) = UtilMath.calcPnLNoExit(
-            userAddresses[1], SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()), address(perpPair)
+            userAddresses[1], SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()), address(perpPair)
         );
         (uint256 totalPnL2, bool totalPnLsign2) =
             UtilMath.signedSum(userPnL2, userPnLsign2, liquidatorPnL2, liquidatorPnLsign2);

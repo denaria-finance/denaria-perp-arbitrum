@@ -79,13 +79,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         oracle = new TestPriceProvider();
         multiCallManager = new PerpMultiCalls();
         vault = new Vault(
-            address(multiCallManager),
-            address(oracle),
-            100,
-            stableCoins,
-            depositThresholds,
-            withdrowalThresholds,
-            stableDecimals
+            address(multiCallManager), 100, stableCoins, depositThresholds, withdrowalThresholds, stableDecimals
         );
         perpPair = _deployPerpPairForTest(
             address(oracle),
@@ -1228,7 +1222,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
         uint256 marginBefore = UtilMath.calcMR(
             bob,
-            SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()),
+            SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()),
             address(perpPair),
             perpPair.getCollateral(bob),
             perpPair.lastOperationTimestamp()
@@ -1247,7 +1241,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
         uint256 marginAfter = UtilMath.calcMR(
             bob,
-            SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()),
+            SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()),
             address(perpPair),
             perpPair.getCollateral(bob),
             perpPair.lastOperationTimestamp()
@@ -1308,7 +1302,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
         uint256 marginBefore = UtilMath.calcMR(
             bob,
-            SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()),
+            SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()),
             address(perpPair),
             perpPair.getCollateral(bob),
             perpPair.lastOperationTimestamp()
@@ -1326,7 +1320,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
         uint256 marginAfter = UtilMath.calcMR(
             bob,
-            SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()),
+            SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()),
             address(perpPair),
             perpPair.getCollateral(bob),
             perpPair.lastOperationTimestamp()
@@ -1405,7 +1399,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
         uint256 marginBefore = UtilMath.calcMR(
             bob,
-            SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()),
+            SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()),
             address(perpPair),
             perpPair.getCollateral(bob),
             perpPair.lastOperationTimestamp()
@@ -1421,7 +1415,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
         uint256 marginAfter = UtilMath.calcMR(
             bob,
-            SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()),
+            SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()),
             address(perpPair),
             perpPair.getCollateral(bob),
             perpPair.lastOperationTimestamp()
@@ -1523,7 +1517,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
         uint256 marginBefore = UtilMath.calcMR(
             alice,
-            SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()),
+            SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()),
             address(perpPair),
             perpPair.getCollateral(alice),
             perpPair.lastOperationTimestamp()
@@ -1539,7 +1533,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
         uint256 marginAfter = UtilMath.calcMR(
             alice,
-            SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()),
+            SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()),
             address(perpPair),
             perpPair.getCollateral(alice),
             perpPair.lastOperationTimestamp()
@@ -2601,13 +2595,13 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         (totalPnl, totalPnlSign) = UtilMath.signedSum(totalPnl, totalPnlSign, davidPnL, davidPnLSign);
 
         (uint256 pnl, bool pnlSign) =
-            perpPair.calcPnL(feeProtocolAddr, SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()));
+            perpPair.calcPnL(feeProtocolAddr, SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()));
         //console.log("exposition");
         console.log(pnl, pnlSign, "protocol");
         (totalPnl, totalPnlSign) = UtilMath.signedSum(pnl, pnlSign, totalPnl, totalPnlSign);
 
         (pnl, pnlSign) =
-            perpPair.calcPnL(frontendAddress, SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()));
+            perpPair.calcPnL(frontendAddress, SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()));
         //console.log("exposition");
         console.log(pnl, pnlSign, "frontend");
         (totalPnl, totalPnlSign) = UtilMath.signedSum(pnl, pnlSign, totalPnl, totalPnlSign);
@@ -2656,12 +2650,12 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         (totalPnl, totalPnlSign) = UtilMath.signedSum(totalPnl, totalPnlSign, charliePnL, charliePnLSign);
         (totalPnl, totalPnlSign) = UtilMath.signedSum(totalPnl, totalPnlSign, davidPnL, davidPnLSign);
 
-        ( pnl,  pnlSign) = perpPair.calcPnL(feeProtocolAddr, SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()));
+        ( pnl,  pnlSign) = perpPair.calcPnL(feeProtocolAddr, SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()));
         //console.log("exposition");
         console.log(pnl, pnlSign, "protocol");
         (totalPnl, totalPnlSign) = UtilMath.signedSum(pnl, pnlSign, totalPnl, totalPnlSign);
 
-        (pnl, pnlSign) = perpPair.calcPnL(frontendAddress, SafeCast.toUint256(IOracleMiddleware(Vault(vault).oracle()).getPrice()));
+        (pnl, pnlSign) = perpPair.calcPnL(frontendAddress, SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()));
         //console.log("exposition");
         console.log(pnl, pnlSign, "frontend");
         (totalPnl, totalPnlSign) = UtilMath.signedSum(pnl, pnlSign, totalPnl, totalPnlSign);

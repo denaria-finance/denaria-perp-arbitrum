@@ -47,7 +47,6 @@ interface IVault {
     function isTrustedForwarder(address forwarder) external view returns (bool);
     function lastSnapshotTimestamp() external view returns (uint256);
     function lostAndFound() external view returns (address);
-    function oracle() external view returns (address);
     function minCollateralMovement() external view returns (uint256);
     function modifyDepositRatioThresholds(address stableCoin, uint256 depositRatioThreshold) external;
     function modifyRatioLockTime(uint256 _ratioLockTime) external;

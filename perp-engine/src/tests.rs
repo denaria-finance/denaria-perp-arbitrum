@@ -758,6 +758,8 @@
             e.read_parameters().unwrap();
         assert_eq!(vault, addr(0x11), "vault");
         assert_eq!(oracle, addr(0x22), "oracle");
+        // The dedicated oracle() getter — the single source of truth the Vault/manager read.
+        assert_eq!(e.oracle_public().unwrap(), addr(0x22), "oracle() getter");
         assert_eq!(min_trade, U256::from(48u64) * wad, "minimumTradeSize");
         assert_eq!(min_liq, wad / U256::from(100u64), "minimumLiquidityMovement (liquidityTh)");
         assert_eq!(fee_fe, U256::from(300_000u64), "feeFrontend widened");

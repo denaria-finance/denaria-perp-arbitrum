@@ -94,15 +94,7 @@ contract VaultSeamDifferentialTest is Test, PerpPairTestDeploymentHelper {
 
     function _deployStackRefactored() internal returns (Vault v, PerpPair p) {
         PerpMultiCalls mgr = new PerpMultiCalls();
-        v = new Vault(
-            address(mgr),
-            address(oracle),
-            100,
-            stableCoinsCfg,
-            depositThresholds,
-            withdrawalThresholds,
-            stableDecimalsCfg
-        );
+        v = new Vault(address(mgr), 100, stableCoinsCfg, depositThresholds, withdrawalThresholds, stableDecimalsCfg);
         p = _deployPerpPairForTest(
             address(oracle),
             address(v),
