@@ -47,7 +47,7 @@ abstract contract PerpLiquidation is PerpAutoClose {
         uint256 marginRatio =
             UtilMath.calcMR(user, spotPrice, address(this), getCollateral(user), lastOperationTimestamp);
 
-        (uint256 pnlBefore, bool pnlBeforeSign) = calcPnL(user, spotPrice);
+        (uint256 pnlBefore, bool pnlBeforeSign) = _calcPnLLiquidationSafe(user, spotPrice);
 
         // accrue funding fees for both the user and the liquidator
         (uint256 localFundingFee, bool localFundingFeeSign) = computeFundingFee(_msgSender());
@@ -102,7 +102,7 @@ abstract contract PerpLiquidation is PerpAutoClose {
             "LQ2"
         ); //Error on Liquidation: Liquidator is not healthy
 
-        (uint256 pnlAfter, bool pnlAfterSign) = calcPnL(user, spotPrice);
+        (uint256 pnlAfter, bool pnlAfterSign) = _calcPnLLiquidationSafe(user, spotPrice);
 
         int256 liquidationPnL = UtilMath.signedSumToInt(pnlBefore, !pnlBeforeSign, pnlAfter, pnlAfterSign);
 
@@ -178,12 +178,12 @@ abstract contract PerpLiquidation is PerpAutoClose {
             }
             _assignProtocolFeeFillingInsurance(insuranceFraction, liquidator);
         } else {
-            //Check if user is in bad debt, if so use spot price for liquidation
-            (uint256 pnl, bool pnlSign) = calcPnL(user, price);
             uint256 dyPrime;
             if (dAmount > globalLiquidityAsset) {
                 dyPrime = dAmount * price / oracleDecimals;
             } else {
+                // Check if user is in bad debt, if so use spot price for liquidation.
+                (uint256 pnl, bool pnlSign) = _calcPnLLiquidationSafe(user, price);
                 //compute dy' with vamm formula for dx' output
                 dyPrime = _computeExactAmountInLong(
                     dAmount,

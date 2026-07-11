@@ -1232,6 +1232,51 @@
         assert_eq!(e.user_virtual_trader_position.getter(user).debt_asset.get(), U256::ZERO, "user asset debt repaid");
     }
 
+    // Oversized-short spot fallback (liquidation-only): when a net-short position exceeds the
+    // pool's asset liquidity, the curve buy-back reverts PNL1, which would let an oversized
+    // short block its own liquidation. The liquidation-safe PnL values the residual at spot;
+    // the close/realize/auto-close path keeps the reverting curve valuation. An in-range short
+    // is unaffected (the fallback is conditional on debt-asset - balance-asset > pool asset).
+    #[test]
+    fn calc_pnl_liquidation_safe_uses_spot_only_for_oversized_short() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.global_liquidity_stable.set(U256::from(10_000u64) * wad);
+        e.global_liquidity_asset.set(U256::from(3u64) * wad); // tiny asset pool
+
+        let price = U256::from(300_000_000_000u64);
+
+        // Oversized short: net short 100 asset far exceeds the 3-asset pool.
+        let big = addr(0x81);
+        {
+            let mut up = e.user_virtual_trader_position.setter(big);
+            up.debt_asset.set(U256::from(100u64) * wad);
+            up.balance_stable.set(U256::from(1_000_000u64) * wad);
+        }
+        // Close-path PnL routes the oversized short through the curve buy-back -> reverts PNL1.
+        assert_eq!(e.calc_pnl_user(big, price), Err(err(b"PNL1")), "curve valuation reverts on an oversized short");
+        // Liquidation-safe PnL values the residual at spot -> no revert.
+        // spot short = 100e18 * 3000 = 300_000e18; PnL = 1_000_000e18 collateral - 300_000e18 = 700_000e18.
+        let safe = e.calc_pnl_user_liquidation_safe(big, price).expect("spot fallback must not revert");
+        assert_eq!(safe, (U256::from(700_000u64) * wad, true), "spot-valued PnL");
+
+        // In-range short (net short 1 asset < 3-asset pool): the fallback stays off, both agree.
+        let small = addr(0x82);
+        {
+            let mut up = e.user_virtual_trader_position.setter(small);
+            up.debt_asset.set(wad);
+            up.balance_stable.set(U256::from(1_000_000u64) * wad);
+        }
+        assert_eq!(
+            e.calc_pnl_user_liquidation_safe(small, price).expect("safe in-range"),
+            e.calc_pnl_user(small, price).expect("non-safe in-range"),
+            "an in-range short is unaffected by the fallback"
+        );
+    }
+
     // batch_liquidate_impl must produce state bit-identical to liquidating the same users one
     // by one: the batch only hoists the reentrancy guard and the oracle verify/price read (a
     // no-op under stub_boundary) out of the per-user loop, so the per-user results are unchanged.

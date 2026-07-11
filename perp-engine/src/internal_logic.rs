@@ -189,9 +189,28 @@ impl PerpEngine {
     }
 
     /// Solidity `internalPerpLogic.calcPnL(user, price)` — the close-path PnL
-    /// (curve valuation, `useSpotPrice=false`). Always recomputes the funding
+    /// (curve valuation, no oversized-short spot fallback). Always recomputes the funding
     /// rate to `price` (no `block.timestamp` gate, unlike `calcMR`).
     pub(crate) fn calc_pnl_user(&self, user: Address, price: U256) -> Result<(U256, bool), Vec<u8>> {
+        self.calc_pnl_user_internal(user, price, false)
+    }
+
+    /// Liquidation-only PnL. When the user is net-short by more than the pool can buy back
+    /// (`totalDebtAsset - totalBalanceAsset > globalLiquidityAsset`), the position is valued
+    /// at spot instead of on the curve, so an oversized short cannot make its own liquidation
+    /// revert on insufficient pool liquidity. Solidity `_calcPnLLiquidationSafe`. The close,
+    /// realize and auto-close paths deliberately keep the curve valuation (`calc_pnl_user`).
+    pub(crate) fn calc_pnl_user_liquidation_safe(&self, user: Address, price: U256) -> Result<(U256, bool), Vec<u8>> {
+        self.calc_pnl_user_internal(user, price, true)
+    }
+
+    /// Solidity `_calcPnLInternal(user, price, allowOversizedShortSpotFallback)`.
+    fn calc_pnl_user_internal(
+        &self,
+        user: Address,
+        price: U256,
+        allow_oversized_short_spot_fallback: bool,
+    ) -> Result<(U256, bool), Vec<u8>> {
         let (stable_lp, asset_lp) = self.get_lp_liquidity_balance(user);
         let last_op_ts = U256::from(self.last_operation_timestamp.get());
         let (nfr, nfr_sign) = self.compute_funding_rate(price, last_op_ts)?;
@@ -204,6 +223,15 @@ impl PerpEngine {
             cm::signed_sum(vp.funding_fee.get(), vp.funding_fee_sign.get(), local_ff, local_ff_sign);
         let lp = self.liquidity_position.getter(user);
         let oracle_dec = U256::from(self.oracle_decimals.get());
+
+        // Oversized-short spot fallback (liquidation only): a net-short position larger than
+        // the pool's asset liquidity cannot be bought back on the curve, so value it at spot.
+        let total_balance_asset = vp.balance_asset.get() + asset_lp;
+        let total_debt_asset = vp.debt_asset.get() + lp.debt_asset.get();
+        let use_spot_price = allow_oversized_short_spot_fallback
+            && total_debt_asset > total_balance_asset
+            && total_debt_asset - total_balance_asset > self.global_liquidity_asset.get();
+
         self.calc_pnl(
             vp.balance_stable.get() + stable_lp,
             vp.balance_asset.get() + asset_lp,
@@ -213,7 +241,7 @@ impl PerpEngine {
             funding_fee_sign,
             price,
             oracle_dec,
-            false,
+            use_spot_price,
         )
     }
 }

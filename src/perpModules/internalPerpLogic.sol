@@ -80,30 +80,54 @@ abstract contract InternalPerpLogic is PerpFunding, ReentrancyGuardTransient {
     ///@param user target user.
     ///@param price Oracle price for the asset.
     function calcPnL(address user, uint256 price) public view returns (uint256, bool) {
-        (uint256 StableLPBalance, uint256 AssetLPBalance) = getLpLiquidityBalance(user);
+        return _calcPnLInternal(user, price, false);
+    }
+
+    ///@dev Liquidation-only PnL. When the user is net-short by more than the pool can buy
+    /// back (totalDebtAsset - totalBalanceAsset > globalLiquidityAsset), the position is
+    /// valued at spot instead of on the curve, so an oversized short cannot make its own
+    /// liquidation revert on insufficient pool liquidity. The close / realize / auto-close
+    /// paths deliberately keep the curve valuation via calcPnL.
+    function _calcPnLLiquidationSafe(address user, uint256 price) internal view returns (uint256, bool) {
+        return _calcPnLInternal(user, price, true);
+    }
+
+    function _calcPnLInternal(
+        address user,
+        uint256 price,
+        bool allowOversizedShortSpotFallback
+    )
+        private
+        view
+        returns (uint256, bool)
+    {
+        (uint256 stableLPBalance, uint256 assetLPBalance) = getLpLiquidityBalance(user);
         (uint256 newFundingRate, bool newFundingRateSign) = computeFundingRate(price, lastOperationTimestamp);
         (newFundingRate, newFundingRateSign) =
             UtilMath.signedSum(fundingRate, fundingRateSign, newFundingRate, newFundingRateSign);
         (uint256 localFundingFee, bool localFundingFeeSign) =
             _computeFundingFee(user, newFundingRate, newFundingRateSign);
+        VirtualTraderPosition storage traderPosition = userVirtualTraderPosition[user];
         (localFundingFee, localFundingFeeSign) = UtilMath.signedSum(
-            userVirtualTraderPosition[user].fundingFee,
-            userVirtualTraderPosition[user].fundingFeeSign,
-            localFundingFee,
-            localFundingFeeSign
+            traderPosition.fundingFee, traderPosition.fundingFeeSign, localFundingFee, localFundingFeeSign
         );
 
+        uint256 totalBalanceAsset = traderPosition.balanceAsset + assetLPBalance;
+        uint256 totalDebtAsset = traderPosition.debtAsset + liquidityPosition[user].debtAsset;
+        bool useSpotPrice = allowOversizedShortSpotFallback && totalDebtAsset > totalBalanceAsset
+            && totalDebtAsset - totalBalanceAsset > globalLiquidityAsset;
+
         return UtilMath._calcPnL(
-            userVirtualTraderPosition[user].balanceStable + StableLPBalance,
-            userVirtualTraderPosition[user].balanceAsset + AssetLPBalance,
-            userVirtualTraderPosition[user].debtStable + liquidityPosition[user].debtStable,
-            userVirtualTraderPosition[user].debtAsset + liquidityPosition[user].debtAsset,
+            traderPosition.balanceStable + stableLPBalance,
+            traderPosition.balanceAsset + assetLPBalance,
+            traderPosition.debtStable + liquidityPosition[user].debtStable,
+            traderPosition.debtAsset + liquidityPosition[user].debtAsset,
             localFundingFee,
             localFundingFeeSign,
             price,
             oracleDecimals,
             address(this),
-            false
+            useSpotPrice
         );
     }
 

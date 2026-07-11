@@ -78,7 +78,7 @@ impl PerpEngine {
         let margin_ratio = self.calc_mr(user, price, collateral_user, refreshed_ts)?;
 
         // PnL snapshot for the LiquidatedUser event (deltaPnl = pnlBefore - pnlAfter).
-        let (pnl_before, pnl_before_sign) = self.calc_pnl_user(user, price)?;
+        let (pnl_before, pnl_before_sign) = self.calc_pnl_user_liquidation_safe(user, price)?;
 
         // Funding fee for the liquidator, then the user.
         let (lff, lffs) = self.compute_funding_fee(liquidator);
@@ -158,7 +158,7 @@ impl PerpEngine {
         }
 
         // deltaPnl = signedSumToInt(pnlBefore, !pnlBeforeSign, pnlAfter, pnlAfterSign).
-        let (pnl_after, pnl_after_sign) = self.calc_pnl_user(user, price)?;
+        let (pnl_after, pnl_after_sign) = self.calc_pnl_user_liquidation_safe(user, price)?;
         let liquidation_pnl = cm::signed_sum_to_int(pnl_before, !pnl_before_sign, pnl_after, pnl_after_sign);
 
         // Full liquidation: close the user out and sweep their collateral.
@@ -311,7 +311,7 @@ impl PerpEngine {
                 let short_a = U256::from(100_000_000u64);
                 let short_b = U256::from(10_000_000u64);
                 let exact_in = self.compute_exact_amount_in_long(d_amount, price, oracle_dec, gs, gs, ga, short_a, short_b);
-                let (pnl0, pnl0_sign) = self.calc_pnl_user(user, price)?;
+                let (pnl0, pnl0_sign) = self.calc_pnl_user_liquidation_safe(user, price)?;
                 let (pnl, pnl_sign) =
                     cm::signed_sum(pnl0, pnl0_sign, exact_in - cm::md(d_amount, price, oracle_dec), false);
                 let slip = cm::calc_slip(cm::md(exact_in, oracle_dec, d_amount), price, curve_dec);
