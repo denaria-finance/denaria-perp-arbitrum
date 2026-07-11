@@ -58,8 +58,6 @@ abstract contract PerpLiquidation is PerpAutoClose {
         (userPosition.fundingFee, userPosition.fundingFeeSign) = UtilMath.signedSum(
             userPosition.fundingFee, userPosition.fundingFeeSign, localFundingFee, localFundingFeeSign
         );
-        //update last operation timestamp
-        lastOperationTimestamp = block.timestamp;
 
         //withdraw fraction of user LP liquidity
         (uint256 stableLiquidity, uint256 assetLiquidity) = getLpLiquidityBalance(user);

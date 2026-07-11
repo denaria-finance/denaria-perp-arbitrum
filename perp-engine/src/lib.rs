@@ -633,8 +633,6 @@ impl PerpEngine {
 
         let last_op_ts = U256::from(self.last_operation_timestamp.get());
         self.update_fg(price, last_op_ts)?;
-        let block_ts = self.vm().block_timestamp();
-        self.last_operation_timestamp.set(U64::from(block_ts));
         Ok(())
     }
 

@@ -259,7 +259,6 @@ impl PerpEngine {
                 }
             }
         }
-        self.last_operation_timestamp.set(U64::from(block_ts_u64));
 
         // Liquidity matrix M update.
         let liq_m_dec = self.liquidity_m_decimals.get();

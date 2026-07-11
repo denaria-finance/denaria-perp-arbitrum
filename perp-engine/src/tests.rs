@@ -480,6 +480,46 @@
         assert_eq!(e.matrix_row_g1.get(), cm::i(U256::from(2_083_333_332u64)), "G1 = b*m11/invLMD");
     }
 
+    // update_fg stamps last_operation_timestamp itself and is idempotent within a block: a
+    // second settlement in the same block must not accumulate funding again. This is the
+    // guard against the liquidation funding double-count — the stamp lives in update_fg so
+    // every subsequent margin check reads the refreshed timestamp.
+    #[test]
+    fn update_fg_stamps_timestamp_and_is_idempotent() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(4600);
+        let mut e = PerpEngine::from(&vm);
+        e.global_liquidity_asset.set(U256::from(6_000u64) * wad);
+        e.global_liquidity_stable.set(U256::from(18_000_000u64) * wad);
+        e.total_trader_exposure.set(U256::from(100u64) * wad);
+        e.total_trader_exposure_sign.set(true);
+        e.oracle_decimals.set(U64::from(100_000_000u64));
+        e.funding_c.set(U32::from(1_000_000u32));
+        e.funding_interval.set(U64::from(86_400u64));
+        e.funding_c_decimals.set(U256::from(100_000u64));
+        e.funding_rate_decimals.set(wad);
+        e.liquidity_g_decimals.set(U256::from(10_000_000_000u64));
+        e.liquidity_m_decimals.set(cm::i(U256::from(10_000u64) * wad));
+        e.liquidity_m10.set(cm::i(U256::from(10_000u64) * wad));
+        e.liquidity_m11.set(cm::i(U256::from(20_000u64) * wad));
+        e.funding_rate.set(U256::ZERO);
+        e.funding_rate_sign.set(true);
+        e.last_operation_timestamp.set(U64::from(1000u64));
+
+        let price = U256::from(300_000_000_000u64);
+        e.update_fg(price, U256::from(1000u64)).expect("first update_fg");
+        assert_eq!(e.last_operation_timestamp.get(), U64::from(4600u64), "update_fg stamps the block timestamp");
+        let fr_first = e.funding_rate.get();
+        assert_eq!(fr_first, u256s("104166666666666000"), "funding settled once");
+        let g0_first = e.matrix_row_g0.get();
+
+        // Second settle in the SAME block: idempotent early-return, nothing accumulates again.
+        e.update_fg(price, U256::from(1000u64)).expect("second update_fg");
+        assert_eq!(e.funding_rate.get(), fr_first, "no second funding accumulation within a block");
+        assert_eq!(e.matrix_row_g0.get(), g0_first, "G unchanged by the idempotent second call");
+    }
+
     // Seeds a balanced engine (price 3000, stable 1.8e25, asset 6000e18) with the
     // default fee/curve/funding config, ready for a trade.
     fn seed_trade_engine(e: &mut PerpEngine) {

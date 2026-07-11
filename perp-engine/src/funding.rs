@@ -41,6 +41,13 @@ impl PerpEngine {
     /// Solidity `_updateFG(price, timestamp)`: advance the cumulative funding rate
     /// and the funding row G.
     pub(crate) fn update_fg(&mut self, price: U256, timestamp: U256) -> Result<(), Vec<u8>> {
+        // Idempotent within a block: once funding is settled and the timestamp stamped, a
+        // second settlement in the same block would double-count. The stamp lives here (not
+        // in the callers) so every subsequent reader sees the refreshed timestamp.
+        let block_ts = self.vm().block_timestamp();
+        if self.last_operation_timestamp.get() == U64::from(block_ts) {
+            return Ok(());
+        }
         let inv_lmd = self.liquidity_m_decimals.get();
         let (new_fr, new_fr_sign) = self.compute_funding_rate(price, timestamp)?;
 
@@ -61,6 +68,7 @@ impl PerpEngine {
         let m11 = self.liquidity_m11.get();
         self.matrix_row_g0.set(self.matrix_row_g0.get() + b * m10 / inv_lmd);
         self.matrix_row_g1.set(self.matrix_row_g1.get() + b * m11 / inv_lmd);
+        self.last_operation_timestamp.set(U64::from(block_ts));
         Ok(())
     }
 

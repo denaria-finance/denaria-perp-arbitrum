@@ -1157,6 +1157,53 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         //console.log(perpPair.avgSlippageL());
     }
 
+    ///@dev A long trader that stays healthy after funding accrual must NOT be liquidatable.
+    /// The funding double-count (settled by _updateFG, then counted again by the victim's
+    /// margin check because the stamp lived in the caller) made a healthy long look
+    /// under-margined. Stamping the timestamp inside _updateFG removes the double-count.
+    function testLiquidatesHealthyLongAfterFundingDoubleCount() public {
+        uint256 initialPrice = 100;
+        oracle.setPrice(initialPrice * oracleDecimals);
+
+        address alice = makeAddr("alice");
+        uint256 aliceLiquidityStable = 1_000_000 * 1e18;
+        uint256 aliceLiquidityAsset = 10_000 * 1e18;
+        vm.prank(alice);
+        perpPair.addLiquidity(aliceLiquidityStable, aliceLiquidityAsset, maxUserLiquidityFee, fakeReport);
+
+        address bob = makeAddr("bob");
+        uint256 tradeSize = 1000 * 1e18;
+        vm.prank(bob);
+        perpPair.trade(true, tradeSize, 100 * 1e5, aliceLiquidityAsset, frontendAddress, 1, fakeReport);
+
+        vm.prank(bob);
+        Vault(vault).removeCollateral((2 * 10_000_000 - 41) * 1e18, fakeReport);
+
+        skip(8 hours);
+
+        uint256 trueMarginRatio = UtilMath.calcMR(
+            bob,
+            initialPrice * oracleDecimals,
+            address(perpPair),
+            perpPair.getCollateral(bob),
+            perpPair.lastOperationTimestamp()
+        );
+
+        (, uint256 bobAssetBefore,,,,,,) = perpPair.userVirtualTraderPosition(bob);
+
+        assertGt(trueMarginRatio, perpPair.MMR(), "true current MR must remain above MMR");
+
+        address liquidator = makeAddr("charlie");
+        uint256 liquidatedSize = bobAssetBefore / 2;
+
+        vm.expectRevert(bytes("LQ1"));
+        vm.prank(liquidator);
+        perpPair.liquidate(bob, liquidatedSize, fakeReport);
+
+        (, uint256 bobAssetAfter,,,,,,) = perpPair.userVirtualTraderPosition(bob);
+        assertEq(bobAssetAfter, bobAssetBefore, "healthy user position unchanged");
+    }
+
     ///@dev Tests liquidation mechanism of a trader that went long.
     function testLiquidationLongTrader() public {
         uint256 initialPrice = 100;

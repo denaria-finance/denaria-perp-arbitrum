@@ -248,7 +248,6 @@ abstract contract PerpTrade is PerpLiquidity {
                     userPosition.balanceAsset = 0;
                 }
             }
-            lastOperationTimestamp = block.timestamp;
         }
 
         int256 aY;

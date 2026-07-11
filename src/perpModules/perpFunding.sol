@@ -120,6 +120,11 @@ abstract contract PerpFunding is PerpConfig {
     /// @param price Oracle price for the asset.
     /// @param timestamp This timestamp will be passed to the funding rate computation function, it should be the LastOperationTimestamp.
     function _updateFG(uint256 price, uint256 timestamp) internal {
+        // Idempotent within a block: once funding is settled and the timestamp stamped, a
+        // second settlement in the same block would double-count. The stamp lives here (not
+        // in the callers) so every subsequent reader sees the refreshed timestamp.
+        if (lastOperationTimestamp == block.timestamp) return;
+
         int256 invLMD = decimals.liquidityMDecimals;
         //Compute Funding Rate
         (uint256 newFundingRate, bool newFundingRateSign) = computeFundingRate(price, timestamp);
@@ -135,6 +140,8 @@ abstract contract PerpFunding is PerpConfig {
         //Compute G
         matrixRowG[0] += b * liquidityM[1][0] / invLMD;
         matrixRowG[1] += b * liquidityM[1][1] / invLMD;
+
+        lastOperationTimestamp = block.timestamp;
     }
 
     /// @notice Update price, funding rate and the G vector from external action.
@@ -142,6 +149,5 @@ abstract contract PerpFunding is PerpConfig {
     function updateFG(bytes memory unverifiedReport) external {
         IOracleMiddleware(oracle).verifyReportIfNecessary(unverifiedReport);
         _updateFG(getPrice(), lastOperationTimestamp);
-        lastOperationTimestamp = block.timestamp;
     }
 }

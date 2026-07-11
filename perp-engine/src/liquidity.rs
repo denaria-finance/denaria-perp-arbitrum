@@ -159,7 +159,6 @@ impl PerpEngine {
         self.last_validated_price.set(spot_price);
         self.dy0.set(U256::ZERO);
         self.dx0.set(U256::ZERO);
-        self.last_operation_timestamp.set(U64::from(block_ts));
         self.emit(LiquidityMoved {
             user,
             liquidityStable: stable_to_remove,
@@ -265,8 +264,6 @@ impl PerpEngine {
         let ga = self.global_liquidity_asset.get();
         self.global_liquidity_asset.set(ga + liquidity_asset);
 
-        let block_ts = self.vm().block_timestamp();
-        self.last_operation_timestamp.set(U64::from(block_ts));
         self.emit(LiquidityMoved {
             user: sender,
             liquidityStable: liquidity_stable,

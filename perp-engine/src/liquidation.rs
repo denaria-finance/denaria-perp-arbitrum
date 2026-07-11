@@ -71,7 +71,11 @@ impl PerpEngine {
             collateral_user = U256::from(1_000u64) * U256::from(WAD_U64);
         }
 
-        let margin_ratio = self.calc_mr(user, price, collateral_user, last_op_ts)?;
+        // update_fg refreshed last_operation_timestamp to the current block; the victim's
+        // margin check must read that refreshed timestamp, else the funding for the interval
+        // update_fg just settled is counted a second time here.
+        let refreshed_ts = U256::from(self.last_operation_timestamp.get());
+        let margin_ratio = self.calc_mr(user, price, collateral_user, refreshed_ts)?;
 
         // PnL snapshot for the LiquidatedUser event (deltaPnl = pnlBefore - pnlAfter).
         let (pnl_before, pnl_before_sign) = self.calc_pnl_user(user, price)?;
@@ -93,9 +97,6 @@ impl PerpEngine {
             up.funding_fee.set(nff);
             up.funding_fee_sign.set(nffs);
         }
-
-        let block_ts = self.vm().block_timestamp();
-        self.last_operation_timestamp.set(U64::from(block_ts));
 
         let (stable_liq, asset_liq) = self.get_lp_liquidity_balance(user);
         let lp_debt_asset = self.liquidity_position.getter(user).debt_asset.get();

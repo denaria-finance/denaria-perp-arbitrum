@@ -161,8 +161,6 @@ abstract contract PerpLiquidity is InternalPerpLogic {
             globalLiquidityAsset += liquidityAsset;
         }
 
-        lastOperationTimestamp = block.timestamp;
-
         emit LiquidityMoved(sender, liquidityStable, liquidityAsset, feeValue, true);
     }
 
@@ -296,8 +294,6 @@ abstract contract PerpLiquidity is InternalPerpLogic {
         curveParameters.lastValidatedPrice = spotPrice;
         dy0 = 0;
         dx0 = 0;
-
-        lastOperationTimestamp = block.timestamp;
 
         emit LiquidityMoved(user, liquidityStableToRemove, liquidityAssetToRemove, feeValue, false);
     }
