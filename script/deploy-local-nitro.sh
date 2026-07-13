@@ -60,7 +60,19 @@ MANAGER=$(ADDR MANAGER); VAULT=$(ADDR VAULT); ORACLE=$(ADDR ORACLE); STABLE=$(AD
 BC="$REPO/broadcast/LocalNitroDeploy.s.sol/412346/run-latest.json"
 UTILMATH=$(python3 -c "import json;print(next(t['contractAddress'] for t in json.load(open('$BC'))['transactions'] if t.get('contractName')=='UtilMath'))")
 CURVEMATH=$(python3 -c "import json;print(next(t['contractAddress'] for t in json.load(open('$BC'))['transactions'] if t.get('contractName')=='CurveMath'))")
-echo "    MANAGER=$MANAGER VAULT=$VAULT ORACLE=$ORACLE STABLE=$STABLE"
+
+# FeeManager — liquidity-fee quotes for the LP surface (/coin reads
+# computeLiquidityDeposit/RemovalFee off it; pure functions, zero wiring). It is
+# a LIBRARY with external functions, so `new FeeManager()` can't live inside
+# LocalNitroDeploy.s.sol — deployed here via forge create with compile-time
+# UtilMath linking, AFTER the canonical set so the clean-boot addresses above
+# are untouched (next dev nonce → deterministic like the rest).
+FEEMANAGER=$(cd "$REPO" && forge create src/manager/FeeManager.sol:FeeManager \
+  --rpc-url "$RPC" --private-key "$DEVKEY" --broadcast \
+  --libraries "src/util/UtilMath.sol:UtilMath:$UTILMATH" 2>/dev/null \
+  | awk '/Deployed to:/ {print $3}')
+[ -n "$FEEMANAGER" ] || { echo "FATAL: FeeManager deploy failed"; exit 1; }
+echo "    MANAGER=$MANAGER VAULT=$VAULT ORACLE=$ORACLE STABLE=$STABLE FEEMANAGER=$FEEMANAGER"
 
 echo "==> [4/5] engine.initializeProduction(...) [params from example.env]"
 set -a; source "$REPO/example.env"; set +a
@@ -79,7 +91,7 @@ cat > "$OUT" <<JSON
   "chainId": 412346, "rpcUrl": "$RPC", "arbOsVersion": 60,
   "perpEngine": "$ENGINE", "manager": "$MANAGER", "vault": "$VAULT",
   "oracle": "$ORACLE", "stableCoin": "$STABLE", "lostAndFound": "$LNF",
-  "curveMath": "$CURVEMATH", "utilMath": "$UTILMATH",
+  "curveMath": "$CURVEMATH", "utilMath": "$UTILMATH", "feeManager": "$FEEMANAGER",
   "deployer": "$DEV", "taker": "$TAKER"
 }
 JSON

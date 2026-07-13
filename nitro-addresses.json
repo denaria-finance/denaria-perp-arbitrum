@@ -2,6 +2,6 @@
   "chainId": 412346, "rpcUrl": "http://127.0.0.1:8547", "arbOsVersion": 60,
   "perpEngine": "0x3df948c956e14175f43670407d5796b95bb219d8", "manager": "0xCe5303b8e8BFCa9d1857976F300fb29928522c6F", "vault": "0x84401CD7AbBeBB22ACb7aF2beCfd9bE56C30bcf1",
   "oracle": "0xC2C0c3398915A2d2E9C33C186AbFEF3192Ee25E8", "stableCoin": "0xA39FFA43ebA037D67a0f4fe91956038ABA0CA386", "lostAndFound": "0x1D55838a9EC169488D360783D65e6CD985007b72",
-  "curveMath": "0x408da76e87511429485c32e4ad647dd14823fdc4", "utilMath": "0xdb2d15a3eb70c347e0d2c2c7861cafb946baab48",
+  "curveMath": "0x408da76e87511429485c32e4ad647dd14823fdc4", "utilMath": "0xdb2d15a3eb70c347e0d2c2c7861cafb946baab48", "feeManager": "0xD92773693917F0fF664f85c3cB698c33420947ff",
   "deployer": "0x3f1Eae7D46d88F08fc2F8ed27FCb2AB183EB2d0E", "taker": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 }
