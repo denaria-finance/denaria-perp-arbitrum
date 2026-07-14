@@ -1336,6 +1336,83 @@ contract CurveMathGoldenVectorTest is Test {
         (vectors, count) = append(vectors, mulVecMatVector("matrix-mulvecmat", 2, 3, 1, 2, 3, 4, 1), count);
         (vectors, count) = append(vectors, mulMatVecVector("matrix-mulmatvec", 1, 2, 3, 4, 2, 3, 1), count);
         (vectors, count) = append(vectors, scalarVector("matrix-scalar", 2, 3, 4, 5, 1), count);
+        // MatrixMath Q80 adjugate primitives (bit-exact ports in src/rust/CurveMath.rs).
+        int256 s = int256(1) << 80;
+        // mulDivSigned: sign combinations + truncation + a 512-bit product (S*S/S).
+        (vectors, count) = append(vectors, mulDivSignedVector("mds-pos-trunc", 7, 3, 2), count);
+        (vectors, count) = append(vectors, mulDivSignedVector("mds-neg-value", -7, 3, 2), count);
+        (vectors, count) = append(vectors, mulDivSignedVector("mds-neg-denom", 7, 3, -2), count);
+        (vectors, count) = append(vectors, mulDivSignedVector("mds-both-neg", -7, -3, 2), count);
+        (vectors, count) = append(vectors, mulDivSignedVector("mds-q80-512bit", s, s, s), count);
+        // sumMulDivSigned: same-sign no-carry, same-sign carry, opposite-sign borrow (both
+        // directions), exact cancellation, negative denominator.
+        (vectors, count) = append(vectors, sumMulDivSignedVector("smds-same-nocarry", 7, 3, 5, 2, 4), count);
+        (vectors, count) = append(vectors, sumMulDivSignedVector("smds-same-carry", 7, 3, 9, 3, 4), count);
+        (vectors, count) = append(vectors, sumMulDivSignedVector("smds-opp-first-greater", 7, 3, -5, 2, 4), count);
+        (vectors, count) = append(vectors, sumMulDivSignedVector("smds-opp-second-greater", 5, 2, -7, 3, 4), count);
+        (vectors, count) = append(vectors, sumMulDivSignedVector("smds-cancel-zero", 5, 2, -5, 2, 4), count);
+        (vectors, count) = append(vectors, sumMulDivSignedVector("smds-neg-denom", 7, 3, 5, 2, -4), count);
+        // recoverLpBalanceFromSnapshot: fresh identity reconstructs exactly; a degraded snapshot
+        // exercises the adjugate/det path at Q80 scale.
+        (vectors, count) = append(
+            vectors, recoverLpVector("recover-lp-identity", mk(s, 0, 0, s), mk(s, 0, 0, s), 1e24, 1e21, s), count
+        );
+        (vectors, count) = append(
+            vectors,
+            recoverLpVector("recover-lp-degraded", mk(3 * s, 0, 0, s), mk(2 * s, 0, 0, s), 1e24, 1e21, s),
+            count
+        );
+        // recoverFundingStarFromSnapshot: funding star at Q80 matrix scale + 1e24 G scale.
+        (vectors, count) = append(
+            vectors, recoverStarVector("recover-star-identity", 1e20, 1e18, mk(s, 0, 0, s), 1e24, 1e21, s, 1e24), count
+        );
+        // SLOW PATH: liquidityMDecimals > 2^80 (Q88) routes recovery through the bounded
+        // sumMulDivSigned reduction (dead in production but must stay bit-identical for parity).
+        int256 q88 = int256(1) << 88;
+        (vectors, count) = append(
+            vectors,
+            recoverLpVector("recover-lp-slowpath-q88", mk(q88, 0, 0, q88), mk(q88, 0, 0, q88), 1e24, 1e21, q88),
+            count
+        );
+        (vectors, count) = append(
+            vectors,
+            recoverLpVector(
+                "recover-lp-slowpath-q88-degraded", mk(3 * q88, 0, 0, q88), mk(2 * q88, 0, 0, q88), 1e24, 1e21, q88
+            ),
+            count
+        );
+        (vectors, count) = append(
+            vectors,
+            recoverStarVector("recover-star-slowpath-q88", 1e20, 1e18, mk(q88, 0, 0, q88), 1e24, 1e21, q88, 1e24),
+            count
+        );
+        // OFF-DIAGONAL / MIXED-SIGN: exercise the cross terms (-b*q, -c*p, m01*u1, m10*u0,
+        // -m10*m01) that the diagonal vectors above leave dead — a b<->c transposition or a
+        // cross-term sign error would surface here. Snapshot det = 4-1 = 3 (scaled) > 0.
+        (vectors, count) = append(
+            vectors,
+            recoverLpVector("recover-lp-mixed-q80", mk(2 * s, -s, s, 3 * s), mk(2 * s, s, s, 2 * s), 1e24, 1e21, s),
+            count
+        );
+        (vectors, count) = append(
+            vectors,
+            recoverLpVector(
+                "recover-lp-mixed-q88", mk(2 * q88, -q88, q88, 3 * q88), mk(2 * q88, q88, q88, 2 * q88), 1e24, 1e21, q88
+            ),
+            count
+        );
+        (vectors, count) = append(
+            vectors,
+            recoverStarVector("recover-star-mixed-q80", 1e20, -1e18, mk(2 * s, s, s, 2 * s), 1e24, 1e21, s, 1e24),
+            count
+        );
+        (vectors, count) = append(
+            vectors,
+            recoverStarVector(
+                "recover-star-mixed-q88", 1e20, -1e18, mk(2 * q88, q88, q88, 2 * q88), 1e24, 1e21, q88, 1e24
+            ),
+            count
+        );
         (vectors, count) = append(vectors, signedSumVector("util-signedsum-same", 100, true, 50, true), count);
         (vectors, count) = append(vectors, signedSumVector("util-signedsum-diff-xgty", 100, true, 50, false), count);
         (vectors, count) = append(vectors, signedSumVector("util-signedsum-diff-xlty", 50, true, 100, false), count);
@@ -1911,6 +1988,179 @@ contract CurveMathGoldenVectorTest is Test {
                 '"},"expected":{"r":"',
                 intStr(r),
                 '"}}'
+            )
+        );
+    }
+
+    function mulDivSignedVector(
+        string memory label,
+        int256 value,
+        int256 multiplier,
+        int256 denominator
+    )
+        internal
+        pure
+        returns (string memory)
+    {
+        int256 r = MatrixMath.mulDivSigned(value, multiplier, denominator);
+        return string(
+            abi.encodePacked(
+                '    {"kind":"matrix","label":"',
+                label,
+                '","op":"mulDivSigned","inputs":{"value":"',
+                intStr(value),
+                '","multiplier":"',
+                intStr(multiplier),
+                '","denominator":"',
+                intStr(denominator),
+                '"},"expected":{"r":"',
+                intStr(r),
+                '"}}'
+            )
+        );
+    }
+
+    function sumMulDivSignedVector(
+        string memory label,
+        int256 fv,
+        int256 fm,
+        int256 sv,
+        int256 sm,
+        int256 denom
+    )
+        internal
+        pure
+        returns (string memory)
+    {
+        int256 r = MatrixMath.sumMulDivSigned(fv, fm, sv, sm, denom);
+        return string(
+            abi.encodePacked(
+                '    {"kind":"matrix","label":"',
+                label,
+                '","op":"sumMulDivSigned","inputs":{"fv":"',
+                intStr(fv),
+                '","fm":"',
+                intStr(fm),
+                '","sv":"',
+                intStr(sv),
+                '","sm":"',
+                intStr(sm),
+                '","denom":"',
+                intStr(denom),
+                '"},"expected":{"r":"',
+                intStr(r),
+                '"}}'
+            )
+        );
+    }
+
+    function recoverLpVector(
+        string memory label,
+        int256[2][2] memory cur,
+        int256[2][2] memory snap,
+        uint256 initStable,
+        uint256 initAsset,
+        int256 lmDec
+    )
+        internal
+        pure
+        returns (string memory)
+    {
+        (int256 stableBal, int256 assetBal) =
+            MatrixMath.recoverLpBalanceFromSnapshot(cur, snap, initStable, initAsset, lmDec);
+        string memory inA = string(
+            abi.encodePacked(
+                '","op":"recoverLp","inputs":{"c00":"',
+                intStr(cur[0][0]),
+                '","c01":"',
+                intStr(cur[0][1]),
+                '","c10":"',
+                intStr(cur[1][0]),
+                '","c11":"',
+                intStr(cur[1][1]),
+                '","s00":"',
+                intStr(snap[0][0]),
+                '","s01":"',
+                intStr(snap[0][1])
+            )
+        );
+        string memory inB = string(
+            abi.encodePacked(
+                '","s10":"',
+                intStr(snap[1][0]),
+                '","s11":"',
+                intStr(snap[1][1]),
+                '","initStable":"',
+                initStable.toString(),
+                '","initAsset":"',
+                initAsset.toString(),
+                '","lmDec":"',
+                intStr(lmDec),
+                '"}'
+            )
+        );
+        return string(
+            abi.encodePacked(
+                '    {"kind":"matrix","label":"',
+                label,
+                inA,
+                inB,
+                ',"expected":{"stable":"',
+                intStr(stableBal),
+                '","asset":"',
+                intStr(assetBal),
+                '"}}'
+            )
+        );
+    }
+
+    function recoverStarVector(
+        string memory label,
+        int256 dg0,
+        int256 dg1,
+        int256[2][2] memory snap,
+        uint256 initStable,
+        uint256 initAsset,
+        int256 lmDec,
+        uint256 gDec
+    )
+        internal
+        pure
+        returns (string memory)
+    {
+        int256 star = MatrixMath.recoverFundingStarFromSnapshot(dg0, dg1, snap, initStable, initAsset, lmDec, gDec);
+        string memory inA = string(
+            abi.encodePacked(
+                '","op":"recoverFundingStar","inputs":{"dg0":"',
+                intStr(dg0),
+                '","dg1":"',
+                intStr(dg1),
+                '","s00":"',
+                intStr(snap[0][0]),
+                '","s01":"',
+                intStr(snap[0][1]),
+                '","s10":"',
+                intStr(snap[1][0]),
+                '","s11":"',
+                intStr(snap[1][1])
+            )
+        );
+        string memory inB = string(
+            abi.encodePacked(
+                '","initStable":"',
+                initStable.toString(),
+                '","initAsset":"',
+                initAsset.toString(),
+                '","lmDec":"',
+                intStr(lmDec),
+                '","gDec":"',
+                gDec.toString(),
+                '"}'
+            )
+        );
+        return string(
+            abi.encodePacked(
+                '    {"kind":"matrix","label":"', label, inA, inB, ',"expected":{"star":"', intStr(star), '"}}'
             )
         );
     }

@@ -19,7 +19,7 @@
 #[cfg(feature = "standalone-abi")]
 extern crate alloc;
 
-use stylus_sdk::alloy_primitives::{I256, U256};
+use stylus_sdk::alloy_primitives::{I256, U256, U512};
 // The Stylus prelude (StorageType, #[public]/#[entrypoint] machinery) is only
 // needed for the standalone-abi build; the pure math below does not use it.
 #[cfg(feature = "standalone-abi")]
@@ -634,6 +634,267 @@ pub fn mat_vec_2x2(
 /// v1 . v2 / norm. Solidity `scalarTwoByTwo`.
 pub fn scalar_2x2(v1_0: I256, v1_1: I256, v2_0: I256, v2_1: I256, norm: I256) -> I256 {
     (v1_0 * v2_0 + v1_1 * v2_1) / norm
+}
+
+// -----------------------------------------------------------------------
+// MatrixMath — Q80 adjugate snapshot recovery + overflow-safe signed mulDiv.
+// Bit-exact ports of src/util/MatrixMath.sol (mulDivSigned, sumMulDivSigned,
+// recoverLpBalanceFromSnapshot, recoverFundingStarFromSnapshot). The signed
+// two-term fused mulDiv never forms the full numerator: it splits each product
+// into a 512-bit-exact quotient+remainder (Math.mulDiv + EVM mulmod semantics)
+// and carries/borrows, so funding fees do not drift. `md`/`md_ceil` above are
+// 256-bit (they assume a*b fits 256 bits); these use a full 512-bit product.
+// -----------------------------------------------------------------------
+
+/// 2^80 (`int256(1) << 80` = `LIQUIDITY_M_Q80`), the Q80 matrix scale threshold.
+/// 2^80 = 2^16 * 2^64, so limb[1] = 65536 and the rest are zero.
+#[allow(dead_code)]
+fn q80() -> I256 {
+    i(U256::from_limbs([0u64, 65_536u64, 0u64, 0u64]))
+}
+
+fn u256_to_u512(x: U256) -> U512 {
+    let l = x.as_limbs();
+    U512::from_limbs([l[0], l[1], l[2], l[3], 0, 0, 0, 0])
+}
+
+/// `floor(a*b/c)` with an exact 512-bit intermediate product. Bit-exact with OZ
+/// `Math.mulDiv(a, b, c)`: the product never wraps and the caller-visible result must
+/// fit 256 bits (panics otherwise, as `Math.mulDiv` reverts). Assumes `c != 0`.
+fn mul_div_floor_512(a: U256, b: U256, c: U256) -> U256 {
+    let q = u256_to_u512(a) * u256_to_u512(b) / u256_to_u512(c);
+    let ql = q.as_limbs();
+    if ql[4] != 0 || ql[5] != 0 || ql[6] != 0 || ql[7] != 0 {
+        panic!("mulDiv overflow");
+    }
+    U256::from_limbs([ql[0], ql[1], ql[2], ql[3]])
+}
+
+/// `(a*b) mod c` at full 512-bit width — EVM `mulmod` semantics. Assumes `c != 0`.
+fn mul_mod_512(a: U256, b: U256, c: U256) -> U256 {
+    let r = u256_to_u512(a) * u256_to_u512(b) % u256_to_u512(c);
+    let rl = r.as_limbs();
+    U256::from_limbs([rl[0], rl[1], rl[2], rl[3]])
+}
+
+/// Magnitude of a signed int as `U256`. Solidity `MatrixMath._absInt`.
+fn abs_int(value: I256) -> U256 {
+    if value >= I256::ZERO {
+        u(value)
+    } else {
+        u(-value)
+    }
+}
+
+/// `floor(value*multiplier/denominator)` with sign, truncating toward zero. Bit-exact
+/// port of Solidity `MatrixMath.mulDivSigned` (magnitude via 512-bit mulDiv, sign reapplied).
+pub fn mul_div_signed(value: I256, multiplier: I256, denominator: I256) -> Result<I256, Vec<u8>> {
+    if denominator == I256::ZERO {
+        return Err(b"M0".to_vec());
+    }
+    let abs_result = mul_div_floor_512(abs_int(value), abs_int(multiplier), abs_int(denominator));
+    let mut positive = (value >= I256::ZERO) == (multiplier >= I256::ZERO);
+    positive = positive == (denominator >= I256::ZERO);
+    let result = i(abs_result);
+    Ok(if positive { result } else { -result })
+}
+
+/// `(value, multiplier)` split into (sign, exact quotient, exact remainder) against
+/// `abs_denominator`. Solidity `MatrixMath._mulDivParts`.
+fn mul_div_parts(value: I256, multiplier: I256, abs_denominator: U256) -> (bool, U256, U256) {
+    let abs_value = abs_int(value);
+    let abs_multiplier = abs_int(multiplier);
+    let quotient = mul_div_floor_512(abs_value, abs_multiplier, abs_denominator);
+    let remainder = mul_mod_512(abs_value, abs_multiplier, abs_denominator);
+    let positive = (value >= I256::ZERO) == (multiplier >= I256::ZERO);
+    (positive, quotient, remainder)
+}
+
+/// `floor(|(qL*D+rL) - (qS*D+rS)|/D)` via a borrow adjustment. Solidity
+/// `MatrixMath._subQuotientRemainder` (larger term first).
+fn sub_quotient_remainder(
+    larger_quotient: U256,
+    larger_remainder: U256,
+    smaller_quotient: U256,
+    smaller_remainder: U256,
+) -> U256 {
+    if larger_remainder >= smaller_remainder {
+        larger_quotient - smaller_quotient
+    } else if larger_quotient == smaller_quotient {
+        U256::ZERO
+    } else {
+        larger_quotient - smaller_quotient - U256::from(1u64)
+    }
+}
+
+/// `floor((firstValue*firstMultiplier + secondValue*secondMultiplier)/denominator)` with the
+/// correct sign, WITHOUT ever forming the full two-term numerator. Bit-exact port of
+/// Solidity `MatrixMath.sumMulDivSigned` — splits each term into quotient+remainder and
+/// carries (same sign) or borrows (opposite sign) so no 256-bit overflow can occur.
+pub fn sum_mul_div_signed(
+    first_value: I256,
+    first_multiplier: I256,
+    second_value: I256,
+    second_multiplier: I256,
+    denominator: I256,
+) -> Result<I256, Vec<u8>> {
+    if denominator == I256::ZERO {
+        return Err(b"M0".to_vec());
+    }
+    let abs_denominator = abs_int(denominator);
+    let (mut first_positive, first_quotient, first_remainder) =
+        mul_div_parts(first_value, first_multiplier, abs_denominator);
+    let (mut second_positive, second_quotient, second_remainder) =
+        mul_div_parts(second_value, second_multiplier, abs_denominator);
+
+    if denominator < I256::ZERO {
+        first_positive = !first_positive;
+        second_positive = !second_positive;
+    }
+
+    if first_positive == second_positive {
+        let mut quotient = first_quotient + second_quotient;
+        let remainder = first_remainder + second_remainder;
+        if remainder >= abs_denominator {
+            quotient += U256::from(1u64);
+        }
+        let result = i(quotient);
+        return Ok(if first_positive { result } else { -result });
+    }
+
+    if first_quotient == second_quotient && first_remainder == second_remainder {
+        return Ok(I256::ZERO);
+    }
+
+    let first_abs_greater = first_quotient > second_quotient
+        || (first_quotient == second_quotient && first_remainder > second_remainder);
+
+    let (abs_difference, positive) = if first_abs_greater {
+        (
+            sub_quotient_remainder(first_quotient, first_remainder, second_quotient, second_remainder),
+            first_positive,
+        )
+    } else {
+        (
+            sub_quotient_remainder(second_quotient, second_remainder, first_quotient, first_remainder),
+            second_positive,
+        )
+    };
+
+    let result = i(abs_difference);
+    Ok(if positive { result } else { -result })
+}
+
+/// `(m00*m11 - m10*m01)/liquidityMDecimals`, required positive. Solidity
+/// `MatrixMath._positiveDeterminantFixed`.
+fn positive_determinant_fixed(
+    m00: I256,
+    m01: I256,
+    m10: I256,
+    m11: I256,
+    liquidity_m_decimals: I256,
+) -> Result<I256, Vec<u8>> {
+    let det = sum_mul_div_signed(m00, m11, -m10, m01, liquidity_m_decimals)?;
+    if !(det > I256::ZERO) {
+        return Err(b"MDET".to_vec());
+    }
+    Ok(det)
+}
+
+/// Recover an LP balance as `M(t) * M^-1(t0) * v(t0)` via `adj(M(t0))/det(M(t0))` without
+/// materializing the inverse. Bit-exact port of Solidity `MatrixMath.recoverLpBalanceFromSnapshot`.
+/// Matrices are passed row-major flattened: `m00,m01,m10,m11`.
+pub fn recover_lp_balance_from_snapshot(
+    current_m00: I256,
+    current_m01: I256,
+    current_m10: I256,
+    current_m11: I256,
+    snapshot_m00: I256,
+    snapshot_m01: I256,
+    snapshot_m10: I256,
+    snapshot_m11: I256,
+    initial_stable_balance: U256,
+    initial_asset_balance: U256,
+    liquidity_m_decimals: I256,
+) -> Result<(I256, I256), Vec<u8>> {
+    let p = i(initial_stable_balance);
+    let q = i(initial_asset_balance);
+    let (a, b, c, d) = (snapshot_m00, snapshot_m01, snapshot_m10, snapshot_m11);
+
+    if liquidity_m_decimals <= q80() {
+        // Step 1: adj(M(t0)) * v(t0), with no division.
+        let u0 = d * p - b * q;
+        let u1 = -c * p + a * q;
+
+        // Step 2: M(t) * u, still with no division.
+        let z0 = current_m00 * u0 + current_m01 * u1;
+        let z1 = current_m10 * u0 + current_m11 * u1;
+
+        // Step 3: det(M(t0)); det <= 0 means corrupted matrix state.
+        let det = snapshot_m00 * snapshot_m11 - snapshot_m10 * snapshot_m01;
+        if !(det > I256::ZERO) {
+            return Err(b"MDET".to_vec());
+        }
+
+        // Step 4: final scalar division. No inverse matrix is stored or built.
+        let stable_balance = mul_div_signed(z0, I256::ONE, det)?;
+        let asset_balance = mul_div_signed(z1, I256::ONE, det)?;
+        return Ok((stable_balance, asset_balance));
+    }
+
+    // Larger Q scales need one bounded matrix-scale reduction before the LP vector is applied.
+    let n00 = sum_mul_div_signed(current_m00, d, -current_m01, c, liquidity_m_decimals)?;
+    let n01 = sum_mul_div_signed(-current_m00, b, current_m01, a, liquidity_m_decimals)?;
+    let n10 = sum_mul_div_signed(current_m10, d, -current_m11, c, liquidity_m_decimals)?;
+    let n11 = sum_mul_div_signed(-current_m10, b, current_m11, a, liquidity_m_decimals)?;
+    let det_fixed = positive_determinant_fixed(a, b, c, d, liquidity_m_decimals)?;
+    let stable_balance = sum_mul_div_signed(n00, p, n01, q, det_fixed)?;
+    let asset_balance = sum_mul_div_signed(n10, p, n11, q, det_fixed)?;
+    Ok((stable_balance, asset_balance))
+}
+
+/// Compute `DeltaG * M^-1(t0) * v(t0)` through `adj(M(t0))` without storing the inverse.
+/// Bit-exact port of Solidity `MatrixMath.recoverFundingStarFromSnapshot`.
+pub fn recover_funding_star_from_snapshot(
+    delta_g0: I256,
+    delta_g1: I256,
+    snapshot_m00: I256,
+    snapshot_m01: I256,
+    snapshot_m10: I256,
+    snapshot_m11: I256,
+    initial_stable_balance: U256,
+    initial_asset_balance: U256,
+    liquidity_m_decimals: I256,
+    liquidity_g_decimals: U256,
+) -> Result<I256, Vec<u8>> {
+    let p = i(initial_stable_balance);
+    let q = i(initial_asset_balance);
+    let (a, b, c, d) = (snapshot_m00, snapshot_m01, snapshot_m10, snapshot_m11);
+
+    if liquidity_m_decimals <= q80() {
+        // Step 1: adj(M(t0)) * v(t0), with no division.
+        let u0 = d * p - b * q;
+        let u1 = -c * p + a * q;
+
+        // Step 2: DeltaG * u, still with no division.
+        let z = delta_g0 * u0 + delta_g1 * u1;
+
+        // Step 3: det(M(t0)); det <= 0 means corrupted matrix state.
+        let det = snapshot_m00 * snapshot_m11 - snapshot_m10 * snapshot_m01;
+        if !(det > I256::ZERO) {
+            return Err(b"MDET".to_vec());
+        }
+
+        // Step 4: restore the matrix scale and remove the funding accumulator scale.
+        return mul_div_signed(z, liquidity_m_decimals, det * i(liquidity_g_decimals));
+    }
+
+    // Larger Q scales use the same bounded reduction as LP recovery.
+    let w0 = sum_mul_div_signed(delta_g0, d, -delta_g1, c, liquidity_m_decimals)?;
+    let w1 = sum_mul_div_signed(-delta_g0, b, delta_g1, a, liquidity_m_decimals)?;
+    let scaled_z = w0 * p + w1 * q;
+    let det_fixed = positive_determinant_fixed(a, b, c, d, liquidity_m_decimals)?;
+    mul_div_signed(scaled_z, liquidity_m_decimals, det_fixed * i(liquidity_g_decimals))
 }
 
 // -----------------------------------------------------------------------
@@ -1294,6 +1555,51 @@ mod parity {
         }
     }
 
+    // Revert-parity guards for the new MatrixMath primitives — the reverting reference calls
+    // cannot be carried as golden vectors (Solidity reverts rather than emitting a value), so
+    // they are pinned here: M0 on a zero denominator, and MDET on a non-positive snapshot
+    // determinant across BOTH the fast (Q80) and slow (Q88) recovery paths.
+    #[test]
+    fn matrix_math_revert_guards() {
+        let s = i(U256::from_limbs([0u64, 65_536u64, 0, 0])); // 2^80
+        let q88 = i(U256::from_limbs([0u64, 16_777_216u64, 0, 0])); // 2^88
+        let z = I256::ZERO;
+        let one = I256::ONE;
+        let init_s = u256("1000000000000000000000000"); // 1e24
+        let init_a = u256("1000000000000000000000"); // 1e21
+        let g_dec = init_s;
+
+        // M0: zero denominator.
+        assert_eq!(mul_div_signed(one, one, z).unwrap_err(), b"M0".to_vec());
+        assert_eq!(sum_mul_div_signed(one, one, one, one, z).unwrap_err(), b"M0".to_vec());
+
+        // MDET fast path (Q80): det == 0 and det < 0 in the snapshot matrix.
+        assert_eq!(
+            recover_lp_balance_from_snapshot(s, z, z, s, s, z, z, z, init_s, init_a, s).unwrap_err(),
+            b"MDET".to_vec(),
+            "fast-path snapshot det == 0"
+        );
+        assert_eq!(
+            recover_lp_balance_from_snapshot(s, z, z, s, -s, z, z, s, init_s, init_a, s).unwrap_err(),
+            b"MDET".to_vec(),
+            "fast-path snapshot det < 0"
+        );
+        assert!(
+            recover_funding_star_from_snapshot(one, one, s, z, z, z, init_s, init_a, s, g_dec).is_err(),
+            "star fast-path snapshot det == 0"
+        );
+
+        // MDET slow path (Q88): rejected by positive_determinant_fixed.
+        assert!(
+            recover_lp_balance_from_snapshot(q88, z, z, q88, q88, z, z, z, init_s, init_a, q88).is_err(),
+            "slow-path snapshot det == 0"
+        );
+        assert!(
+            recover_funding_star_from_snapshot(one, one, q88, z, z, z, init_s, init_a, q88, g_dec).is_err(),
+            "star slow-path snapshot det == 0"
+        );
+    }
+
     #[test]
     fn golden_vectors_match_rust_port() {
         let root: Value = serde_json::from_str(FIXTURE).expect("parse fixture json");
@@ -1424,6 +1730,41 @@ mod parity {
                                 geti("v1_0"), geti("v1_1"), geti("v2_0"), geti("v2_1"), geti("norm"),
                             );
                             std::vec![("r", r)]
+                        }
+                        "mulDivSigned" => {
+                            let r = mul_div_signed(geti("value"), geti("multiplier"), geti("denominator"))
+                                .expect("mulDivSigned should not revert");
+                            std::vec![("r", r)]
+                        }
+                        "sumMulDivSigned" => {
+                            let r = sum_mul_div_signed(
+                                geti("fv"), geti("fm"), geti("sv"), geti("sm"), geti("denom"),
+                            )
+                            .expect("sumMulDivSigned should not revert");
+                            std::vec![("r", r)]
+                        }
+                        "recoverLp" => {
+                            let (st, asset) = recover_lp_balance_from_snapshot(
+                                geti("c00"), geti("c01"), geti("c10"), geti("c11"),
+                                geti("s00"), geti("s01"), geti("s10"), geti("s11"),
+                                u256(inp["initStable"].as_str().unwrap()),
+                                u256(inp["initAsset"].as_str().unwrap()),
+                                geti("lmDec"),
+                            )
+                            .expect("recoverLp should not revert");
+                            std::vec![("stable", st), ("asset", asset)]
+                        }
+                        "recoverFundingStar" => {
+                            let star = recover_funding_star_from_snapshot(
+                                geti("dg0"), geti("dg1"),
+                                geti("s00"), geti("s01"), geti("s10"), geti("s11"),
+                                u256(inp["initStable"].as_str().unwrap()),
+                                u256(inp["initAsset"].as_str().unwrap()),
+                                geti("lmDec"),
+                                u256(inp["gDec"].as_str().unwrap()),
+                            )
+                            .expect("recoverFundingStar should not revert");
+                            std::vec![("star", star)]
                         }
                         other => panic!("unknown matrix op: {other}"),
                     };
