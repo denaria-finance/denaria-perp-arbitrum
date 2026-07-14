@@ -47,7 +47,7 @@ sol! {
     event ClosedPosition(address indexed user, uint256 pnl, bool pnlSign);
     event LiquidityMoved(address indexed user, uint256 liquidityStable, uint256 liquidityAsset, uint256 fee, bool added);
     event LiquidatedUser(address indexed user, address liquidator, uint256 fraction, uint256 liquidationFee, uint256 positionSize, uint256 currentPrice, int256 deltaPnl, bool liquidationDirection);
-    event EnabledAutoClose(address indexed user, uint256 profitTh, uint256 lossTh);
+    event ToggledAutoClose(address indexed user, uint256 profitTh, uint256 lossTh, uint256 maxSlippage, uint256 maxLiqFee);
     event RealizedPnL(address indexed user, uint256 pnl, bool pnlSign);
     event ParametersUpdated(address _oracle, uint256 _feeFrontend, address _feeProtocolAddr, uint256 _insuranceFundCap, uint256 _maxLeverage, uint256 _liquidationDiscount);
     event LockedParameterUpdate(uint256 paramLockedUntil, uint256 _MMR, uint256 _tradingFee, uint256 _flatTradingFee, uint256 _feeLP, uint256 _liquidityMinFee, uint256 _liquidityMaxFee, uint256 _liquidityFeeK, uint256 _fundingC, uint256 _paramTimeLock, uint256 _minimumTradeSize);
@@ -517,7 +517,7 @@ impl PerpEngine {
     #[selector(name = "disableAutoClose")]
     pub fn disable_auto_close(&mut self) -> Result<(), Vec<u8>> {
         let user = self.vm().msg_sender();
-        self.clear_auto_close_data(user);
+        self.clear_auto_close_data(user, U256::ZERO);
         Ok(())
     }
 
@@ -525,7 +525,7 @@ impl PerpEngine {
     #[selector(name = "disableAutoCloseFor")]
     pub fn disable_auto_close_for(&mut self, user: Address) -> Result<(), Vec<u8>> {
         let user = self.require_forwarder(user)?;
-        self.clear_auto_close_data(user);
+        self.clear_auto_close_data(user, U256::ZERO);
         Ok(())
     }
 
@@ -555,6 +555,15 @@ impl PerpEngine {
     ) -> Result<(), Vec<u8>> {
         let caller = self.require_forwarder(caller)?;
         self.auto_close_user_position_impl(caller, user, frontend_address, unverified_report)
+    }
+
+    /// `autoCloseUsersData(user)` — the user's auto-close config (authorized, profitTh, lossTh,
+    /// maxSlippage, maxLiqFee). Lets the manager / CallBatcher read the config to pick which
+    /// positions to auto-close; matches the reference PerpPair's public-mapping auto-getter.
+    #[selector(name = "autoCloseUsersData")]
+    pub fn auto_close_users_data_public(&self, user: Address) -> Result<(bool, U256, U256, U256, U256), Vec<u8>> {
+        let ac = self.auto_close_users_data.getter(user);
+        Ok((ac.authorized.get(), ac.profit_th.get(), ac.loss_th.get(), ac.max_slippage.get(), ac.max_liq_fee.get()))
     }
 
     /// OZ `AccessControl.hasRole(role, account)`.

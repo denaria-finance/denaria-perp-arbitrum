@@ -164,6 +164,27 @@ contract PerpPairBatchLiquidationHelperTest is Test, PerpPairTestDeploymentHelpe
         vault.addCollateral(amounts);
     }
 
+    /// @dev batchAutoCloseData returns each user's auto-close config in one call.
+    function testBatchAutoCloseData() public {
+        address bob = makeAddr("bob");
+        address charlie = makeAddr("charlie");
+        vm.prank(bob);
+        perpPair.enableAutoClose(50, 60, 1e5, 1e10);
+        // charlie leaves auto-close disabled.
+
+        address[] memory users = new address[](2);
+        users[0] = bob;
+        users[1] = charlie;
+        CallBatcher.AutoCloseData[] memory data = batcher.batchAutoCloseData(users, address(perpPair));
+
+        assertTrue(data[0].authorized, "bob authorized");
+        assertEq(data[0].profitTh, 50, "bob profitTh");
+        assertEq(data[0].lossTh, 60, "bob lossTh");
+        assertEq(data[0].maxSlippage, 1e5, "bob maxSlippage");
+        assertEq(data[0].maxLiqFee, 1e10, "bob maxLiqFee");
+        assertFalse(data[1].authorized, "charlie not authorized");
+    }
+
     /// @dev simple sanity test: batchLiquidate two long traders, their MR improves and the liquidator gets a position
     function testBatchLiquidateTwoLongTraders() public {
         uint256 initialPrice = 100;

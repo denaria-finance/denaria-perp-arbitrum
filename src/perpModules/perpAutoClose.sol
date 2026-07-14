@@ -10,7 +10,9 @@ abstract contract PerpAutoClose is PerpTrade {
     using Math for uint256;
     using SignedMath for int256;
 
-    event EnabledAutoClose(address indexed user, uint256 profitTh, uint256 lossTh);
+    event ToggledAutoClose(
+        address indexed user, uint256 profitTh, uint256 lossTh, uint256 maxSlippage, uint256 maxLiqFee
+    );
 
     ///@notice Function to enable third party users to close your position. Can also be used to change thresholds if the user has this already enabled.
     ///@param profitTh Profit threshold over which the user's position will be closable
@@ -25,16 +27,20 @@ abstract contract PerpAutoClose is PerpTrade {
         autoCloseUsersData[user].lossTh = lossTh;
         autoCloseUsersData[user].maxSlippage = maxSlippage;
         autoCloseUsersData[user].maxLiqFee = maxLiqFee;
-        emit EnabledAutoClose(user, profitTh, lossTh);
+        emit ToggledAutoClose(user, profitTh, lossTh, maxSlippage, maxLiqFee);
     }
 
     ///@notice Function to disable third party users to close your position.
     function disableAutoClose() external {
-        _disableAutoClose(_msgSender());
+        _disableAutoClose(_msgSender(), 0);
     }
 
-    ///@notice Function to disable third party users to close your position.
-    function _disableAutoClose(address user) private {
+    ///@notice Clear a user's auto-close config, emitting ToggledAutoClose when it was set.
+    ///@param mode 0 = user disable / normal close, 1 = third-party auto-close.
+    function _disableAutoClose(address user, uint256 mode) internal override {
+        if (autoCloseUsersData[user].authorized) {
+            emit ToggledAutoClose(user, 0, 0, mode, mode);
+        }
         delete autoCloseUsersData[user];
     }
 
@@ -64,9 +70,11 @@ abstract contract PerpAutoClose is PerpTrade {
         }
         userVirtualTraderPosition[user].debtStable += autoCloseFee;
         userVirtualTraderPosition[_msgSender()].balanceStable += autoCloseFee;
-        _closeAndWithdraw(
-            autoCloseUsersData[user].maxSlippage, autoCloseUsersData[user].maxLiqFee, frontendAddress, user, true
-        );
-        _disableAutoClose(user);
+        uint256 acMaxSlippage = autoCloseUsersData[user].maxSlippage;
+        uint256 acMaxLiqFee = autoCloseUsersData[user].maxLiqFee;
+        // Log ToggledAutoClose(mode 1 = third-party auto-close) and clear BEFORE the shared close
+        // body: its own clear (mode 0) runs first otherwise and suppresses this mode-1 log.
+        _disableAutoClose(user, 1);
+        _closeAndWithdraw(acMaxSlippage, acMaxLiqFee, frontendAddress, user, true);
     }
 }

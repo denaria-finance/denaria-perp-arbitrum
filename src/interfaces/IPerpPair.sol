@@ -24,7 +24,9 @@ interface IPerpPair {
         uint256 currentPrice,
         int256 deltaPnl
     );
-    event EnabledAutoClose(address indexed user, uint256 profitTh, uint256 lossTh);
+    event ToggledAutoClose(
+        address indexed user, uint256 profitTh, uint256 lossTh, uint256 maxSlippage, uint256 maxLiqFee
+    );
     event ExecutedTrade(
         address indexed user,
         bytes32 indexed id,

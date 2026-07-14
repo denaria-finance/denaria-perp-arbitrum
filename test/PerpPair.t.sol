@@ -57,6 +57,9 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
     uint256[] public stableDecimals;
 
     event DebugEvent(uint256);
+    event ToggledAutoClose(
+        address indexed user, uint256 profitTh, uint256 lossTh, uint256 maxSlippage, uint256 maxLiqFee
+    );
 
     function setUp() public {
         uint256 numStableCoins = 2;
@@ -1584,6 +1587,22 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
     }
 
     ///@dev Test the base autoClosing feature in profit.
+    ///@dev The auto-close lifecycle is observable via ToggledAutoClose: enabling emits the
+    /// full config, disabling emits the cleared config with mode 0 in the last two fields.
+    function testAutoCloseEmitsToggledEvents() public {
+        address bob = makeAddr("bob");
+
+        vm.expectEmit(true, false, false, true, address(perpPair));
+        emit ToggledAutoClose(bob, 50e18, 50e18, 1e5, 1e10);
+        vm.prank(bob);
+        perpPair.enableAutoClose(50e18, 50e18, 1e5, 1e10);
+
+        vm.expectEmit(true, false, false, true, address(perpPair));
+        emit ToggledAutoClose(bob, 0, 0, 0, 0);
+        vm.prank(bob);
+        perpPair.disableAutoClose();
+    }
+
     function testBaseAutoCloseProfit() public {
         oracle.setPrice(100 * oracleDecimals);
 
@@ -1618,6 +1637,10 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         assertTrue(auth);
 
         address charlie = makeAddr("charlie");
+        // A third-party auto-close logs ToggledAutoClose with mode 1 (last two fields = 1),
+        // distinguishing it from a user disable / normal close (mode 0).
+        vm.expectEmit(true, false, false, true, address(perpPair));
+        emit ToggledAutoClose(bob, 0, 0, 1, 1);
         vm.prank(charlie);
         perpPair.autoCloseUserPosition(bob, charlie, fakeReport);
 

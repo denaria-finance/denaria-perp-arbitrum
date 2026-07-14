@@ -139,7 +139,7 @@ impl PerpEngine {
         }
 
         self.clear_virtual_trader_position(user);
-        self.clear_auto_close_data(user);
+        self.clear_auto_close_data(user, U256::ZERO);
 
         if collateral < pnl && !pnl_sign {
             let (ins, ins_s) = cm::signed_sum(

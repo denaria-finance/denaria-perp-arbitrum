@@ -371,6 +371,10 @@ abstract contract PerpTrade is PerpLiquidity {
         _closeAndWithdraw(maxSlippage, maxLiqFee, frontendAddress, user, true);
     }
 
+    ///@dev Implemented by PerpAutoClose: clears a user's auto-close config and emits
+    /// ToggledAutoClose. Declared here so the position-reset path can invoke it.
+    function _disableAutoClose(address user, uint256 mode) internal virtual;
+
     //Function to be called when exiting the system. It repays all debts (if possible) and returns final pnl
     ///@dev Internal function that handles the closing of a position.
     ///@param maxSlippage Maximum slippage allowed for the trade by the user.
@@ -508,7 +512,7 @@ abstract contract PerpTrade is PerpLiquidity {
 
         // Reset position
         delete userVirtualTraderPosition[user];
-        delete autoCloseUsersData[user];
+        _disableAutoClose(user, 0);
 
         // Update collateral
         if (getCollateral(user) < pnl && !pnlSign) {

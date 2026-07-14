@@ -25,7 +25,13 @@ impl PerpEngine {
             ac.max_slippage.set(max_slippage);
             ac.max_liq_fee.set(max_liq_fee);
         }
-        self.emit(EnabledAutoClose { user, profitTh: profit_th, lossTh: loss_th });
+        self.emit(ToggledAutoClose {
+            user,
+            profitTh: profit_th,
+            lossTh: loss_th,
+            maxSlippage: max_slippage,
+            maxLiqFee: max_liq_fee,
+        });
         Ok(())
     }
 
@@ -101,6 +107,10 @@ impl PerpEngine {
 
         let max_slippage = self.auto_close_users_data.getter(user).max_slippage.get();
         let max_liq_fee = self.auto_close_users_data.getter(user).max_liq_fee.get();
+        // Log ToggledAutoClose(mode 1 = third-party auto-close) and clear BEFORE the shared close
+        // body: that body clears too (mode 0), and running it first would emit mode 0 and flip
+        // `authorized` off, suppressing this mode-1 log. The close params are already captured above.
+        self.clear_auto_close_data(user, U256::from(1u64));
         // Force the C1 self-close bad-debt guard on auto-close regardless of caller: a distinct
         // auto-close caller must not be able to close a bad-debt position (that would drain the
         // insurance fund). The auto-close fee is still credited to the distinct `caller` above.
@@ -116,13 +126,24 @@ impl PerpEngine {
         #[cfg(feature = "stub_boundary")]
         let _ = (cpnl, cpnl_sign);
 
-        self.clear_auto_close_data(user);
         self.entered.set(false);
         Ok(())
     }
 
-    /// `delete autoCloseUsersData[user]` — zero the whole auto-close config.
-    pub(crate) fn clear_auto_close_data(&mut self, user: Address) {
+    /// `delete autoCloseUsersData[user]` — zero the whole auto-close config. Emits
+    /// `ToggledAutoClose(user, 0, 0, mode, mode)` when the user actually had auto-close
+    /// enabled, so an indexer sees the clear (mode 0 = user disable / normal close, 1 =
+    /// third-party auto-close). No event is emitted for a user that never enabled it.
+    pub(crate) fn clear_auto_close_data(&mut self, user: Address, mode: U256) {
+        if self.auto_close_users_data.getter(user).authorized.get() {
+            self.emit(ToggledAutoClose {
+                user,
+                profitTh: U256::ZERO,
+                lossTh: U256::ZERO,
+                maxSlippage: mode,
+                maxLiqFee: mode,
+            });
+        }
         let mut ac = self.auto_close_users_data.setter(user);
         ac.authorized.set(false);
         ac.profit_th.set(U256::ZERO);

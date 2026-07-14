@@ -34,7 +34,9 @@ contract EventSelectorGoldenVectorTest is Test {
         int256 deltaPnl,
         bool liquidationDirection
     );
-    event EnabledAutoClose(address indexed user, uint256 profitTh, uint256 lossTh);
+    event ToggledAutoClose(
+        address indexed user, uint256 profitTh, uint256 lossTh, uint256 maxSlippage, uint256 maxLiqFee
+    );
     event RealizedPnL(address indexed user, uint256 pnl, bool pnlSign);
     event ParametersUpdated(
         address _oracle,
@@ -72,7 +74,7 @@ contract EventSelectorGoldenVectorTest is Test {
                 ",\n",
                 row("LiquidatedUser", LiquidatedUser.selector),
                 ",\n",
-                row("EnabledAutoClose", EnabledAutoClose.selector),
+                row("ToggledAutoClose", ToggledAutoClose.selector),
                 ",\n",
                 row("RealizedPnL", RealizedPnL.selector),
                 ",\n",

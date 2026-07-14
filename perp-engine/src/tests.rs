@@ -1436,30 +1436,79 @@
         assert_eq!(ClosedPosition::SIGNATURE_HASH, want("ClosedPosition"), "ClosedPosition");
         assert_eq!(LiquidityMoved::SIGNATURE_HASH, want("LiquidityMoved"), "LiquidityMoved");
         assert_eq!(LiquidatedUser::SIGNATURE_HASH, want("LiquidatedUser"), "LiquidatedUser");
-        assert_eq!(EnabledAutoClose::SIGNATURE_HASH, want("EnabledAutoClose"), "EnabledAutoClose");
+        assert_eq!(ToggledAutoClose::SIGNATURE_HASH, want("ToggledAutoClose"), "ToggledAutoClose");
         assert_eq!(RealizedPnL::SIGNATURE_HASH, want("RealizedPnL"), "RealizedPnL");
         assert_eq!(ParametersUpdated::SIGNATURE_HASH, want("ParametersUpdated"), "ParametersUpdated");
         assert_eq!(LockedParameterUpdate::SIGNATURE_HASH, want("LockedParameterUpdate"), "LockedParameterUpdate");
     }
 
-    // End-to-end emit: enableAutoClose emits one EnabledAutoClose log with topic0 =
-    // signature, topic1 = indexed user, and data = abi.encode(profitTh, lossTh).
+    // End-to-end emit: enableAutoClose emits one ToggledAutoClose log with topic0 =
+    // signature, topic1 = indexed user, and data = abi.encode(profitTh, lossTh, maxSlippage, maxLiqFee).
     #[test]
-    fn emits_enabled_auto_close_event() {
+    fn emits_toggled_auto_close_event() {
         let wad = U256::from(WAD_U64);
         let vm = TestVM::new();
         let mut e = PerpEngine::from(&vm);
         let user = e.vm().msg_sender();
-        e.enable_auto_close(U256::from(50u64) * wad, U256::from(10u64) * wad, U256::from(1_000u64), U256::ZERO)
+        e.enable_auto_close(U256::from(50u64) * wad, U256::from(10u64) * wad, U256::from(1_000u64), U256::from(7u64))
             .expect("enable");
         let logs = vm.get_emitted_logs();
         assert_eq!(logs.len(), 1, "exactly one event emitted");
         let (topics, data) = &logs[0];
-        assert_eq!(topics[0], EnabledAutoClose::SIGNATURE_HASH, "topic0 = event signature");
+        assert_eq!(topics[0], ToggledAutoClose::SIGNATURE_HASH, "topic0 = event signature");
         assert_eq!(topics[1], user.into_word(), "topic1 = indexed user");
-        assert_eq!(data.len(), 64, "two uint256 data words");
+        assert_eq!(data.len(), 128, "four uint256 data words");
         assert_eq!(U256::from_be_slice(&data[0..32]), U256::from(50u64) * wad, "profitTh");
         assert_eq!(U256::from_be_slice(&data[32..64]), U256::from(10u64) * wad, "lossTh");
+        assert_eq!(U256::from_be_slice(&data[64..96]), U256::from(1_000u64), "maxSlippage");
+        assert_eq!(U256::from_be_slice(&data[96..128]), U256::from(7u64), "maxLiqFee");
+    }
+
+    // The third-party auto-close clears with mode 1 BEFORE the shared close body clears with
+    // mode 0; the authorized guard then suppresses the second clear, so exactly one
+    // ToggledAutoClose fires and it carries mode 1 (not mode 0). Guards the emit-ordering fix.
+    #[test]
+    fn auto_close_clear_emits_mode_one_not_zero() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        let user = addr(0x71);
+        {
+            let mut ac = e.auto_close_users_data.setter(user);
+            ac.authorized.set(true);
+        }
+        // Auto-close ordering: mode-1 clear (emits), then the close body's mode-0 clear (suppressed).
+        e.clear_auto_close_data(user, U256::from(1u64));
+        e.clear_auto_close_data(user, U256::ZERO);
+        let logs = vm.get_emitted_logs();
+        assert_eq!(logs.len(), 1, "exactly one ToggledAutoClose (mode-0 clear suppressed by the guard)");
+        let (topics, data) = &logs[0];
+        assert_eq!(topics[0], ToggledAutoClose::SIGNATURE_HASH, "topic0 = event signature");
+        assert_eq!(U256::from_be_slice(&data[64..96]), U256::from(1u64), "maxSlippage carries mode 1");
+        assert_eq!(U256::from_be_slice(&data[96..128]), U256::from(1u64), "maxLiqFee carries mode 1");
+    }
+
+    // The clear emits ONLY when the user had auto-close enabled, and a mode-0 clear (manual
+    // disable / normal close) carries 0 in the last two fields.
+    #[test]
+    fn auto_close_clear_guard_and_mode_zero() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        let user = addr(0x72);
+        // Never enabled -> clearing emits nothing.
+        e.clear_auto_close_data(user, U256::ZERO);
+        assert_eq!(vm.get_emitted_logs().len(), 0, "no event when the user never enabled auto-close");
+        // Enabled -> a mode-0 clear emits ToggledAutoClose with zeros in the last two fields.
+        {
+            let mut ac = e.auto_close_users_data.setter(user);
+            ac.authorized.set(true);
+        }
+        e.clear_auto_close_data(user, U256::ZERO);
+        let logs = vm.get_emitted_logs();
+        assert_eq!(logs.len(), 1, "one event on clearing an enabled user");
+        let (topics, data) = &logs[0];
+        assert_eq!(topics[0], ToggledAutoClose::SIGNATURE_HASH, "topic0 = event signature");
+        assert_eq!(U256::from_be_slice(&data[64..96]), U256::ZERO, "maxSlippage = mode 0");
+        assert_eq!(U256::from_be_slice(&data[96..128]), U256::ZERO, "maxLiqFee = mode 0");
     }
 
     // The time-locked param keccak hash is bit-exact vs Solidity's
@@ -1729,7 +1778,6 @@
         // valid base params (mirror time_locked_parameters_flow)
         let (mmr, tf, flat, flp) = (U256::from(30_000u64), U256::ZERO, U256::from(120_000_000_000_000_000u64), U256::from(500_000u64));
         let (lmin, lmax, lk) = (U256::ZERO, U256::from(500_000_000u64), U256::from(10_000_000_000u64));
-        let (cmin, cmax, coff) = (U256::ZERO, wad, U256::ZERO);
         let mts = U256::from(48u64) * wad;
 
         // helper: prepare(at ts) then advance + set; returns the set result

@@ -15,7 +15,7 @@ contract BadDebtAssertion is Assertion {
     
     bytes32 constant EXECUTED_TRADE_TOPIC0 = keccak256("ExecutedTrade(address,bool,uint256,uint256,uint256,uint256)");
     bytes32 constant CLOSED_POSITION_TOPIC0 = keccak256("ClosedPosition(address,uint256,bool)");
-    bytes32 constant ENABLED_AUTO_TOPIC0 = keccak256("EnabledAutoClose(address,uint256,uint256)");
+    bytes32 constant TOGGLED_AUTO_TOPIC0 = keccak256("ToggledAutoClose(address,uint256,uint256,uint256,uint256)");
     bytes32 constant LIQUIDATED_USER_TOPIC0 = keccak256("LiquidatedUser(address,address,uint256,uint256,uint256,uint256,int256,bool)");
     bytes32 constant LIQUIDITY_MOVED_TOPIC0 = keccak256("LiquidityMoved(address,uint256,uint256,uint256,bool)");
     bytes32 constant REALIZED_PNL_TOPIC0 = keccak256("RealizedPnL(address,uint256,bool)");
@@ -25,7 +25,7 @@ contract BadDebtAssertion is Assertion {
     constructor(){
         eventIds[EXECUTED_TRADE_TOPIC0] = 1;
         eventIds[CLOSED_POSITION_TOPIC0] = 1;
-        eventIds[ENABLED_AUTO_TOPIC0] = 1;
+        eventIds[TOGGLED_AUTO_TOPIC0] = 1;
         eventIds[LIQUIDITY_MOVED_TOPIC0] = 1;
         eventIds[REALIZED_PNL_TOPIC0] = 1;
     }

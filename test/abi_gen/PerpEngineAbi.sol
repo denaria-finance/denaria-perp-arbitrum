@@ -145,6 +145,11 @@ interface IPerpEngine {
     )
         external;
 
+    function autoCloseUsersData(address user)
+        external
+        view
+        returns (bool authorized, uint256 profitTh, uint256 lossTh, uint256 maxSlippage, uint256 maxLiqFee);
+
     function hasRole(bytes32 role, address account) external view returns (bool);
 
     function grantRole(bytes32 role, address account) external;
@@ -271,7 +276,9 @@ interface IPerpEngine {
         int256 deltaPnl,
         bool liquidationDirection
     );
-    event EnabledAutoClose(address indexed user, uint256 profitTh, uint256 lossTh);
+    event ToggledAutoClose(
+        address indexed user, uint256 profitTh, uint256 lossTh, uint256 maxSlippage, uint256 maxLiqFee
+    );
     event RealizedPnL(address indexed user, uint256 pnl, bool pnlSign);
     event ParametersUpdated(
         address _oracle,

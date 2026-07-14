@@ -169,6 +169,46 @@ contract CallBatcher {
         }
     }
 
+    struct AutoCloseData {
+        bool authorized;
+        uint256 profitTh;
+        uint256 lossTh;
+        uint256 maxSlippage;
+        uint256 maxLiqFee;
+    }
+
+    /// @notice Read the auto-close config of many users in one call, so a keeper can pick the
+    ///         positions whose thresholds are met before submitting auto-closes.
+    function batchAutoCloseData(
+        address[] calldata users,
+        address perpPairAddress
+    )
+        external
+        view
+        returns (AutoCloseData[] memory autoCloseData)
+    {
+        IPerpPair perpInterface = IPerpPair(perpPairAddress);
+        uint256 len = users.length;
+        autoCloseData = new AutoCloseData[](len);
+
+        for (uint256 i = 0; i < len;) {
+            (bool authorized, uint256 profitTh, uint256 lossTh, uint256 maxSlippage, uint256 maxLiqFee) =
+                perpInterface.autoCloseUsersData(users[i]);
+
+            autoCloseData[i] = AutoCloseData({
+                authorized: authorized,
+                profitTh: profitTh,
+                lossTh: lossTh,
+                maxSlippage: maxSlippage,
+                maxLiqFee: maxLiqFee
+            });
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     function _vaultFor(address perpPairAddress) private view returns (address vault) {
         (vault,,,,,,,) = IPerpPairBatcherParameters(perpPairAddress).ReadParameters();
     }
