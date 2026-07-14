@@ -127,10 +127,10 @@
             p.initial_asset_balance.set(U256::from(702));
             p.debt_stable.set(U256::from(703));
             p.debt_asset.set(U256::from(704));
-            p.inverse_snapshot_m00.set(si(705));
-            p.inverse_snapshot_m01.set(si(-706));
-            p.inverse_snapshot_m10.set(si(707));
-            p.inverse_snapshot_m11.set(si(-708));
+            p.snapshot_m00.set(si(705));
+            p.snapshot_m01.set(si(-706));
+            p.snapshot_m10.set(si(707));
+            p.snapshot_m11.set(si(-708));
             p.snapshot_g0.set(si(709));
             p.snapshot_g1.set(si(-710));
         }
@@ -233,10 +233,10 @@
         assert_eq!(l.initial_asset_balance.get(), U256::from(702), "lp.initial_asset_balance");
         assert_eq!(l.debt_stable.get(), U256::from(703), "lp.debt_stable");
         assert_eq!(l.debt_asset.get(), U256::from(704), "lp.debt_asset");
-        assert_eq!(l.inverse_snapshot_m00.get(), si(705), "lp.inv_m00");
-        assert_eq!(l.inverse_snapshot_m01.get(), si(-706), "lp.inv_m01");
-        assert_eq!(l.inverse_snapshot_m10.get(), si(707), "lp.inv_m10");
-        assert_eq!(l.inverse_snapshot_m11.get(), si(-708), "lp.inv_m11");
+        assert_eq!(l.snapshot_m00.get(), si(705), "lp.inv_m00");
+        assert_eq!(l.snapshot_m01.get(), si(-706), "lp.inv_m01");
+        assert_eq!(l.snapshot_m10.get(), si(707), "lp.inv_m10");
+        assert_eq!(l.snapshot_m11.get(), si(-708), "lp.inv_m11");
         assert_eq!(l.snapshot_g0.get(), si(709), "lp.snapshot_g0");
         assert_eq!(l.snapshot_g1.get(), si(-710), "lp.snapshot_g1");
 
@@ -357,7 +357,7 @@
             p.initial_funding_rate.set(wad);
             p.initial_funding_rate_sign.set(true);
         }
-        let (fee1, sign1) = e.compute_funding_fee(user1);
+        let (fee1, sign1) = e.compute_funding_fee(user1).unwrap();
         assert_eq!(fee1, U256::from(10u64) * wad, "fee1 magnitude");
         assert!(sign1, "fee1 sign");
 
@@ -370,7 +370,7 @@
             p.initial_funding_rate.set(wad);
             p.initial_funding_rate_sign.set(true);
         }
-        let (fee2, sign2) = e.compute_funding_fee(user2);
+        let (fee2, sign2) = e.compute_funding_fee(user2).unwrap();
         assert_eq!(fee2, U256::from(3u64) * wad, "fee2 magnitude");
         assert!(!sign2, "fee2 sign");
     }
@@ -411,10 +411,10 @@
                 lp.snapshot_g1.set(idecs(inp["snapshotG1"].as_str().unwrap()));
                 lp.initial_stable_balance.set(u256s(inp["initialStableBalance"].as_str().unwrap()));
                 lp.initial_asset_balance.set(u256s(inp["initialAssetBalance"].as_str().unwrap()));
-                lp.inverse_snapshot_m00.set(idecs(inp["invM00"].as_str().unwrap()));
-                lp.inverse_snapshot_m01.set(idecs(inp["invM01"].as_str().unwrap()));
-                lp.inverse_snapshot_m10.set(idecs(inp["invM10"].as_str().unwrap()));
-                lp.inverse_snapshot_m11.set(idecs(inp["invM11"].as_str().unwrap()));
+                lp.snapshot_m00.set(idecs(inp["invM00"].as_str().unwrap()));
+                lp.snapshot_m01.set(idecs(inp["invM01"].as_str().unwrap()));
+                lp.snapshot_m10.set(idecs(inp["invM10"].as_str().unwrap()));
+                lp.snapshot_m11.set(idecs(inp["invM11"].as_str().unwrap()));
                 lp.debt_asset.set(u256s(inp["lpDebtAsset"].as_str().unwrap()));
             }
             {
@@ -427,7 +427,7 @@
 
             let fr = u256s(inp["fr"].as_str().unwrap());
             let fr_sign = inp["frSign"].as_bool().unwrap();
-            let (fee, sign) = e.compute_funding_fee_with(user, fr, fr_sign);
+            let (fee, sign) = e.compute_funding_fee_with(user, fr, fr_sign).unwrap();
 
             let exp_fee = u256s(v["expected"]["fee"].as_str().unwrap());
             let exp_sign = v["expected"]["feeSign"].as_bool().unwrap();
@@ -636,19 +636,19 @@
         e.global_liquidity_asset.set(U256::from(6_000u64) * wad);
 
         // empty LP
-        assert_eq!(e.get_lp_liquidity_balance(addr(0x01)), (U256::ZERO, U256::ZERO), "empty LP");
+        assert_eq!(e.get_lp_liquidity_balance(addr(0x01)).unwrap(), (U256::ZERO, U256::ZERO), "empty LP");
 
         // LP with M^-1(t0) = identity*d -> M(t)*M^-1(t0) = identity -> initial shares
         let lpa = addr(0x02);
         {
             let mut lp = e.liquidity_position.setter(lpa);
-            lp.inverse_snapshot_m00.set(cm::i(d));
-            lp.inverse_snapshot_m11.set(cm::i(d));
+            lp.snapshot_m00.set(cm::i(d));
+            lp.snapshot_m11.set(cm::i(d));
             lp.initial_stable_balance.set(U256::from(1_000u64) * wad);
             lp.initial_asset_balance.set(U256::from(2u64) * wad);
         }
         assert_eq!(
-            e.get_lp_liquidity_balance(lpa),
+            e.get_lp_liquidity_balance(lpa).unwrap(),
             (U256::from(1_000u64) * wad, U256::from(2u64) * wad),
             "identity snapshot returns initial shares"
         );
@@ -656,7 +656,7 @@
         // Public view wrappers expose the same values (selector wiring + return).
         assert_eq!(
             e.get_lp_liquidity_balance_public(lpa).unwrap(),
-            e.get_lp_liquidity_balance(lpa),
+            e.get_lp_liquidity_balance(lpa).unwrap(),
             "getLpLiquidityBalance wrapper == private helper"
         );
     }
@@ -682,13 +682,13 @@
         let lpa = addr(0x02);
         {
             let mut lp = e.liquidity_position.setter(lpa);
-            lp.inverse_snapshot_m00.set(cm::i(d)); // identity snapshot -> actualM == M(t)
-            lp.inverse_snapshot_m11.set(cm::i(d));
+            lp.snapshot_m00.set(cm::i(d)); // identity snapshot -> actualM == M(t)
+            lp.snapshot_m11.set(cm::i(d));
             lp.initial_stable_balance.set(U256::from(1_000u64) * wad);
             lp.initial_asset_balance.set(U256::from(2u64) * wad);
         }
         assert_eq!(
-            e.get_lp_liquidity_balance(lpa),
+            e.get_lp_liquidity_balance(lpa).unwrap(),
             (U256::ZERO, U256::from(2u64) * wad),
             "negative stable leg clamps to 0, positive asset leg preserved"
         );
@@ -850,7 +850,7 @@
         let lp = e.liquidity_position.getter(user);
         assert_eq!(lpds, lp.debt_stable.get());
         assert_eq!(lpda, lp.debt_asset.get());
-        let (elp_s, elp_a) = e.get_lp_liquidity_balance(user);
+        let (elp_s, elp_a) = e.get_lp_liquidity_balance(user).unwrap();
         assert_eq!(slp, elp_s);
         assert_eq!(alp, elp_a);
         assert_eq!(max_lp, U256::from(10u64), "maxLpLeverage");
@@ -876,8 +876,8 @@
         let user = addr(0x42);
         {
             let mut lp = e.liquidity_position.setter(user);
-            lp.inverse_snapshot_m00.set(cm::i(d));
-            lp.inverse_snapshot_m11.set(cm::i(d));
+            lp.snapshot_m00.set(cm::i(d));
+            lp.snapshot_m11.set(cm::i(d));
             lp.initial_stable_balance.set(lp_stable);
             lp.initial_asset_balance.set(lp_asset);
         }
@@ -1054,10 +1054,10 @@
 
         {
             let lp = e.liquidity_position.getter(user);
-            assert_eq!(lp.inverse_snapshot_m00.get(), liq_m_dec, "bootstrap inv m00 = liqMDec");
-            assert_eq!(lp.inverse_snapshot_m01.get(), I256::ZERO, "bootstrap inv m01 = 0");
-            assert_eq!(lp.inverse_snapshot_m10.get(), I256::ZERO, "bootstrap inv m10 = 0");
-            assert_eq!(lp.inverse_snapshot_m11.get(), liq_m_dec, "bootstrap inv m11 = liqMDec");
+            assert_eq!(lp.snapshot_m00.get(), liq_m_dec, "bootstrap inv m00 = liqMDec");
+            assert_eq!(lp.snapshot_m01.get(), I256::ZERO, "bootstrap inv m01 = 0");
+            assert_eq!(lp.snapshot_m10.get(), I256::ZERO, "bootstrap inv m10 = 0");
+            assert_eq!(lp.snapshot_m11.get(), liq_m_dec, "bootstrap inv m11 = liqMDec");
             assert_eq!(lp.initial_stable_balance.get(), s, "initial stable = deposit");
             assert_eq!(lp.initial_asset_balance.get(), a, "initial asset = deposit");
             assert_eq!(lp.debt_stable.get(), s, "LP debt stable = deposit (debt-financed)");
@@ -1065,7 +1065,7 @@
         }
         assert_eq!(e.global_liquidity_stable.get(), s, "global stable = deposit");
         assert_eq!(e.global_liquidity_asset.get(), a, "global asset = deposit");
-        assert_eq!(e.get_lp_liquidity_balance(user), (s, a), "LP balance == deposit");
+        assert_eq!(e.get_lp_liquidity_balance(user).unwrap(), (s, a), "LP balance == deposit");
     }
 
     // Funding-dilution guard: add_liquidity settles global funding on the PRE-deposit
@@ -1142,7 +1142,7 @@
         let a = U256::from(2u64) * wad;
         let price = U256::from(300_000_000_000u64);
         e.add_liquidity(s, a, U256::ZERO, price, user).expect("add");
-        assert_eq!(e.get_lp_liquidity_balance(user), (s, a), "post-add LP balance == deposit");
+        assert_eq!(e.get_lp_liquidity_balance(user).unwrap(), (s, a), "post-add LP balance == deposit");
         assert_eq!(e.global_liquidity_stable.get(), s, "post-add global stable");
         assert_eq!(e.global_liquidity_asset.get(), a, "post-add global asset");
 
@@ -1555,6 +1555,43 @@
         assert!(e.has_role(mod_role, addr(0x44)), "grant took effect");
     }
 
+    // MDET revert (Q80 adjugate recovery): a real LP (non-zero initial balances) whose stored forward snapshot M(t0)
+    // has det <= 0 is a corrupted matrix; the adjugate recovery reverts MDET (Error(string)) and
+    // that revert must PROPAGATE through get_lp_liquidity_balance and the read paths built on it,
+    // not be swallowed to a zero balance. Bypasses the empty-position sentinel (snapshot_m00 != 0).
+    #[test]
+    fn get_lp_liquidity_balance_reverts_mdet() {
+        let wad = U256::from(WAD_U64);
+        let s = cm::i(U256::from_limbs([0u64, 65_536u64, 0, 0])); // 2^80
+        let mdet = err(b"MDET");
+        // det == 0 (m11 = 0) and det < 0 (m11 = -s); det = snapshot_m00 * m11 - 0 * 0.
+        for (m11, label) in [(I256::ZERO, "det == 0"), (-s, "det < 0")] {
+            let vm = TestVM::new();
+            let mut e = PerpEngine::from(&vm);
+            let lpa = addr(0x01);
+            // Valid current matrix = identity * scale; degenerate per-LP snapshot.
+            e.liquidity_m00.set(s);
+            e.liquidity_m11.set(s);
+            e.liquidity_m_decimals.set(s);
+            {
+                let mut lp = e.liquidity_position.setter(lpa);
+                lp.snapshot_m00.set(s);
+                lp.snapshot_m01.set(I256::ZERO);
+                lp.snapshot_m10.set(I256::ZERO);
+                lp.snapshot_m11.set(m11);
+                lp.initial_stable_balance.set(U256::from(1000u64) * wad);
+                lp.initial_asset_balance.set(U256::from(10u64) * wad);
+            }
+            assert_eq!(e.get_lp_liquidity_balance(lpa), Err(mdet.clone()), "get_lp reverts MDET ({label})");
+            // Propagation: the close/margin PnL read that reconstructs this LP surfaces the revert.
+            assert_eq!(e.calc_pnl_user(lpa, U256::from(100u64) * wad), Err(mdet.clone()), "calc_pnl_user propagates ({label})");
+        }
+        // A pure trader (no LP, snapshot_m00 == 0) hits the sentinel — no MDET, balance (0,0).
+        let vm = TestVM::new();
+        let e = PerpEngine::from(&vm);
+        assert_eq!(e.get_lp_liquidity_balance(addr(0x02)), Ok((U256::ZERO, U256::ZERO)), "non-LP: no MDET");
+    }
+
     // Front-end read parity (partial — size-constrained): only the read views the front-end
     // strictly needs were restored on the engine, because the engine is at the Stylus size
     // ceiling (the full set breaks `cargo stylus` activation). Each restored getter must
@@ -1701,7 +1738,7 @@
         // fixed constants identical to the benchmark init
         assert_eq!(e.minimum_trade_size.get(), U256::from(48u64) * wad, "minimumTradeSize const");
         assert_eq!(e.mmr_decimals.get(), U256::from(1_000_000u64), "mmrDecimals const");
-        assert_eq!(e.liquidity_m00.get(), cm::i(U256::from(10_000u64) * wad), "identity M const");
+        assert_eq!(e.liquidity_m00.get(), cm::i(U256::from_limbs([0u64, 65_536u64, 0, 0])), "identity M const (2^80)");
         assert_eq!(e.funding_c.get(), U32::from(1_000_000u32), "fundingC const");
         assert!(e.has_role(keccak256("MOD_ROLE"), e.vm().msg_sender()), "deployer granted MOD_ROLE");
         assert!(e.initialized.get(), "initialized");
@@ -1998,7 +2035,7 @@
         assert_eq!(e.global_liquidity_stable.get(), s, "pool stable = deposit");
         assert_eq!(e.global_liquidity_asset.get(), a, "pool asset = deposit");
         let sender = e.vm().msg_sender();
-        assert_eq!(e.get_lp_liquidity_balance(sender), (s, a), "LP balance == deposit");
+        assert_eq!(e.get_lp_liquidity_balance(sender).unwrap(), (s, a), "LP balance == deposit");
     }
 
     // Public `realizePnL` end-to-end under stub_boundary: a stable-only position with a
@@ -2254,10 +2291,10 @@
             assert_eq!(lp.initial_asset_balance.get(), us("initA"), "op {i} initA");
             assert_eq!(lp.debt_stable.get(), us("lpDebtS"), "op {i} lpDebtS");
             assert_eq!(lp.debt_asset.get(), us("lpDebtA"), "op {i} lpDebtA");
-            assert_eq!(lp.inverse_snapshot_m00.get(), is("im00"), "op {i} im00");
-            assert_eq!(lp.inverse_snapshot_m01.get(), is("im01"), "op {i} im01");
-            assert_eq!(lp.inverse_snapshot_m10.get(), is("im10"), "op {i} im10");
-            assert_eq!(lp.inverse_snapshot_m11.get(), is("im11"), "op {i} im11");
+            assert_eq!(lp.snapshot_m00.get(), is("im00"), "op {i} im00");
+            assert_eq!(lp.snapshot_m01.get(), is("im01"), "op {i} im01");
+            assert_eq!(lp.snapshot_m10.get(), is("im10"), "op {i} im10");
+            assert_eq!(lp.snapshot_m11.get(), is("im11"), "op {i} im11");
             assert_eq!(lp.snapshot_g0.get(), is("sg0"), "op {i} sg0");
             assert_eq!(lp.snapshot_g1.get(), is("sg1"), "op {i} sg1");
             // LP's virtual trader position (debt-financing)
@@ -2456,7 +2493,7 @@
         );
         // INV-LP-BOUND: each LP's reconstructed balance is clamped to the global pool.
         for &u in users {
-            let (ls, la) = e.get_lp_liquidity_balance(u);
+            let (ls, la) = e.get_lp_liquidity_balance(u).unwrap();
             assert!(ls <= gs && la <= ga, "{label}: LP balance bounded by globals");
         }
         // INV-INS-CAP: a positive insurance fund never exceeds the cap (excess → protocol).
@@ -2504,7 +2541,7 @@
         e.trade_for(c, true, U256::from(500u64) * wad, U256::ZERO, U256::ZERO, Address::ZERO, 1, Bytes::new()).expect("c long");
         check(&e, &users, "after c long");
         vm.set_block_timestamp(15_400);
-        let (ds, da) = e.get_lp_liquidity_balance(d);
+        let (ds, da) = e.get_lp_liquidity_balance(d).unwrap();
         e.remove_liquidity_for(d, ds / U256::from(2u64), da / U256::from(2u64), U256::ZERO, Bytes::new()).expect("d remove half");
         check(&e, &users, "after d remove liquidity");
         vm.set_block_timestamp(19_000);
@@ -2571,7 +2608,7 @@
                 }
                 _ => {
                     if lp_added {
-                        let (ls, la) = e.get_lp_liquidity_balance(lp);
+                        let (ls, la) = e.get_lp_liquidity_balance(lp).unwrap();
                         if ls > wad && la > U256::ZERO {
                             let _ = e.remove_liquidity_for(lp, ls / U256::from(4u64), la / U256::from(4u64), U256::ZERO, Bytes::new());
                         }
@@ -2603,8 +2640,8 @@
         let forwarder = e.vm().msg_sender();
         e.trusted_forwarder.set(forwarder);
         e.add_liquidity_for(user, s, a, U256::ZERO, Bytes::new()).expect("forwarded add");
-        assert_eq!(e.get_lp_liquidity_balance(user), (s, a), "LP accrues to the explicit user");
-        assert_eq!(e.get_lp_liquidity_balance(forwarder), (U256::ZERO, U256::ZERO), "forwarder has no LP");
+        assert_eq!(e.get_lp_liquidity_balance(user).unwrap(), (s, a), "LP accrues to the explicit user");
+        assert_eq!(e.get_lp_liquidity_balance(forwarder).unwrap(), (U256::ZERO, U256::ZERO), "forwarder has no LP");
         assert!(!e.entered.get(), "guard reset");
 
         // non-forwarder rejection (fresh VM: the on-chain revert would roll back the guard)

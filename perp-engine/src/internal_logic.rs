@@ -4,25 +4,28 @@ use super::*;
 #[allow(dead_code)]
 impl PerpEngine {
     /// Solidity `InternalPerpLogic.getLpLiquidityBalance(user)`:
-    /// current LP balance = (initialShares) · M(t)·M⁻¹(t0), clamped to the pool.
-    pub(crate) fn get_lp_liquidity_balance(&self, user: Address) -> (U256, U256) {
+    /// current LP balance = M(t) · adj(M(t0))·v(t0) / det(M(t0)), clamped to the pool.
+    /// Reverts `MDET` on a corrupted (det ≤ 0) snapshot matrix, matching the reference.
+    pub(crate) fn get_lp_liquidity_balance(&self, user: Address) -> Result<(U256, U256), Vec<u8>> {
         let lp = self.liquidity_position.getter(user);
-        if lp.inverse_snapshot_m00.get() == I256::ZERO {
-            return (U256::ZERO, U256::ZERO);
+        if lp.snapshot_m00.get() == I256::ZERO {
+            return Ok((U256::ZERO, U256::ZERO));
         }
-        let d = self.liquidity_m_decimals.get();
-        let (am00, am01, am10, am11) = cm::mat_mul_2x2(
+        // Recover the balance from the RAW forward snapshot M(t0) via the adjugate (no stored
+        // inverse). `recover_lp_balance_from_snapshot` reverts MDET when det(M(t0)) ≤ 0.
+        let (stable_signed, asset_signed) = cm::recover_lp_balance_from_snapshot(
             self.liquidity_m00.get(), self.liquidity_m01.get(), self.liquidity_m10.get(), self.liquidity_m11.get(),
-            lp.inverse_snapshot_m00.get(), lp.inverse_snapshot_m01.get(), lp.inverse_snapshot_m10.get(), lp.inverse_snapshot_m11.get(),
-            d,
-        );
-        let init_stable = cm::i(lp.initial_stable_balance.get());
-        let init_asset = cm::i(lp.initial_asset_balance.get());
+            lp.snapshot_m00.get(), lp.snapshot_m01.get(), lp.snapshot_m10.get(), lp.snapshot_m11.get(),
+            lp.initial_stable_balance.get(),
+            lp.initial_asset_balance.get(),
+            self.liquidity_m_decimals.get(),
+        )
+        .map_err(|e| err(&e))?;
         // Clamp each signed recovery leg to the pool floor (0) before the U256 cast and the
-        // global cap: an ill-conditioned M(t)·M⁻¹(t0) can drive a leg negative, and `cm::u`
-        // reverts on a negative I256. Mirrors Solidity `result > 0 ? uint256(result) : 0`.
-        let mut lp_stable = cm::u_or_zero((init_stable * am00 + init_asset * am01) / d);
-        let mut lp_asset = cm::u_or_zero((init_stable * am10 + init_asset * am11) / d);
+        // global cap: an ill-conditioned M(t) can drive a leg negative, and `cm::u` reverts on a
+        // negative I256. Mirrors Solidity `result > 0 ? uint256(result) : 0`.
+        let mut lp_stable = cm::u_or_zero(stable_signed);
+        let mut lp_asset = cm::u_or_zero(asset_signed);
         let gs = self.global_liquidity_stable.get();
         let ga = self.global_liquidity_asset.get();
         if lp_stable > gs {
@@ -31,7 +34,7 @@ impl PerpEngine {
         if lp_asset > ga {
             lp_asset = ga;
         }
-        (lp_stable, lp_asset)
+        Ok((lp_stable, lp_asset))
     }
 
     /// Solidity `UtilMath._calcPnL(...)`. `use_spot_price=true` (the calcMR path)
@@ -127,7 +130,7 @@ impl PerpEngine {
         collateral: U256,
         last_op_ts: U256,
     ) -> Result<(U256, U256, U256, U256, U256, U256, U256, U256, U256), Vec<u8>> {
-        let (stable_lp, asset_lp) = self.get_lp_liquidity_balance(user);
+        let (stable_lp, asset_lp) = self.get_lp_liquidity_balance(user)?;
 
         let vp = self.user_virtual_trader_position.getter(user);
         let balance_stable = vp.balance_stable.get();
@@ -150,7 +153,7 @@ impl PerpEngine {
             funding_rate = fr;
             funding_rate_sign = frs;
         }
-        let (local_ff, local_ff_sign) = self.compute_funding_fee_with(user, funding_rate, funding_rate_sign);
+        let (local_ff, local_ff_sign) = self.compute_funding_fee_with(user, funding_rate, funding_rate_sign)?;
         let (funding_fee, funding_fee_sign) =
             cm::signed_sum(pos_funding_fee, pos_funding_fee_sign, local_ff, local_ff_sign);
 
@@ -211,12 +214,12 @@ impl PerpEngine {
         price: U256,
         allow_oversized_short_spot_fallback: bool,
     ) -> Result<(U256, bool), Vec<u8>> {
-        let (stable_lp, asset_lp) = self.get_lp_liquidity_balance(user);
+        let (stable_lp, asset_lp) = self.get_lp_liquidity_balance(user)?;
         let last_op_ts = U256::from(self.last_operation_timestamp.get());
         let (nfr, nfr_sign) = self.compute_funding_rate(price, last_op_ts)?;
         let (fr, frs) =
             cm::signed_sum(self.funding_rate.get(), self.funding_rate_sign.get(), nfr, nfr_sign);
-        let (local_ff, local_ff_sign) = self.compute_funding_fee_with(user, fr, frs);
+        let (local_ff, local_ff_sign) = self.compute_funding_fee_with(user, fr, frs)?;
 
         let vp = self.user_virtual_trader_position.getter(user);
         let (funding_fee, funding_fee_sign) =

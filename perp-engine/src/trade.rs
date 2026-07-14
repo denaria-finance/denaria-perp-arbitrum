@@ -202,7 +202,7 @@ impl PerpEngine {
         self.update_fg(spot_price, last_op_ts)?;
 
         // Funding fee, snapshots, exposure and position update.
-        let (local_ff, local_ff_sign) = self.compute_funding_fee(user);
+        let (local_ff, local_ff_sign) = self.compute_funding_fee(user)?;
         let cur_fr = self.funding_rate.get();
         let cur_fr_sign = self.funding_rate_sign.get();
         let g0 = self.matrix_row_g0.get();

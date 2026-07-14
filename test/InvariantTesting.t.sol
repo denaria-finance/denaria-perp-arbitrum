@@ -1038,14 +1038,15 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         (uint256 userPnL1, bool sign1) = UtilMath.calcPnLNoExit(userAddresses[0], price, address(perpPair));
         console.log(userPnL1, sign1);
 
-        //reset liquidity to initial state
-        uint256 totalLiquidityStable = perpPair.globalLiquidityStable();
-        uint256 totalLiquidityAsset = perpPair.globalLiquidityAsset();
-
+        //reset liquidity to initial state: userAddresses[99] removes its OWN recovered LP balance
+        //(the adjugate recovery is more precise than the global running total, so a sole LP's
+        //recovered balance can sit a few wei below globalLiquidity — removing the global total
+        //would overdraw and revert L5).
         vm.prank(userAddresses[98]);
         perpPair.addLiquidity(stableLiq, assetLiq, maxUserLiquidityFee, fakeReport);
+        (uint256 lp99Stable, uint256 lp99Asset) = perpPair.getLpLiquidityBalance(userAddresses[99]);
         vm.prank(userAddresses[99]);
-        perpPair.removeLiquidity(totalLiquidityStable, totalLiquidityAsset, maxUserLiquidityFee, fakeReport);
+        perpPair.removeLiquidity(lp99Stable, lp99Asset, maxUserLiquidityFee, fakeReport);
 
         //Malicious liquidity addition
         vm.prank(userAddresses[1]);
@@ -1110,14 +1111,15 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         (uint256 userPnL1, bool sign1) = UtilMath.calcPnLNoExit(userAddresses[0], price, address(perpPair));
         console.log(userPnL1, sign1);
 
-        //reset liquidity to initial state
-        uint256 totalLiquidityStable = perpPair.globalLiquidityStable();
-        uint256 totalLiquidityAsset = perpPair.globalLiquidityAsset();
-
+        //reset liquidity to initial state: userAddresses[99] removes its OWN recovered LP balance
+        //(the adjugate recovery is more precise than the global running total, so a sole LP's
+        //recovered balance can sit a few wei below globalLiquidity — removing the global total
+        //would overdraw and revert L5).
         vm.prank(userAddresses[98]);
         perpPair.addLiquidity(stableLiq, assetLiq, maxUserLiquidityFee, fakeReport);
+        (uint256 lp99Stable, uint256 lp99Asset) = perpPair.getLpLiquidityBalance(userAddresses[99]);
         vm.prank(userAddresses[99]);
-        perpPair.removeLiquidity(totalLiquidityStable, totalLiquidityAsset, maxUserLiquidityFee, fakeReport);
+        perpPair.removeLiquidity(lp99Stable, lp99Asset, maxUserLiquidityFee, fakeReport);
 
         //Malicious liquidity addition
         vm.prank(userAddresses[1]);

@@ -24,7 +24,7 @@ impl PerpEngine {
         let dust = U256::from(10_000_000_000u64); // 1e10
         let bps = U256::from(100_000u64); // 1e5
 
-        let (lp_stable_balance, lp_asset_balance) = self.get_lp_liquidity_balance(user);
+        let (lp_stable_balance, lp_asset_balance) = self.get_lp_liquidity_balance(user)?;
 
         let lp_debt_asset_init = self.liquidity_position.getter(user).debt_asset.get();
         let lp_debt_stable_init = self.liquidity_position.getter(user).debt_stable.get();

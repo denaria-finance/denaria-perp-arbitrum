@@ -51,7 +51,7 @@ contract PerpLiquidityRef is PerpPair {
 
     function getLPInv(address u) external view returns (int256, int256, int256, int256) {
         LiquidityPosition storage p = liquidityPosition[u];
-        return (p.inverseSnapshotM[0][0], p.inverseSnapshotM[0][1], p.inverseSnapshotM[1][0], p.inverseSnapshotM[1][1]);
+        return (p.snapshotM[0][0], p.snapshotM[0][1], p.snapshotM[1][0], p.snapshotM[1][1]);
     }
 
     function getLPSnapG(address u) external view returns (int256, int256) {

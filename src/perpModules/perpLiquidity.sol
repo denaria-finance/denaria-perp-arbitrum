@@ -144,17 +144,15 @@ abstract contract PerpLiquidity is InternalPerpLogic {
 
         liquidityPos.initialStableBalance = liquidityStable;
         liquidityPos.initialAssetBalance = liquidityAsset;
-        // Special case if no liquidity is present
-        if (globalLiquidityAsset == 0 && globalLiquidityStable == 0) {
-            liquidityPos.inverseSnapshotM = [
-                [int256(1) * decimals.liquidityMDecimals, int256(0) * decimals.liquidityMDecimals],
-                [int256(0) * decimals.liquidityMDecimals, int256(1) * decimals.liquidityMDecimals]
-            ];
-        } else {
+        // Rebase the global liquidity by the incumbent LP balance only when the pool is non-empty.
+        if (globalLiquidityAsset != 0 || globalLiquidityStable != 0) {
             globalLiquidityStable -= oldLpStableBalance;
             globalLiquidityAsset -= oldLpAssetBalance;
-            liquidityPos.inverseSnapshotM = MatrixMath.inverseTwoByTwo(liquidityM, decimals.liquidityMDecimals);
         }
+        // Store the RAW forward matrix M(t0) snapshot (adjugate recovery defers the inverse to read
+        // time); on an empty pool liquidityM is still the identity * scale, reproducing the old
+        // bootstrap without a special case.
+        liquidityPos.snapshotM = liquidityM;
 
         unchecked {
             globalLiquidityStable += liquidityStable;
@@ -225,7 +223,8 @@ abstract contract PerpLiquidity is InternalPerpLogic {
         // Snapshot new values
         _updateSnapshots(user, lpStableBalance - liquidityStableToRemove, lpAssetBalance - liquidityAssetToRemove);
         LiquidityPosition storage liqPosition = liquidityPosition[user];
-        liqPosition.inverseSnapshotM = MatrixMath.inverseTwoByTwo(liquidityM, decimals.liquidityMDecimals);
+        // Store the RAW forward matrix M(t0) snapshot (no materialized inverse).
+        liqPosition.snapshotM = liquidityM;
 
         // Compute removal fee
         uint256 fee = FeeManager.computeLiquidityRemovalFee(

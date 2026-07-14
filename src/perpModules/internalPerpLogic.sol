@@ -33,28 +33,20 @@ abstract contract InternalPerpLogic is PerpFunding, ReentrancyGuardTransient {
         LiquidityPosition storage position = liquidityPosition[user];
 
         // If user has no LP position, return (0,0)
-        if (position.inverseSnapshotM[0][0] == 0) return (0, 0);
-        // Compute M(t) * M^-1(t0)
-        int256[2][2] memory actualM =
-            MatrixMath.matMulTwoByTwo(liquidityM, position.inverseSnapshotM, decimals.liquidityMDecimals);
+        if (position.snapshotM[0][0] == 0) return (0, 0);
 
-        // Cache initial LP liq
-        int256 initialStableBalance = SafeCast.toInt256(position.initialStableBalance);
-        int256 initialAssetBalance = SafeCast.toInt256(position.initialAssetBalance);
-
-        // Cache matrix values to avoid repeated array indexing (bounds checks)
-        int256 m00 = actualM[0][0];
-        int256 m01 = actualM[0][1];
-        int256 m10 = actualM[1][0];
-        int256 m11 = actualM[1][1];
-        int256 d = decimals.liquidityMDecimals;
-
-        // Compute the signed dot-product results first.
-        int256 stableResult = (initialStableBalance * m00 + initialAssetBalance * m01) / d;
-        int256 assetResult = (initialStableBalance * m10 + initialAssetBalance * m11) / d;
+        // Recover the balance from the RAW forward snapshot M(t0) via the adjugate (no stored
+        // inverse): M(t) * adj(M(t0)) * v(t0) / det(M(t0)). Reverts MDET when det(M(t0)) <= 0.
+        (int256 stableResult, int256 assetResult) = MatrixMath.recoverLpBalanceFromSnapshot(
+            liquidityM,
+            position.snapshotM,
+            position.initialStableBalance,
+            position.initialAssetBalance,
+            decimals.liquidityMDecimals
+        );
 
         // Clamp each leg to 0 if negative instead of wrapping on the uint256 cast: an
-        // ill-conditioned M(t)*M^-1(t0) can drive a leg negative, which would otherwise wrap
+        // ill-conditioned M(t) can drive a leg negative, which would otherwise wrap
         // to a huge value and inflate the LP balance up to the pool cap.
         lpStableBalance = stableResult > 0 ? uint256(stableResult) : 0;
         lpAssetBalance = assetResult > 0 ? uint256(assetResult) : 0;

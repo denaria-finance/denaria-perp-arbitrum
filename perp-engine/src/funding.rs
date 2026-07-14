@@ -66,19 +66,25 @@ impl PerpEngine {
         }
         let m10 = self.liquidity_m10.get();
         let m11 = self.liquidity_m11.get();
-        self.matrix_row_g0.set(self.matrix_row_g0.get() + b * m10 / inv_lmd);
-        self.matrix_row_g1.set(self.matrix_row_g1.get() + b * m11 / inv_lmd);
+        // Overflow-safe signed mulDiv (Q80 matrix scale), replacing raw `b * m1j / inv_lmd`.
+        self.matrix_row_g0.set(self.matrix_row_g0.get() + cm::mul_div_signed(b, m10, inv_lmd).map_err(|e| err(&e))?);
+        self.matrix_row_g1.set(self.matrix_row_g1.get() + cm::mul_div_signed(b, m11, inv_lmd).map_err(|e| err(&e))?);
         self.last_operation_timestamp.set(U64::from(block_ts));
         Ok(())
     }
 
     /// Solidity `computeFundingFee(user)` = `_computeFundingFee(user, fundingRate, fundingRateSign)`.
-    pub(crate) fn compute_funding_fee(&self, user: Address) -> (U256, bool) {
+    pub(crate) fn compute_funding_fee(&self, user: Address) -> Result<(U256, bool), Vec<u8>> {
         self.compute_funding_fee_with(user, self.funding_rate.get(), self.funding_rate_sign.get())
     }
 
     /// Solidity `_computeFundingFee(user, _fundingRate, _fundingRateSign)`.
-    pub(crate) fn compute_funding_fee_with(&self, user: Address, fr: U256, fr_sign: bool) -> (U256, bool) {
+    pub(crate) fn compute_funding_fee_with(
+        &self,
+        user: Address,
+        fr: U256,
+        fr_sign: bool,
+    ) -> Result<(U256, bool), Vec<u8>> {
         let inv_lmd = self.liquidity_m_decimals.get();
         let lp = self.liquidity_position.getter(user);
         let vp = self.user_virtual_trader_position.getter(user);
@@ -94,17 +100,32 @@ impl PerpEngine {
             b = -b;
         }
 
-        // DeltaG = matrixRowG - snapshotG + b * M[1][*] / invLMD
-        let delta_g0 = self.matrix_row_g0.get() - lp.snapshot_g0.get() + b * self.liquidity_m10.get() / inv_lmd;
-        let delta_g1 = self.matrix_row_g1.get() - lp.snapshot_g1.get() + b * self.liquidity_m11.get() / inv_lmd;
+        // DeltaG = matrixRowG - snapshotG + mulDivSigned(b, M[1][*], invLMD)
+        let delta_g0 =
+            self.matrix_row_g0.get() - lp.snapshot_g0.get() + cm::mul_div_signed(b, self.liquidity_m10.get(), inv_lmd).map_err(|e| err(&e))?;
+        let delta_g1 =
+            self.matrix_row_g1.get() - lp.snapshot_g1.get() + cm::mul_div_signed(b, self.liquidity_m11.get(), inv_lmd).map_err(|e| err(&e))?;
 
-        let liq_stable = cm::i(lp.initial_stable_balance.get());
-        let liq_asset = cm::i(lp.initial_asset_balance.get());
-
-        // star = DeltaG * M^-1(t0) * sharesVec
-        let x0 = (delta_g0 * lp.inverse_snapshot_m00.get() + delta_g1 * lp.inverse_snapshot_m10.get()) / inv_lmd;
-        let x1 = (delta_g0 * lp.inverse_snapshot_m01.get() + delta_g1 * lp.inverse_snapshot_m11.get()) / inv_lmd;
-        let star = (x0 * liq_stable + x1 * liq_asset) / cm::i(lgd);
+        // star = DeltaG * M^-1(t0) * v(t0), recovered via the adjugate from the RAW forward
+        // snapshot M(t0). Only an LP with a live position runs it (else star = 0); a real LP
+        // with a corrupted (det ≤ 0) snapshot reverts MDET, matching the reference.
+        let star = if lp.initial_stable_balance.get() != U256::ZERO || lp.initial_asset_balance.get() != U256::ZERO {
+            cm::recover_funding_star_from_snapshot(
+                delta_g0,
+                delta_g1,
+                lp.snapshot_m00.get(),
+                lp.snapshot_m01.get(),
+                lp.snapshot_m10.get(),
+                lp.snapshot_m11.get(),
+                lp.initial_stable_balance.get(),
+                lp.initial_asset_balance.get(),
+                inv_lmd,
+                lgd,
+            )
+            .map_err(|e| err(&e))?
+        } else {
+            I256::ZERO
+        };
 
         // deltaF re-used with the trader's initialFundingRate snapshot
         let (delta_f2, delta_f2_sign) = cm::signed_sum(
@@ -127,11 +148,11 @@ impl PerpEngine {
             (cm::u(-star), false)
         };
 
-        cm::signed_sum(
+        Ok(cm::signed_sum(
             abs_star,
             star_sign,
             cm::md(exposure, delta_f2, frd),
             delta_f2_sign == exposure_sign,
-        )
+        ))
     }
 }

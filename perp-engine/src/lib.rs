@@ -177,10 +177,10 @@ sol_storage! {
         uint256 initial_asset_balance;
         uint256 debt_stable;
         uint256 debt_asset;
-        int256 inverse_snapshot_m00;
-        int256 inverse_snapshot_m01;
-        int256 inverse_snapshot_m10;
-        int256 inverse_snapshot_m11;
+        int256 snapshot_m00;
+        int256 snapshot_m01;
+        int256 snapshot_m10;
+        int256 snapshot_m11;
         int256 snapshot_g0;
         int256 snapshot_g1;
     }
@@ -789,7 +789,7 @@ impl PerpEngine {
     /// `internalPerpLogic.getLpLiquidityBalance(user)` → (lpStable, lpAsset).
     #[selector(name = "getLpLiquidityBalance")]
     pub fn get_lp_liquidity_balance_public(&self, user: Address) -> Result<(U256, U256), Vec<u8>> {
-        Ok(self.get_lp_liquidity_balance(user))
+        self.get_lp_liquidity_balance(user)
     }
 
     /// `perpFunding.getPrice()` → `SafeCast.toUint256(oracle.getPrice())`.
@@ -1001,7 +1001,7 @@ impl PerpEngine {
         funding_rate: U256,
         funding_rate_sign: bool,
     ) -> Result<(U256, bool), Vec<u8>> {
-        Ok(self.compute_funding_fee_with(user, funding_rate, funding_rate_sign))
+        self.compute_funding_fee_with(user, funding_rate, funding_rate_sign)
     }
 
     }

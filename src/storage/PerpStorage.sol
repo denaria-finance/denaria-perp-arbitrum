@@ -30,6 +30,10 @@ abstract contract PerpStorage {
     /// @dev
     uint8 internal slipLiquidationTh = 10;
 
+    /// @dev Q80 fixed-point scale for the liquidity matrix M (2^80), replacing the old decimal 1e22.
+    /// The adjugate snapshot recovery keys its fast path off `liquidityMDecimals <= 2^80`.
+    int256 internal constant LIQUIDITY_M_Q80 = int256(1) << 80;
+
     /// @dev This structs contains decimals for many quantities that require decimal representation. It is initialized in the constructor.
     /**
      * The used values are:
@@ -39,7 +43,7 @@ abstract contract PerpStorage {
      * liquidityFeeDecimals = 1e10
      * fundingRateDecimals = 1e18
      * fundingCDecimals = 1e5
-     * liquidityMDecimals = 1e22
+     * liquidityMDecimals = 2^80
      */
 
     struct Decimals {
@@ -364,7 +368,7 @@ abstract contract PerpStorage {
         uint256 initialAssetBalance;
         uint256 debtStable;
         uint256 debtAsset;
-        int256[2][2] inverseSnapshotM;
+        int256[2][2] snapshotM;
         int256[2] snapshotG;
     }
 

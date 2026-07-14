@@ -46,23 +46,21 @@ contract LpClampHarness is PerpPair {
 
     function setLp(address u, int256 i00, int256 i01, int256 i10, int256 i11, uint256 s, uint256 a) external {
         LiquidityPosition storage p = liquidityPosition[u];
-        p.inverseSnapshotM[0][0] = i00;
-        p.inverseSnapshotM[0][1] = i01;
-        p.inverseSnapshotM[1][0] = i10;
-        p.inverseSnapshotM[1][1] = i11;
+        p.snapshotM[0][0] = i00;
+        p.snapshotM[0][1] = i01;
+        p.snapshotM[1][0] = i10;
+        p.snapshotM[1][1] = i11;
         p.initialStableBalance = s;
         p.initialAssetBalance = a;
     }
 
-    /// Pre-clamp signed recovery legs — the reference the production clamp is applied to.
+    /// Pre-clamp signed recovery legs — the reference the production clamp is applied to. Uses the
+    /// same adjugate recovery from the RAW forward snapshot M(t0) that `getLpLiquidityBalance` runs.
     function rawLegs(address u) external view returns (int256 rawS, int256 rawA) {
         LiquidityPosition storage p = liquidityPosition[u];
-        int256[2][2] memory am = MatrixMath.matMulTwoByTwo(liquidityM, p.inverseSnapshotM, decimals.liquidityMDecimals);
-        int256 s = int256(p.initialStableBalance);
-        int256 a = int256(p.initialAssetBalance);
-        int256 d = decimals.liquidityMDecimals;
-        rawS = (s * am[0][0] + a * am[0][1]) / d;
-        rawA = (s * am[1][0] + a * am[1][1]) / d;
+        (rawS, rawA) = MatrixMath.recoverLpBalanceFromSnapshot(
+            liquidityM, p.snapshotM, p.initialStableBalance, p.initialAssetBalance, decimals.liquidityMDecimals
+        );
     }
 }
 
@@ -83,8 +81,8 @@ contract LpBalanceClampFuzzTest is Test {
     /// Fuzz the real `getLpLiquidityBalance`: over arbitrary matrices, snapshots and balances
     /// it must never revert, stay within the pool caps, and equal `clamp(rawLeg, 0, cap)` for
     /// both legs — i.e. a negative recovered leg yields 0 (the negative-balance clamp) instead of
-    /// wrapping/reverting. Magnitudes are scaled to `liquidityMDecimals` (1e22) so the double
-    /// normalization leaves non-trivial (and frequently negative) legs.
+    /// wrapping/reverting. Magnitudes are scaled around `liquidityMDecimals` (2^80) so the
+    /// adjugate recovery leaves non-trivial (and frequently negative) legs.
     function testFuzz_getLpLiquidityBalance_clampsAndBounds(
         int256 m00,
         int256 m01,
@@ -110,8 +108,11 @@ contract LpBalanceClampFuzzTest is Test {
         i01 = _boundI(i01, lim);
         i10 = _boundI(i10, lim);
         i11 = _boundI(i11, lim);
-        // inverseSnapshotM[0][0] must be non-zero, else getLpLiquidityBalance early-returns (0,0).
+        // snapshotM[0][0] must be non-zero, else getLpLiquidityBalance early-returns (0,0).
         if (i00 == 0) i00 = 1;
+        // The adjugate recovery reverts MDET on det(snapshotM) <= 0; focus the clamp fuzz on the
+        // valid (det > 0) domain, where a recovered leg can still go negative and must clamp to 0.
+        vm.assume(i00 * i11 - i10 * i01 > 0);
         initStable = bound(initStable, 0, 1e24);
         initAsset = bound(initAsset, 0, 1e24);
         gs = bound(gs, 0, type(uint128).max);
@@ -135,5 +136,20 @@ contract LpBalanceClampFuzzTest is Test {
         if (expA > ga) expA = ga;
         assertEq(lpS, expS, "stable leg != clamp(raw,0,cap)");
         assertEq(lpA, expA, "asset leg != clamp(raw,0,cap)");
+    }
+
+    /// A real LP whose stored snapshot has det <= 0 (a corrupted matrix) reverts MDET on
+    /// getLpLiquidityBalance — the adjugate recovery guard — instead of returning a wrong balance.
+    function test_getLpLiquidityBalance_revertsMDET() public {
+        int256 s = int256(1) << 80;
+        harness.setM(s, 0, 0, s); // valid current matrix
+        // det(snapshot) == 0: snapshotM00 != 0 (bypasses the empty-position sentinel), snapshotM11 = 0.
+        harness.setLp(LP, s, 0, 0, 0, 1000e18, 10e18);
+        vm.expectRevert(bytes("MDET"));
+        harness.getLpLiquidityBalance(LP);
+        // det(snapshot) < 0.
+        harness.setLp(LP, s, 0, 0, -s, 1000e18, 10e18);
+        vm.expectRevert(bytes("MDET"));
+        harness.getLpLiquidityBalance(LP);
     }
 }

@@ -56,7 +56,7 @@ contract PerpPair is PerpLiquidation {
     )
         ERC2771Context(_multiCallManager)
     {
-        decimals = Decimals(1e6, 1e6, 1e6, 1e10, 1e18, 1e5, SafeCast.toInt256(1e22), 1e18, 1e24);
+        decimals = Decimals(1e6, 1e6, 1e6, 1e10, 1e18, 1e5, LIQUIDITY_M_Q80, 1e18, 1e24);
         curveParameters = CurveParameters(1 * 1e8, 1 * 1e7, 1 * 1e8, 1 * 1e7, 0, 6, true, 0);
         require(_oracle != address(0), "SET2");
         oracle = _oracle;

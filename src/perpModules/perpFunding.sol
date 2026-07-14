@@ -88,16 +88,24 @@ abstract contract PerpFunding is PerpConfig {
         }
 
         //Compute DeltaG
-        int256 deltaG0 = matrixRowG[0] - lp.snapshotG[0] + b * liquidityM[1][0] / invLMD;
-        int256 deltaG1 = matrixRowG[1] - lp.snapshotG[1] + b * liquidityM[1][1] / invLMD;
+        int256 deltaG0 = matrixRowG[0] - lp.snapshotG[0] + MatrixMath.mulDivSigned(b, liquidityM[1][0], invLMD);
+        int256 deltaG1 = matrixRowG[1] - lp.snapshotG[1] + MatrixMath.mulDivSigned(b, liquidityM[1][1], invLMD);
 
-        int256 LiqStable = int256(lp.initialStableBalance);
-        int256 LiqAsset = int256(lp.initialAssetBalance);
-
-        // Compute `star = DeltaG * M^-1(t0) * sharesVec`
-        int256 x0 = (deltaG0 * lp.inverseSnapshotM[0][0] + deltaG1 * lp.inverseSnapshotM[1][0]) / invLMD;
-        int256 x1 = (deltaG0 * lp.inverseSnapshotM[0][1] + deltaG1 * lp.inverseSnapshotM[1][1]) / invLMD;
-        int256 star = (x0 * LiqStable + x1 * LiqAsset) / int256(decimals.liquidityGDecimals);
+        // star = DeltaG * M^-1(t0) * v(t0), recovered via the adjugate from the RAW forward
+        // snapshot M(t0). Only a live LP runs it (else star = 0); a real LP with a corrupted
+        // (det <= 0) snapshot reverts MDET.
+        int256 star = 0;
+        if (lp.initialStableBalance != 0 || lp.initialAssetBalance != 0) {
+            star = MatrixMath.recoverFundingStarFromSnapshot(
+                deltaG0,
+                deltaG1,
+                lp.snapshotM,
+                lp.initialStableBalance,
+                lp.initialAssetBalance,
+                invLMD,
+                decimals.liquidityGDecimals
+            );
+        }
 
         //Reusing old variables
         (deltaF, deltaFSign) =
@@ -137,9 +145,9 @@ abstract contract PerpFunding is PerpConfig {
             b = -b;
         }
 
-        //Compute G
-        matrixRowG[0] += b * liquidityM[1][0] / invLMD;
-        matrixRowG[1] += b * liquidityM[1][1] / invLMD;
+        //Compute G — overflow-safe signed mulDiv (Q80 matrix scale), replacing raw `b * m1j / invLMD`.
+        matrixRowG[0] += MatrixMath.mulDivSigned(b, liquidityM[1][0], invLMD);
+        matrixRowG[1] += MatrixMath.mulDivSigned(b, liquidityM[1][1], invLMD);
 
         lastOperationTimestamp = block.timestamp;
     }

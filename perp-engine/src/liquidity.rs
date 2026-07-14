@@ -60,7 +60,7 @@ impl PerpEngine {
         spot_price: U256,
         max_fee_value: U256,
     ) -> Result<(), Vec<u8>> {
-        let (lp_stable_balance, lp_asset_balance) = self.get_lp_liquidity_balance(user);
+        let (lp_stable_balance, lp_asset_balance) = self.get_lp_liquidity_balance(user)?;
         if !(lp_stable_balance >= stable_to_remove && lp_asset_balance >= asset_to_remove) {
             return Err(err(b"L5"));
         }
@@ -68,7 +68,7 @@ impl PerpEngine {
         let last_op_ts = U256::from(self.last_operation_timestamp.get());
         self.update_fg(spot_price, last_op_ts)?;
 
-        let (local_ff, local_ff_sign) = self.compute_funding_fee(user);
+        let (local_ff, local_ff_sign) = self.compute_funding_fee(user)?;
         {
             let mut pos = self.user_virtual_trader_position.setter(user);
             let (nff, nffs) =
@@ -79,17 +79,18 @@ impl PerpEngine {
 
         self.update_snapshots(user, lp_stable_balance - stable_to_remove, lp_asset_balance - asset_to_remove);
 
-        let liq_m_dec = self.liquidity_m_decimals.get();
-        let (inv00, inv01, inv10, inv11) = cm::mat_inverse_2x2(
-            self.liquidity_m00.get(), self.liquidity_m01.get(), self.liquidity_m10.get(), self.liquidity_m11.get(),
-            liq_m_dec,
-        )?;
+        // Store the RAW forward matrix M(t0) snapshot (adjugate recovery defers the inverse to
+        // read time); no materialized inverse, no det-zero write-side revert.
         {
+            let (m00, m01, m10, m11) = (
+                self.liquidity_m00.get(), self.liquidity_m01.get(),
+                self.liquidity_m10.get(), self.liquidity_m11.get(),
+            );
             let mut lp = self.liquidity_position.setter(user);
-            lp.inverse_snapshot_m00.set(inv00);
-            lp.inverse_snapshot_m01.set(inv01);
-            lp.inverse_snapshot_m10.set(inv10);
-            lp.inverse_snapshot_m11.set(inv11);
+            lp.snapshot_m00.set(m00);
+            lp.snapshot_m01.set(m01);
+            lp.snapshot_m10.set(m10);
+            lp.snapshot_m11.set(m11);
         }
 
         let gs = self.global_liquidity_stable.get();
@@ -189,7 +190,7 @@ impl PerpEngine {
         let (nfr, nfr_sign) = self.compute_funding_rate(spot_price, last_op_ts)?;
         let (local_fr, local_fr_sign) =
             cm::signed_sum(self.funding_rate.get(), self.funding_rate_sign.get(), nfr, nfr_sign);
-        let (local_ff, local_ff_sign) = self.compute_funding_fee_with(sender, local_fr, local_fr_sign);
+        let (local_ff, local_ff_sign) = self.compute_funding_fee_with(sender, local_fr, local_fr_sign)?;
         {
             let mut pos = self.user_virtual_trader_position.setter(sender);
             let (nff, nffs) =
@@ -224,7 +225,7 @@ impl PerpEngine {
         self.distribute_liquidity_fee(fee_value, spot_price);
 
         // Remove the LP's OLD balance to re-add it folded with the new deposit.
-        let (old_lp_stable, old_lp_asset) = self.get_lp_liquidity_balance(sender);
+        let (old_lp_stable, old_lp_asset) = self.get_lp_liquidity_balance(sender)?;
         liquidity_stable += old_lp_stable;
         liquidity_asset += old_lp_asset;
 
@@ -235,28 +236,26 @@ impl PerpEngine {
             lp.initial_asset_balance.set(liquidity_asset);
         }
 
-        let liq_m_dec = self.liquidity_m_decimals.get();
-        if self.global_liquidity_asset.get() == U256::ZERO && self.global_liquidity_stable.get() == U256::ZERO {
-            // Empty pool: bootstrap the snapshot to identity * liquidityMDecimals.
-            let mut lp = self.liquidity_position.setter(sender);
-            lp.inverse_snapshot_m00.set(liq_m_dec);
-            lp.inverse_snapshot_m01.set(I256::ZERO);
-            lp.inverse_snapshot_m10.set(I256::ZERO);
-            lp.inverse_snapshot_m11.set(liq_m_dec);
-        } else {
+        // Rebase the global liquidity by the incumbent LP balance only when the pool is non-empty
+        // (an empty pool has nothing to subtract). Then store the RAW forward matrix M(t0) snapshot
+        // unconditionally — on an empty pool `liquidity_m` is still the identity * scale from init,
+        // so this reproduces the old empty-pool bootstrap without a special case.
+        if self.global_liquidity_asset.get() != U256::ZERO || self.global_liquidity_stable.get() != U256::ZERO {
             let gs = self.global_liquidity_stable.get();
             let ga = self.global_liquidity_asset.get();
             self.global_liquidity_stable.set(gs - old_lp_stable);
             self.global_liquidity_asset.set(ga - old_lp_asset);
-            let (inv00, inv01, inv10, inv11) = cm::mat_inverse_2x2(
-                self.liquidity_m00.get(), self.liquidity_m01.get(), self.liquidity_m10.get(), self.liquidity_m11.get(),
-                liq_m_dec,
-            )?;
+        }
+        {
+            let (m00, m01, m10, m11) = (
+                self.liquidity_m00.get(), self.liquidity_m01.get(),
+                self.liquidity_m10.get(), self.liquidity_m11.get(),
+            );
             let mut lp = self.liquidity_position.setter(sender);
-            lp.inverse_snapshot_m00.set(inv00);
-            lp.inverse_snapshot_m01.set(inv01);
-            lp.inverse_snapshot_m10.set(inv10);
-            lp.inverse_snapshot_m11.set(inv11);
+            lp.snapshot_m00.set(m00);
+            lp.snapshot_m01.set(m01);
+            lp.snapshot_m10.set(m10);
+            lp.snapshot_m11.set(m11);
         }
 
         let gs = self.global_liquidity_stable.get();
@@ -434,10 +433,10 @@ impl PerpEngine {
         lp.initial_asset_balance.set(U256::ZERO);
         lp.debt_stable.set(U256::ZERO);
         lp.debt_asset.set(U256::ZERO);
-        lp.inverse_snapshot_m00.set(I256::ZERO);
-        lp.inverse_snapshot_m01.set(I256::ZERO);
-        lp.inverse_snapshot_m10.set(I256::ZERO);
-        lp.inverse_snapshot_m11.set(I256::ZERO);
+        lp.snapshot_m00.set(I256::ZERO);
+        lp.snapshot_m01.set(I256::ZERO);
+        lp.snapshot_m10.set(I256::ZERO);
+        lp.snapshot_m11.set(I256::ZERO);
         lp.snapshot_g0.set(I256::ZERO);
         lp.snapshot_g1.set(I256::ZERO);
     }

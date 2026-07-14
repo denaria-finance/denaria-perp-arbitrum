@@ -81,7 +81,7 @@ impl PerpEngine {
         let (pnl_before, pnl_before_sign) = self.calc_pnl_user_liquidation_safe(user, price)?;
 
         // Funding fee for the liquidator, then the user.
-        let (lff, lffs) = self.compute_funding_fee(liquidator);
+        let (lff, lffs) = self.compute_funding_fee(liquidator)?;
         {
             let mut lqp = self.user_virtual_trader_position.setter(liquidator);
             let (nff, nffs) =
@@ -89,7 +89,7 @@ impl PerpEngine {
             lqp.funding_fee.set(nff);
             lqp.funding_fee_sign.set(nffs);
         }
-        let (uff, uffs) = self.compute_funding_fee(user);
+        let (uff, uffs) = self.compute_funding_fee(user)?;
         {
             let mut up = self.user_virtual_trader_position.setter(user);
             let (nff, nffs) =
@@ -98,7 +98,7 @@ impl PerpEngine {
             up.funding_fee_sign.set(nffs);
         }
 
-        let (stable_liq, asset_liq) = self.get_lp_liquidity_balance(user);
+        let (stable_liq, asset_liq) = self.get_lp_liquidity_balance(user)?;
         let lp_debt_asset = self.liquidity_position.getter(user).debt_asset.get();
         let liq_dec = self.liquidation_decimals.get();
         let up_balance_asset = self.user_virtual_trader_position.getter(user).balance_asset.get();
