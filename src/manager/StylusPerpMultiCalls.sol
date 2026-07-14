@@ -72,12 +72,32 @@ interface IStylusPerpEngine {
     function getPrice() external view returns (uint256);
     function oracle() external view returns (address);
     function calcPnL(address user, uint256 price) external view returns (uint256, bool);
-    // PerpStorage 8-field tuple: (vault, oracle, minimumTradeSize, minimumLiquidityMovement,
-    // feeFrontend, feeLP, insuranceFundCap, tickerAssetCurrency).
+    // PerpStorage 16-field tuple: (vault, oracle, minimumTradeSize, minimumLiquidityMovement,
+    // feeFrontend, feeLP, insuranceFundCap, tickerAssetCurrency, insuranceFund, insuranceFundSign,
+    // shortCurveParameterA, shortCurveParameterB, longCurveParameterA, longCurveParameterB,
+    // totalTraderExposure, totalTraderExposureSign). `_modifyLiquidityPosition` reads index [3]
+    // (minimumLiquidityMovement) as the liquidityTh gate.
     function ReadParameters()
         external
         view
-        returns (address, address, uint256, uint256, uint256, uint256, uint256, bytes32);
+        returns (
+            address,
+            address,
+            uint256,
+            uint256,
+            uint256,
+            uint256,
+            uint256,
+            bytes32,
+            uint256,
+            bool,
+            uint256,
+            uint256,
+            uint256,
+            uint256,
+            uint256,
+            bool
+        );
 }
 
 /// @title Stylus production-topology meta-call layer.
@@ -439,13 +459,12 @@ contract StylusPerpMultiCalls is Initializable, EIP712, AccessControl, Reentranc
     {
         (uint256 oldStable, uint256 oldAsset) = IStylusPerpEngine(perpPair).getLpLiquidityBalance(sender);
 
-        // ReadParameters() returns the 8-field PerpStorage tuple; [3] is
+        // ReadParameters() returns the 16-field PerpStorage tuple; [3] is
         // minimumLiquidityMovement — the liquidity threshold. (The original Solidity
         // manager bound a 6-field IPerpPair.ReadParameters and read [2], which against
-        // the real 8-field engine decodes to minimumTradeSize — a latent decode bug.
-        // Fixed here: read minimumLiquidityMovement directly, matching `liquidityTh`'s
-        // intent.)
-        (,,, uint256 liquidityTh,,,,) = IStylusPerpEngine(perpPair).ReadParameters();
+        // the real engine decodes to minimumTradeSize — a latent decode bug. Fixed here:
+        // read minimumLiquidityMovement directly, matching `liquidityTh`'s intent.)
+        (,,, uint256 liquidityTh,,,,,,,,,,,,) = IStylusPerpEngine(perpPair).ReadParameters();
         IOracleMiddleware(IStylusPerpEngine(perpPair).oracle()).verifyReportIfNecessary(unverifiedReport);
         uint256 spotPrice = IStylusPerpEngine(perpPair).getPrice();
         uint256 oracleDecimals = 1e8;

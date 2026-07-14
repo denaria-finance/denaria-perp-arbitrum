@@ -66,6 +66,34 @@ contract StylusReadSurfaceTest is Test {
         assertGt(mr, 0, "open position with collateral => nonzero margin ratio");
     }
 
+    /// Regression guard: calcMR must source the funding rate from ReadFees()[9]
+    /// (the folded field), not an adjacent index. The probe keeps [7]/[8] fixed non-zero and
+    /// varies only [9]; with a fresh timestamp the rate flows straight through the echoing
+    /// _computeFundingFee into the margin ratio, so mrWithRate must differ from mrZeroRate —
+    /// a destructure that mis-read [7] or [8] would leave the ratio unchanged and fail here.
+    function test_calcMR_sources_fundingRate_from_ReadFees_index_9() public {
+        FundingIndexProbeMock probe = new FundingIndexProbeMock(address(vault));
+        probe.setPosition(
+            USER,
+            Engine20260608SurfaceMock.Pos({
+                balanceStable: 0,
+                balanceAsset: 1e18,
+                debtStable: 3000e18,
+                debtAsset: 0,
+                fundingFee: 0,
+                fundingFeeSign: true
+            })
+        );
+        probe.setRate9(0);
+        uint256 mrZeroRate = UtilMath.calcMR(USER, PRICE, address(probe), 1000e18, block.timestamp);
+        probe.setRate9(50e18);
+        uint256 mrWithRate = UtilMath.calcMR(USER, PRICE, address(probe), 1000e18, block.timestamp);
+        assertTrue(
+            mrWithRate != mrZeroRate,
+            "a non-zero ReadFees[9]=fundingRate must move the margin ratio (guards the funding index)"
+        );
+    }
+
     function test_returnTradeInfo_succeeds_on_readParity_surface() public view {
         (uint256 slippage, uint256 marginRatio, uint256 tradeReturn,,,,,, uint256 finalCollateral) =
             UtilMath.returnTradeInfo(USER, true, 3000e18, 0, PRICE, address(readParity));

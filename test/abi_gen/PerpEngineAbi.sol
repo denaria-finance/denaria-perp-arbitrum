@@ -102,10 +102,6 @@ interface IPerpEngine {
 
     function globalLiquidityAsset() external view returns (uint256);
 
-    function fundingRate() external view returns (uint256);
-
-    function totalTraderExposure() external view returns (uint256);
-
     function liquidate(address user, uint256 liquidated_position_size, bytes calldata unverified_report) external;
 
     function liquidateFor(
@@ -213,7 +209,24 @@ interface IPerpEngine {
     function ReadParameters()
         external
         view
-        returns (address, address, uint256, uint256, uint256, uint256, uint256, bytes32);
+        returns (
+            address,
+            address,
+            uint256,
+            uint256,
+            uint256,
+            uint256,
+            uint256,
+            bytes32,
+            uint256,
+            bool,
+            uint256,
+            uint256,
+            uint256,
+            uint256,
+            uint256,
+            bool
+        );
 
     function lastOperationTimestamp() external view returns (uint256);
 
@@ -228,20 +241,15 @@ interface IPerpEngine {
 
     function liquidityPosition(address user) external view returns (uint256, uint256, uint256, uint256);
 
-    function ReadFees() external view returns (uint256, uint256, uint256, uint256, uint256, uint256, uint256);
-
-    function ReadFundingParameters() external view returns (uint256, uint256);
-
-    function ReadInsuranceFund() external view returns (uint256, bool);
-
-    function fundingRateSign() external view returns (bool);
+    function ReadFees()
+        external
+        view
+        returns (uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, bool);
 
     function curveParameters()
         external
         view
         returns (uint256, uint256, uint256, uint256, uint256, uint256, bool, uint256);
-
-    function totalTraderExposureSign() external view returns (bool);
 
     function computeFundingRate(uint256 price, uint256 timestamp) external view returns (uint256, bool);
 

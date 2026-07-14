@@ -383,7 +383,9 @@ abstract contract PerpStorage {
     /// @dev Mapping of users who opted into automatic closure, also contains thresholds for the closure.
     mapping(address => AutoCloseData) public autoCloseUsersData;
 
-    /// @notice Returns vault, oracle, and basic fee + limit parameters.
+    /// @notice Returns vault, oracle, fee/limit parameters, the insurance fund, the
+    /// trade-curve coefficients and net trader exposure in one call. The trailing eight
+    /// fields fold in the former ReadInsuranceFund / curve-A/B / totalTraderExposure reads.
     function ReadParameters()
         external
         view
@@ -395,7 +397,15 @@ abstract contract PerpStorage {
             uint256 feeFrontend_,
             uint256 feeLP_,
             uint256 insuranceFundCap_,
-            bytes32 tickerAssetCurrency_
+            bytes32 tickerAssetCurrency_,
+            uint256 insuranceFund_,
+            bool insuranceFundSign_,
+            uint256 shortCurveParameterA_,
+            uint256 shortCurveParameterB_,
+            uint256 longCurveParameterA_,
+            uint256 longCurveParameterB_,
+            uint256 totalTraderExposure_,
+            bool totalTraderExposureSign_
         )
     {
         return (
@@ -406,7 +416,15 @@ abstract contract PerpStorage {
             feeFrontend,
             feeLP,
             insuranceFundCap,
-            tickerAssetCurrency
+            tickerAssetCurrency,
+            insuranceFund,
+            insuranceFundSign,
+            curveParameters.shortCurveParameterA,
+            curveParameters.shortCurveParameterB,
+            curveParameters.longCurveParameterA,
+            curveParameters.longCurveParameterB,
+            totalTraderExposure,
+            totalTraderExposureSign
         );
     }
 
@@ -419,7 +437,9 @@ abstract contract PerpStorage {
         return (insuranceFund, insuranceFundSign);
     }
 
-    /// @notice Returns fee parameters.
+    /// @notice Returns fee parameters plus the funding parameters, rate and sign. The
+    /// trailing four fields fold in the former ReadFundingParameters / fundingRate /
+    /// fundingRateSign reads.
     function ReadFees()
         external
         view
@@ -430,7 +450,11 @@ abstract contract PerpStorage {
             uint256 liquidityMinFee_,
             uint256 liquidityMaxFee_,
             uint256 liquidityFeeK_,
-            uint256 liquidationDiscount_
+            uint256 liquidationDiscount_,
+            uint256 fundingC_,
+            uint256 fundingInterval_,
+            uint256 fundingRate_,
+            bool fundingRateSign_
         )
     {
         return (
@@ -440,7 +464,11 @@ abstract contract PerpStorage {
             liquidityMinFee,
             liquidityMaxFee,
             liquidityFeeK,
-            liquidationDiscount
+            liquidationDiscount,
+            fundingC,
+            fundingInterval,
+            fundingRate,
+            fundingRateSign
         );
     }
 }

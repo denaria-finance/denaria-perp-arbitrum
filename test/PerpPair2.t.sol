@@ -720,7 +720,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         );
         //assertTrue(aliceStableShares == aliceLiquidityStable && aliceAssetShares == aliceLiquidityAsset, "Alice shares");
 
-        (,,, uint256 min, uint256 max, uint256 k,) = perpPair.ReadFees();
+        (,,, uint256 min, uint256 max, uint256 k,,,,,) = perpPair.ReadFees();
 
         uint256 bobFee = FeeManager.computeLiquidityDepositFee(
             bobLiquidityStable,
@@ -780,7 +780,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
         oracle.setPrice(100 * oracleDecimals);
 
-        (,,, uint256 min, uint256 max, uint256 k,) = perpPair.ReadFees();
+        (,,, uint256 min, uint256 max, uint256 k,,,,,) = perpPair.ReadFees();
 
         uint256 aliceFee = FeeManager.computeLiquidityDepositFee(
             aliceLiquidityStable,
@@ -939,7 +939,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         uint256 bobLiquidityStable = 1_000_000 * 1e18;
         uint256 bobLiquidityAsset = 10_000 * 1e18;
 
-        (,,, uint256 min, uint256 max, uint256 k,) = perpPair.ReadFees();
+        (,,, uint256 min, uint256 max, uint256 k,,,,,) = perpPair.ReadFees();
 
         uint256 bobFee = FeeManager.computeLiquidityDepositFee(
             bobLiquidityStable,
@@ -1264,7 +1264,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         (charlieStableBalance, charlieAssetBalance) = perpPair.getLpLiquidityBalance(charlie);
         (,, uint256 _charlieLpDebtStable,) = perpPair.liquidityPosition(charlie);
 
-        (,,, uint256 min, uint256 max, uint256 k,) = perpPair.ReadFees();
+        (,,, uint256 min, uint256 max, uint256 k,,,,,) = perpPair.ReadFees();
         uint256 withdFee = FeeManager.computeLiquidityRemovalFee(
             charlieStableBalance,
             charlieAssetBalance,
@@ -1437,7 +1437,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         address bob = makeAddr("bob");
         uint256 bobLiquidityStable = 2_000_000 * 1e18;
         uint256 bobLiquidityAsset = 0;
-        (,,, uint256 min, uint256 max, uint256 k,) = perpPair.ReadFees();
+        (,,, uint256 min, uint256 max, uint256 k,,,,,) = perpPair.ReadFees();
         uint256 bobFee = FeeManager.computeLiquidityDepositFee(
             bobLiquidityStable,
             bobLiquidityAsset,
@@ -1542,7 +1542,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         address bob = makeAddr("bob");
         uint256 bobLiquidityStable = 2_000_000 * 1e18;
         uint256 bobLiquidityAsset = 0;
-        (,,, uint256 min, uint256 max, uint256 k,) = perpPair.ReadFees();
+        (,,, uint256 min, uint256 max, uint256 k,,,,,) = perpPair.ReadFees();
         uint256 bobFee = FeeManager.computeLiquidityDepositFee(
             bobLiquidityStable,
             bobLiquidityAsset,

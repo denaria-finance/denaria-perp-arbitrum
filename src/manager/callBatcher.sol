@@ -5,8 +5,9 @@ import "../interfaces/IPerpPair.sol";
 import "../interfaces/IVault.sol";
 import "../util/UtilMath.sol";
 
-/// @dev Correct 8-field binding of `ReadParameters()` (PerpStorage / Stylus engine).
-/// `IPerpPair.ReadParameters` is stale and returns the old 6-field tuple.
+/// @dev Correct 16-field binding of `ReadParameters()` (PerpStorage / Stylus engine).
+/// `IPerpPair.ReadParameters` is stale and returns the old 6-field tuple. The batcher
+/// reads only index [0] (vault) to resolve the Vault for collateral reads.
 interface IPerpPairBatcherParameters {
     function ReadParameters()
         external
@@ -19,7 +20,15 @@ interface IPerpPairBatcherParameters {
             uint256 feeFrontend_,
             uint256 feeLP_,
             uint256 insuranceFundCap_,
-            bytes32 tickerAssetCurrency_
+            bytes32 tickerAssetCurrency_,
+            uint256 insuranceFund_,
+            bool insuranceFundSign_,
+            uint256 shortCurveParameterA_,
+            uint256 shortCurveParameterB_,
+            uint256 longCurveParameterA_,
+            uint256 longCurveParameterB_,
+            uint256 totalTraderExposure_,
+            bool totalTraderExposureSign_
         );
 }
 
@@ -210,6 +219,6 @@ contract CallBatcher {
     }
 
     function _vaultFor(address perpPairAddress) private view returns (address vault) {
-        (vault,,,,,,,) = IPerpPairBatcherParameters(perpPairAddress).ReadParameters();
+        (vault,,,,,,,,,,,,,,,) = IPerpPairBatcherParameters(perpPairAddress).ReadParameters();
     }
 }

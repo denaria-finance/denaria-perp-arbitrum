@@ -414,18 +414,6 @@ impl PerpEngine {
         Ok(self.global_liquidity_asset.get())
     }
 
-    /// Cumulative funding rate.
-    #[selector(name = "fundingRate")]
-    pub fn funding_rate(&self) -> Result<U256, Vec<u8>> {
-        Ok(self.funding_rate.get())
-    }
-
-    /// Total trader exposure.
-    #[selector(name = "totalTraderExposure")]
-    pub fn total_trader_exposure(&self) -> Result<U256, Vec<u8>> {
-        Ok(self.total_trader_exposure.get())
-    }
-
     /// Public `liquidate` — Solidity `perpLiquidation.liquidate`. The caller
     /// (liquidator) liquidates a `liquidatedPositionSize` fraction of `user`'s
     /// unhealthy position at a discount. ERC2771-less `_msgSender` = the liquidator.
@@ -831,13 +819,19 @@ impl PerpEngine {
         self.calc_pnl_user(user, price)
     }
 
-    /// `PerpStorage.ReadParameters()` → the 8-field config tuple
-    /// (vault, oracle, minimumTradeSize, minimumLiquidityMovement, feeFrontend,
-    /// feeLP, insuranceFundCap, tickerAssetCurrency). Bit-exact field order.
+    /// `PerpStorage.ReadParameters()` → the 16-field config + market-state tuple
+    /// (vault, oracle, minimumTradeSize, minimumLiquidityMovement, feeFrontend, feeLP,
+    /// insuranceFundCap, tickerAssetCurrency, insuranceFund, insuranceFundSign,
+    /// shortCurveParameterA, shortCurveParameterB, longCurveParameterA, longCurveParameterB,
+    /// totalTraderExposure, totalTraderExposureSign). The trailing eight fields fold in the
+    /// former standalone insurance-fund / curve-A/B / total-trader-exposure reads so a
+    /// consumer gets vault, fees, insurance and the trade-curve state in one crossing.
+    /// Bit-exact field order with the Solidity `PerpStorage`.
     #[selector(name = "ReadParameters")]
+    #[allow(clippy::type_complexity)]
     pub fn read_parameters(
         &self,
-    ) -> Result<(Address, Address, U256, U256, U256, U256, U256, B256), Vec<u8>> {
+    ) -> Result<(Address, Address, U256, U256, U256, U256, U256, B256, U256, bool, U256, U256, U256, U256, U256, bool), Vec<u8>> {
         Ok((
             self.vault.get(),
             self.oracle.get(),
@@ -847,6 +841,14 @@ impl PerpEngine {
             U256::from(self.fee_lp.get()),
             self.insurance_fund_cap.get(),
             self.ticker_asset_currency.get(),
+            self.insurance_fund.get(),
+            self.insurance_fund_sign.get(),
+            self.short_curve_parameter_a.get(),
+            self.short_curve_parameter_b.get(),
+            self.long_curve_parameter_a.get(),
+            self.long_curve_parameter_b.get(),
+            self.total_trader_exposure.get(),
+            self.total_trader_exposure_sign.get(),
         ))
     }
 
@@ -934,9 +936,12 @@ impl PerpEngine {
     // ----------------------------------------------------------------------
 
     /// `ReadFees()` → (tradingFee, flatTradingFee, autoCloseFee, liquidityMinFee,
-    /// liquidityMaxFee, liquidityFeeK, liquidationDiscount).
+    /// liquidityMaxFee, liquidityFeeK, liquidationDiscount, fundingC, fundingInterval,
+    /// fundingRate, fundingRateSign). The trailing four fields fold in the former
+    /// standalone funding-parameter / funding-rate / funding-rate-sign reads.
     #[selector(name = "ReadFees")]
-    pub fn read_fees(&self) -> Result<(U256, U256, U256, U256, U256, U256, U256), Vec<u8>> {
+    #[allow(clippy::type_complexity)]
+    pub fn read_fees(&self) -> Result<(U256, U256, U256, U256, U256, U256, U256, U256, U256, U256, bool), Vec<u8>> {
         Ok((
             self.trading_fee.get(),
             self.flat_trading_fee.get(),
@@ -945,29 +950,11 @@ impl PerpEngine {
             self.liquidity_max_fee.get(),
             self.liquidity_fee_k.get(),
             U256::from(self.liquidation_discount.get()),
-        ))
-    }
-
-    /// `ReadFundingParameters()` → (fundingC, fundingInterval).
-    #[selector(name = "ReadFundingParameters")]
-    pub fn read_funding_parameters(&self) -> Result<(U256, U256), Vec<u8>> {
-        Ok((
             U256::from(self.funding_c.get()),
             U256::from(self.funding_interval.get()),
+            self.funding_rate.get(),
+            self.funding_rate_sign.get(),
         ))
-    }
-
-    /// `ReadInsuranceFund()` → (insFund, insFundSign).
-    #[selector(name = "ReadInsuranceFund")]
-    pub fn read_insurance_fund(&self) -> Result<(U256, bool), Vec<u8>> {
-        Ok((self.insurance_fund.get(), self.insurance_fund_sign.get()))
-    }
-
-    /// `fundingRateSign()` → the sign bit of the current funding rate (`fundingRate()` is
-    /// already exposed).
-    #[selector(name = "fundingRateSign")]
-    pub fn funding_rate_sign_public(&self) -> Result<bool, Vec<u8>> {
-        Ok(self.funding_rate_sign.get())
     }
 
     /// `curveParameters()` → the legacy `CurveParameters` struct tuple
@@ -992,13 +979,6 @@ impl PerpEngine {
             self.last_trade_direction.get(),
             self.last_validated_price.get(),
         ))
-    }
-
-    /// `totalTraderExposureSign()` → the sign bit of net trader exposure (`totalTraderExposure()`
-    /// magnitude is already exposed). Dynamic state; not derivable off-chain. Read by the webapp.
-    #[selector(name = "totalTraderExposureSign")]
-    pub fn total_trader_exposure_sign_public(&self) -> Result<bool, Vec<u8>> {
-        Ok(self.total_trader_exposure_sign.get())
     }
 
     /// `computeFundingRate(price, timestamp)` → (rate, rateSign). Thin view over the existing

@@ -8,13 +8,14 @@ pragma solidity ^0.8.25;
 error MissingSelector(bytes4 selector);
 
 /// @title Engine20260608SurfaceMock
-/// @notice Mocks EXACTLY the read surface of the Stylus engine DEPLOYED on
-/// 2026-06-08 at 0x56F6…7C23 (see abis/PerpEngine.json): the legacy getters
-/// `curveParameters` / `totalTraderExposureSign` / `computeFundingRate` /
-/// `_computeFundingFee` / `getCollateral` / `curveMathAdapter` are intentionally
-/// ABSENT — any call to them lands in the fallback and reverts. Used to
-/// regression-encode the 2026-06-10 diagnosis: every UtilMath read path (and,
-/// transitively, `Vault._checkMR`) reverted against that deploy.
+/// @notice Mocks the read surface class of the 2026-06-08 Stylus deploy (0x56F6…7C23) for the
+/// negative-path regression: the getters `curveParameters` / `computeFundingRate` /
+/// `_computeFundingFee` / `getCollateral` / `curveMathAdapter` are intentionally ABSENT — any
+/// call lands in the fallback and reverts, reproducing the 2026-06-10 diagnosis that every
+/// UtilMath read path (and, transitively, `Vault._checkMR`) reverted against that deploy.
+/// `ReadFees` (11-field) and `ReadParameters` (16-field) track the CURRENT engine surface after
+/// the getter consolidation, not the historical 7/8-field shapes, so the mock stays a faithful
+/// stand-in for the UtilMath read paths under test.
 ///
 /// Dummy values mirror the production/benchmark configuration so the linked
 /// CurveMath solver runs on known-good magnitudes (stable 1.8e25 / asset 6e21,
@@ -69,12 +70,16 @@ contract Engine20260608SurfaceMock {
         return (0, 0, 0, 0);
     }
 
-    function fundingRate() external pure returns (uint256) {
-        return 0;
-    }
-
-    function fundingRateSign() external pure returns (bool) {
-        return true;
+    /// 11-field ReadFees — the trailing four fields fold in the former standalone
+    /// fundingC / fundingInterval / fundingRate / fundingRateSign getters. UtilMath now
+    /// sources fundingRate ([9]) and fundingRateSign ([10]) from here.
+    function ReadFees()
+        external
+        view
+        virtual
+        returns (uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, bool)
+    {
+        return (1e15, 1e17, 0, 0, 0, 0, 0, 0, 0, 0, true);
     }
 
     function globalLiquidityStable() external view returns (uint256) {
@@ -101,13 +106,48 @@ contract Engine20260608SurfaceMock {
         return (0, true);
     }
 
-    /// 8-field tuple, bit-exact field order of the engine's ReadParameters.
+    /// 16-field tuple, bit-exact field order of the engine's ReadParameters. The trailing
+    /// eight fields fold in the former insurance-fund / curve-A/B / total-trader-exposure reads.
     function ReadParameters()
         external
         view
-        returns (address, address, uint256, uint256, uint256, uint256, uint256, bytes32)
+        returns (
+            address,
+            address,
+            uint256,
+            uint256,
+            uint256,
+            uint256,
+            uint256,
+            bytes32,
+            uint256,
+            bool,
+            uint256,
+            uint256,
+            uint256,
+            uint256,
+            uint256,
+            bool
+        )
     {
-        return (vaultAddr, address(0xBEEF), 48e18, 1e16, 300_000, 500_000, 500e18, bytes32("BTCUSDC"));
+        return (
+            vaultAddr,
+            address(0xBEEF),
+            48e18,
+            1e16,
+            300_000,
+            500_000,
+            500e18,
+            bytes32("BTCUSDC"),
+            0,
+            true,
+            1e8,
+            1e7,
+            1e8,
+            1e7,
+            0,
+            true
+        );
     }
 
     /// Any selector outside the mocked surface = the Stylus router-miss bug class.
@@ -117,10 +157,10 @@ contract Engine20260608SurfaceMock {
 }
 
 /// @title ReadParityEngineSurfaceMock
-/// @notice The 2026-06-08 surface PLUS the four read-parity getters restored in
+/// @notice The 2026-06-08 surface PLUS the read-parity getters restored in
 /// the engine source (commit 9fc7830a lineage, pending redeploy):
-/// `curveParameters`, `totalTraderExposureSign`, `computeFundingRate`,
-/// `_computeFundingFee`. `getCollateral` and `curveMathAdapter` stay absent BY
+/// `curveParameters`, `computeFundingRate`, `_computeFundingFee`.
+/// `getCollateral` and `curveMathAdapter` stay absent BY
 /// DESIGN (collateral lives in the Vault; the adapter probe is tolerant) — so the
 /// positive tests also prove UtilMath no longer needs either on the engine.
 contract ReadParityEngineSurfaceMock is Engine20260608SurfaceMock {
@@ -135,16 +175,43 @@ contract ReadParityEngineSurfaceMock is Engine20260608SurfaceMock {
         return (1e8, 1e7, 1e8, 1e7, block.timestamp, 6, true, 0);
     }
 
-    function totalTraderExposureSign() external pure returns (bool) {
-        return true;
-    }
-
     function computeFundingRate(uint256, uint256) external pure returns (uint256, bool) {
         return (0, true);
     }
 
-    function _computeFundingFee(address, uint256, bool) external pure returns (uint256, bool) {
+    function _computeFundingFee(address, uint256, bool) external pure virtual returns (uint256, bool) {
         return (0, true);
+    }
+}
+
+/// @title FundingIndexProbeMock
+/// @notice Regression guard for the funding-rate read path: UtilMath sources the funding
+/// rate from ReadFees()[9] (the folded field, formerly a standalone getter). Here [7]/[8] hold
+/// FIXED non-zero distinct values and [9] is settable, and `_computeFundingFee` ECHOES its
+/// rate argument, so calcMR's fundingFee — and therefore the margin ratio — moves iff
+/// getFundingRate reads index [9]. A destructure that mis-reads [7] or [8] (identical across
+/// the two probe calls) would leave the margin ratio unchanged and fail the guard.
+contract FundingIndexProbeMock is ReadParityEngineSurfaceMock {
+    uint256 public rate9;
+
+    constructor(address vault_) ReadParityEngineSurfaceMock(vault_) { }
+
+    function setRate9(uint256 r) external {
+        rate9 = r;
+    }
+
+    function ReadFees()
+        external
+        view
+        override
+        returns (uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, bool)
+    {
+        // [7]=777, [8]=888 fixed & distinct; only [9]=rate9 varies; [10]=true.
+        return (1e15, 1e17, 0, 0, 0, 0, 0, 777, 888, rate9, true);
+    }
+
+    function _computeFundingFee(address, uint256 rate, bool sign) external pure override returns (uint256, bool) {
+        return (rate, sign); // echo so ReadFees[9] flows into calcMR's fundingFee
     }
 }
 

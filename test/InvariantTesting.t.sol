@@ -778,7 +778,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         bool totalFundingFeeSign;
         uint256 fundingFee = 0;
         bool fundingFeeSign;
-        (, uint256 flatFee,,,,,) = perpPair.ReadFees();
+        (, uint256 flatFee,,,,,,,,,) = perpPair.ReadFees();
         uint256 minTrade = 1e18;
 
         for (i = 0; i < 100; i++) {
@@ -846,7 +846,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         bool totalFundingFeeSign;
         uint256 fundingFee = 0;
         bool fundingFeeSign;
-        (, uint256 flatFee,,,,,) = perpPair.ReadFees();
+        (, uint256 flatFee,,,,,,,,,) = perpPair.ReadFees();
         uint256 minTrade = 1e18;
 
         for (i = 90; i < 100; i++) {

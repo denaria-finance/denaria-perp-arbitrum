@@ -555,7 +555,7 @@ contract VaultTest is Test, PerpPairTestDeploymentHelper {
         perpPair.closeAndWithdraw(1e5, 1e10, frontendAddress, fakeReportData);
 
         uint256 frontend = vault.userCollateral(frontendAddress);
-        (, uint256 flatFee,,,,,) = perpPair.ReadFees();
+        (, uint256 flatFee,,,,,,,,,) = perpPair.ReadFees();
         vm.prank(frontendAddress);
         vault.removeCollateral(frontend, fakeReportData);
         assertTrue(

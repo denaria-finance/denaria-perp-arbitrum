@@ -60,17 +60,12 @@ check() { # check <label> <expectation:must-pass|may-warn> <cast args...>
 }
 
 echo "== engine direct reads ($ENGINE) =="
-check "fundingRate()" must-pass "$ENGINE" "fundingRate()(uint256)"
-check "fundingRateSign()" must-pass "$ENGINE" "fundingRateSign()(bool)"
 check "MMR()" must-pass "$ENGINE" "MMR()(uint256)"
 check "globalLiquidityStable()" must-pass "$ENGINE" "globalLiquidityStable()(uint256)"
 check "globalLiquidityAsset()" must-pass "$ENGINE" "globalLiquidityAsset()(uint256)"
-check "totalTraderExposure()" must-pass "$ENGINE" "totalTraderExposure()(uint256)"
 check "lastOperationTimestamp()" must-pass "$ENGINE" "lastOperationTimestamp()(uint256)"
-check "ReadFees()" must-pass "$ENGINE" "ReadFees()(uint256,uint256,uint256,uint256,uint256,uint256,uint256)"
-check "ReadParameters()" must-pass "$ENGINE" "ReadParameters()(address,address,uint256,uint256,uint256,uint256,uint256,bytes32)"
-check "ReadFundingParameters()" must-pass "$ENGINE" "ReadFundingParameters()(uint256,uint256)"
-check "ReadInsuranceFund()" must-pass "$ENGINE" "ReadInsuranceFund()(uint256,bool)"
+check "ReadFees()" must-pass "$ENGINE" "ReadFees()(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,bool)"
+check "ReadParameters()" must-pass "$ENGINE" "ReadParameters()(address,address,uint256,uint256,uint256,uint256,uint256,bytes32,uint256,bool,uint256,uint256,uint256,uint256,uint256,bool)"
 check "userVirtualTraderPosition(user)" must-pass "$ENGINE" "userVirtualTraderPosition(address)(uint256,uint256,uint256,uint256,uint256,bool,uint256,bool)" "$USER_ADDR"
 check "liquidityPosition(user)" must-pass "$ENGINE" "liquidityPosition(address)(uint256,uint256,uint256,uint256)" "$USER_ADDR"
 check "getLpLiquidityBalance(user)" must-pass "$ENGINE" "getLpLiquidityBalance(address)(uint256,uint256)" "$USER_ADDR"
@@ -78,7 +73,6 @@ check "getPrice() [OM2 expected until a signed report exists]" may-warn "$ENGINE
 
 echo "== engine read-parity getters (REQUIRED by UtilMath) =="
 check "curveParameters()" must-pass "$ENGINE" "curveParameters()(uint256,uint256,uint256,uint256,uint256,uint256,bool,uint256)"
-check "totalTraderExposureSign()" must-pass "$ENGINE" "totalTraderExposureSign()(bool)"
 check "computeFundingRate(price,1)" must-pass "$ENGINE" "computeFundingRate(uint256,uint256)(uint256,bool)" "$PRICE" 1
 check "_computeFundingFee(user,0,true)" must-pass "$ENGINE" "_computeFundingFee(address,uint256,bool)(uint256,bool)" "$USER_ADDR" 0 true
 

@@ -9,10 +9,10 @@ import "../interfaces/IPerpPair.sol";
 import "../interfaces/IVault.sol";
 import "../interfaces/ICurveMathAdapter.sol";
 
-/// @dev Correct 8-field binding of `ReadParameters()` (PerpStorage / Stylus engine). The
-/// `IPerpPair.ReadParameters` declaration is STALE (6 fields, missing `oracle_` and
-/// `tickerAssetCurrency_`) — decoding through it mis-binds every field after `vault_`.
-/// Same workaround precedent as `StylusPerpMultiCalls.IStylusPerpEngine.ReadParameters`.
+/// @dev Correct 16-field binding of `ReadParameters()` (PerpStorage / Stylus engine) plus the
+/// 11-field `ReadFees()`. The `IPerpPair.ReadParameters` declaration is STALE (6 fields, missing
+/// `oracle_` and `tickerAssetCurrency_`) — decoding through it mis-binds every field after
+/// `vault_`. Same workaround precedent as `StylusPerpMultiCalls.IStylusPerpEngine.ReadParameters`.
 interface IPerpPairParameters {
     function ReadParameters()
         external
@@ -25,7 +25,34 @@ interface IPerpPairParameters {
             uint256 feeFrontend_,
             uint256 feeLP_,
             uint256 insuranceFundCap_,
-            bytes32 tickerAssetCurrency_
+            bytes32 tickerAssetCurrency_,
+            uint256 insuranceFund_,
+            bool insuranceFundSign_,
+            uint256 shortCurveParameterA_,
+            uint256 shortCurveParameterB_,
+            uint256 longCurveParameterA_,
+            uint256 longCurveParameterB_,
+            uint256 totalTraderExposure_,
+            bool totalTraderExposureSign_
+        );
+
+    /// @dev `ReadFees()` folds the former standalone `fundingRate()` / `fundingRateSign()`
+    /// getters into its trailing fields ([9] fundingRate, [10] fundingRateSign).
+    function ReadFees()
+        external
+        view
+        returns (
+            uint256 tradingFee_,
+            uint256 flatTradingFee_,
+            uint256 autoCloseFee_,
+            uint256 liquidityMinFee_,
+            uint256 liquidityMaxFee_,
+            uint256 liquidityFeeK_,
+            uint256 liquidationDiscount_,
+            uint256 fundingC_,
+            uint256 fundingInterval_,
+            uint256 fundingRate_,
+            bool fundingRateSign_
         );
 }
 
@@ -762,7 +789,7 @@ library UtilMath {
     ///@param user Address of the user.
     ///@return collateral Collateral of the user
     function getCollateral(address perpPair, address user) private view returns (uint256 collateral) {
-        (address vault,,,,,,,) = IPerpPairParameters(perpPair).ReadParameters();
+        (address vault,,,,,,,,,,,,,,,) = IPerpPairParameters(perpPair).ReadParameters();
         return IVault(vault).userCollateral(user);
     }
 
@@ -809,14 +836,14 @@ library UtilMath {
     ///@param perpPair Address of the perpPair contract.
     ///@return fundingRate accumulated funding rate.
     function getFundingRate(address perpPair) private view returns (uint256 fundingRate) {
-        return IPerpPair(perpPair).fundingRate();
+        (,,,,,,,,, fundingRate,) = IPerpPairParameters(perpPair).ReadFees();
     }
 
     ///@notice Staticcall method to get the accumulated funding rate sign from the perpPair contract.
     ///@param perpPair Address of the perpPair contract.
     ///@return fundingRateSign accumulated funding rate sign.
     function getFundingRateSign(address perpPair) private view returns (bool fundingRateSign) {
-        return IPerpPair(perpPair).fundingRateSign();
+        (,,,,,,,,,, fundingRateSign) = IPerpPairParameters(perpPair).ReadFees();
     }
 
     ///@notice Staticcall method to get the funding fee since the last update from the perpPair contract.

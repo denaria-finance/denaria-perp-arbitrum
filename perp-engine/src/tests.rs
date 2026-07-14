@@ -754,7 +754,7 @@
         e.insurance_fund_cap.set(U256::from(500u64) * wad);
         e.ticker_asset_currency.set(B256::from(U256::from(0xABCDu64)));
 
-        let (vault, oracle, min_trade, min_liq, fee_fe, fee_lp, ins_cap, ticker) =
+        let (vault, oracle, min_trade, min_liq, fee_fe, fee_lp, ins_cap, ticker, ..) =
             e.read_parameters().unwrap();
         assert_eq!(vault, addr(0x11), "vault");
         assert_eq!(oracle, addr(0x22), "oracle");
@@ -1565,7 +1565,8 @@
         let vm = TestVM::new();
         let mut e = PerpEngine::from(&vm);
 
-        // ReadFees
+        // ReadFees — 11 fields: the 7 fee/discount fields plus the folded
+        // fundingC, fundingInterval, fundingRate, fundingRateSign.
         e.trading_fee.set(U256::from(1001));
         e.flat_trading_fee.set(U256::from(1002));
         e.auto_close_fee.set(U256::from(1003));
@@ -1573,30 +1574,39 @@
         e.liquidity_max_fee.set(U256::from(1005));
         e.liquidity_fee_k.set(U256::from(1006));
         e.liquidation_discount.set(U32::from(7_500u32));
+        e.funding_c.set(U32::from(1_000_000u32));
+        e.funding_interval.set(U64::from(86_400u64));
+        e.funding_rate.set(U256::from(4242));
+        e.funding_rate_sign.set(true);
         assert_eq!(
             e.read_fees().unwrap(),
             (
                 U256::from(1001), U256::from(1002), U256::from(1003), U256::from(1004),
                 U256::from(1005), U256::from(1006), U256::from(7_500),
+                U256::from(1_000_000), U256::from(86_400), U256::from(4242), true,
             ),
-            "ReadFees"
+            "ReadFees folds funding params + rate + sign"
         );
 
-        // ReadFundingParameters + ReadInsuranceFund
-        e.funding_c.set(U32::from(1_000_000u32));
-        e.funding_interval.set(U64::from(86_400u64));
-        assert_eq!(
-            e.read_funding_parameters().unwrap(),
-            (U256::from(1_000_000), U256::from(86_400)),
-            "ReadFundingParameters"
-        );
+        // ReadParameters — the trailing eight fields fold in insuranceFund/Sign (9,10),
+        // the short/long curve A/B coefficients (11-14) and totalTraderExposure/Sign (15,16).
         e.insurance_fund.set(U256::from(2002));
         e.insurance_fund_sign.set(true);
-        assert_eq!(e.read_insurance_fund().unwrap(), (U256::from(2002), true), "ReadInsuranceFund");
-
-        // fundingRateSign
-        e.funding_rate_sign.set(true);
-        assert!(e.funding_rate_sign_public().unwrap(), "fundingRateSign");
+        e.short_curve_parameter_a.set(U256::from(11));
+        e.short_curve_parameter_b.set(U256::from(12));
+        e.long_curve_parameter_a.set(U256::from(13));
+        e.long_curve_parameter_b.set(U256::from(14));
+        e.total_trader_exposure.set(U256::from(3003));
+        e.total_trader_exposure_sign.set(true);
+        let rp = e.read_parameters().unwrap();
+        assert_eq!(rp.8, U256::from(2002), "ReadParameters insuranceFund");
+        assert!(rp.9, "ReadParameters insuranceFundSign");
+        assert_eq!(rp.10, U256::from(11), "ReadParameters shortCurveParameterA");
+        assert_eq!(rp.11, U256::from(12), "ReadParameters shortCurveParameterB");
+        assert_eq!(rp.12, U256::from(13), "ReadParameters longCurveParameterA");
+        assert_eq!(rp.13, U256::from(14), "ReadParameters longCurveParameterB");
+        assert_eq!(rp.14, U256::from(3003), "ReadParameters totalTraderExposure");
+        assert!(rp.15, "ReadParameters totalTraderExposureSign");
     }
 
     // AccessControl revokeRole + renounceRole — the production-safety lever

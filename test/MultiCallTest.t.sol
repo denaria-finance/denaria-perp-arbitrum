@@ -628,7 +628,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
     ///@dev test the testModifyLiquidity multicall.
     function testModifyLiquidity() public {
-        (uint256 tradFee, uint256 flatFee,,,,,) = perpPair.ReadFees();
+        (uint256 tradFee, uint256 flatFee,,,,,,,,,) = perpPair.ReadFees();
 
         perpPair.prepareTimeLockedParameters(
             perpPair.MMR(), tradFee, flatFee, 0, 0, 5 * 1e10 / 100, 1e10, 1e5 / 10, 0, 10e18

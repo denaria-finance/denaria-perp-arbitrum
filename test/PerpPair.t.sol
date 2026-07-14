@@ -508,7 +508,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         //(uint256 bobFinalStable ,uint256 bobFinalAsset) = perpPair.getLpLiquidityBalance(bob);
         (uint256 charlieFinalStable, uint256 charlieFinalAsset) = perpPair.getLpLiquidityBalance(charlie);
 
-        (, uint256 flatFee,,,,,) = perpPair.ReadFees();
+        (, uint256 flatFee,,,,,,,,,) = perpPair.ReadFees();
         uint256 tradingFeeValue = tradeSize * tradingFee * 100 / tradingFeeDecimals + flatFee;
 
         assertTrue(
@@ -575,7 +575,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         (uint256 aliceFinalStable, uint256 aliceFinalAsset) = perpPair.getLpLiquidityBalance(alice);
         (uint256 charlieFinalStable, uint256 charlieFinalAsset) = perpPair.getLpLiquidityBalance(charlie);
 
-        (, uint256 flatFee,,,,,) = perpPair.ReadFees();
+        (, uint256 flatFee,,,,,,,,,) = perpPair.ReadFees();
         uint256 tradingFeeValue = tradeSize * tradingFee / tradingFeeDecimals + flatFee;
 
         assertTrue(
@@ -607,7 +607,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         vm.prank(bob);
         perpPair.trade(true, tradeSize, 100 * 1e5, aliceLiquidityAsset, frontendAddress, 1, fakeReport);
 
-        (, uint256 flatFee,,,,,) = perpPair.ReadFees();
+        (, uint256 flatFee,,,,,,,,,) = perpPair.ReadFees();
         uint256 tradingFeeValue = tradeSize * tradingFee / tradingFeeDecimals + flatFee;
 
         (uint256 FrontendStableBalance,,,,,,,) = perpPair.userVirtualTraderPosition(frontendAddress);
@@ -668,7 +668,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         vm.prank(bob);
         perpPair.trade(false, tradeSize, 100 * 1e5, aliceLiquidityStable, frontendAddress, 1, fakeReport);
 
-        (, uint256 flatFee,,,,,) = perpPair.ReadFees();
+        (, uint256 flatFee,,,,,,,,,) = perpPair.ReadFees();
         uint256 tradingFeeValue = tradeSize * 100 * tradingFee / tradingFeeDecimals + flatFee;
 
         (uint256 FrontendStableBalance,,,,,,,) = perpPair.userVirtualTraderPosition(frontendAddress);
@@ -706,7 +706,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         vm.prank(bob);
         perpPair.trade(true, tradeSize, 100 * 1e5, aliceLiquidityAsset, address(0), 1, fakeReport);
 
-        (, uint256 flatFee,,,,,) = perpPair.ReadFees();
+        (, uint256 flatFee,,,,,,,,,) = perpPair.ReadFees();
         uint256 tradingFeeValue = tradeSize * tradingFee / tradingFeeDecimals + flatFee;
 
         (uint256 FrontendStableBalance,,,,,,,) = perpPair.userVirtualTraderPosition(frontendAddress);
@@ -744,7 +744,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         vm.prank(bob);
         perpPair.trade(false, tradeSize, 100 * 1e5, aliceLiquidityStable, address(0), 1, fakeReport);
 
-        (, uint256 flatFee,,,,,) = perpPair.ReadFees();
+        (, uint256 flatFee,,,,,,,,,) = perpPair.ReadFees();
         uint256 tradingFeeValue = tradeSize * 100 * tradingFee / tradingFeeDecimals + flatFee;
 
         (uint256 FrontendStableBalance,,,,,,,) = perpPair.userVirtualTraderPosition(frontendAddress);
@@ -1267,7 +1267,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         // to the insurance fund. liquidationDiscount has no setter, so replicate
         // _computeLiquidationDiscount from the live parameter (read via ReadFees()) and the
         // margin ratio at liquidation time; insFundFraction (6) has no on-chain reader.
-        (,,,,,, uint256 liqDiscount) = perpPair.ReadFees();
+        (,,,,,, uint256 liqDiscount,,,,) = perpPair.ReadFees();
         uint256 appliedDiscount = marginBefore <= MMR / 2
             ? (liqDiscount * (1e10 + (MMR / 2 - marginBefore) * 1e10 / (MMR / 2))) / 1e10
             : (liqDiscount / 2 * (1e10 + (MMR - marginBefore) * 1e10 / (MMR - MMR / 2))) / 1e10;
@@ -1656,7 +1656,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
         (balanceStable,,,,,,,) = perpPair.userVirtualTraderPosition(charlie);
         // autoCloseFee has no setter; derive the expectation from the live parameter.
-        (,, uint256 autoCloseFee_,,,,) = perpPair.ReadFees();
+        (,, uint256 autoCloseFee_,,,,,,,,) = perpPair.ReadFees();
         assertTrue(autoCloseFee_ > 0 && balanceStable >= autoCloseFee_, "fee not recieved");
     }
 
@@ -1705,7 +1705,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
         (balanceStable,,,,,,,) = perpPair.userVirtualTraderPosition(charlie);
         // autoCloseFee has no setter; derive the expectation from the live parameter.
-        (,, uint256 autoCloseFee_,,,,) = perpPair.ReadFees();
+        (,, uint256 autoCloseFee_,,,,,,,,) = perpPair.ReadFees();
         assertTrue(autoCloseFee_ > 0 && balanceStable >= autoCloseFee_, "fee not recieved");
     }
 
@@ -2025,7 +2025,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         vm.prank(bob);
         perpPair.trade(true, tradeSize, 100 * 1e5, aliceLiquidityAsset, frontendUsed, 1, fakeReport);
 
-        (, uint256 flatFee,,,,,) = perpPair.ReadFees();
+        (, uint256 flatFee,,,,,,,,,) = perpPair.ReadFees();
         uint256 tradingFeeValue = tradeSize * tradingFee / tradingFeeDecimals + flatFee;
         uint256 actualTradingFeeValue = tradingFeeValue;
         if (frontendUsed == address(0)) {
@@ -2215,7 +2215,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
                 longB,
                 curveParameterDecimals
             );
-            (uint256 tradingFee_, uint256 flatFee_,,,,,) = perpPair.ReadFees();
+            (uint256 tradingFee_, uint256 flatFee_,,,,,,,,,) = perpPair.ReadFees();
             charlieInput = (exactIn + flatFee_) * tradingFeeDecimals / (tradingFeeDecimals - tradingFee_);
         }
         vm.prank(charlie);
@@ -2264,7 +2264,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         // d replicates _computeLiquidationDiscount at bob's margin ratio; david nets
         // (d - d/6) of spot, the d/6 going to the insurance fund. Tolerance stays a
         // tenth of the pre-re-add distorted pnl, as in the original assert.
-        (,,,,,, uint256 liqDiscount) = perpPair.ReadFees();
+        (,,,,,, uint256 liqDiscount,,,,) = perpPair.ReadFees();
         uint256 d = mr <= MMR / 2
             ? (liqDiscount * (1e10 + (MMR / 2 - mr) * 1e10 / (MMR / 2))) / 1e10
             : (liqDiscount / 2 * (1e10 + (MMR - mr) * 1e10 / (MMR - MMR / 2))) / 1e10;
@@ -2809,7 +2809,7 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         // 4. Simulate time passing
         skip(1000);
 
-        (, uint256 flatFee,,,,,) = perpPair.ReadFees();
+        (, uint256 flatFee,,,,,,,,,) = perpPair.ReadFees();
         uint256 totalLiquidityAsset = perpPair.globalLiquidityAsset();
         uint256 minTrade = 1e18;
 
