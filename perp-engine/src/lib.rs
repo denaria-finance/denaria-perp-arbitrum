@@ -25,6 +25,13 @@
 
 #![cfg_attr(not(any(test, feature = "export-abi")), no_main)]
 #![allow(clippy::too_many_arguments)]
+
+// `stub_boundary` replaces oracle/Vault boundary calls with test constants; it must
+// never reach a deployable artifact. Native host tests (target_arch != wasm32) are
+// unaffected — the guard only fires for a wasm32 build with the feature enabled.
+#[cfg(all(target_arch = "wasm32", feature = "stub_boundary"))]
+compile_error!("stub_boundary must never be enabled for a production WASM build");
+
 extern crate alloc;
 
 use alloc::vec::Vec;
