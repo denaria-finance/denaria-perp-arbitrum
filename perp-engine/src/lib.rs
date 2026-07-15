@@ -642,6 +642,39 @@ impl PerpEngine {
         Ok(())
     }
 
+    /// Public `updateLpSnapshot` — Solidity `internalPerpLogic.updateLpSnapshot`: settle funding and
+    /// force-refresh the LP's snapshot into the current accounting epoch. Reverts LS0 if the LP has no
+    /// active snapshot. `user` is explicit, so a keeper can refresh any LP.
+    #[selector(name = "updateLpSnapshot")]
+    pub fn update_lp_snapshot(&mut self, user: Address, unverified_report: Bytes) -> Result<(), Vec<u8>> {
+        if !self.has_active_liquidity_snapshot(user) {
+            return Err(err(b"LS0"));
+        }
+        #[cfg(not(feature = "stub_boundary"))]
+        {
+            let oracle = IOracleMiddleware::new(self.oracle.get());
+            let cfg = Call::new_mutating(self);
+            oracle.verify_report_if_necessary(self.vm(), cfg, unverified_report.into())?;
+        }
+        #[cfg(feature = "stub_boundary")]
+        let _ = unverified_report;
+
+        #[cfg(not(feature = "stub_boundary"))]
+        let price = {
+            let oracle = IOracleMiddleware::new(self.oracle.get());
+            cm::u(oracle.get_price(self.vm(), Call::new())?)
+        };
+        #[cfg(feature = "stub_boundary")]
+        let price = U256::from(300_000_000_000u64);
+
+        // update_fg stamps last_operation_timestamp itself (idempotent within a block).
+        let last_op_ts = U256::from(self.last_operation_timestamp.get());
+        self.update_fg(price, last_op_ts)?;
+
+        self.settle_funding_and_update_snapshots(user)?;
+        Ok(())
+    }
+
     /// `perpConfig.prepareTimeLockedParameters` — MOD_ROLE-gated. Validates and arms a
     /// time-locked parameter change (stores the commit hash + unlock time).
     #[selector(name = "prepareTimeLockedParameters")]
@@ -799,6 +832,12 @@ impl PerpEngine {
     #[selector(name = "getLpLiquidityBalance")]
     pub fn get_lp_liquidity_balance_public(&self, user: Address) -> Result<(U256, U256), Vec<u8>> {
         self.get_lp_liquidity_balance(user)
+    }
+
+    /// `internalPerpLogic.getLpLiquidityEpoch(user)` → the LP snapshot's accounting epoch id.
+    #[selector(name = "getLpLiquidityEpoch")]
+    pub fn get_lp_liquidity_epoch(&self, user: Address) -> U256 {
+        self.liquidity_position_epoch.getter(user).get()
     }
 
     /// `perpFunding.getPrice()` → `SafeCast.toUint256(oracle.getPrice())`.

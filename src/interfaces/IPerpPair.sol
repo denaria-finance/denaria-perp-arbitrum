@@ -166,6 +166,7 @@ interface IPerpPair {
     function fundingRateSign() external view returns (bool);
     function getCollateral(address user) external view returns (uint256);
     function getLpLiquidityBalance(address user) external view returns (uint256, uint256);
+    function getLpLiquidityEpoch(address user) external view returns (uint256);
     function getLpLiquidityShares(address user) external view returns (uint256, uint256);
     function getPrice() external view returns (uint256);
     function getRoleAdmin(bytes32 role) external view returns (bytes32);
@@ -242,6 +243,7 @@ interface IPerpPair {
             uint256 insuranceFundCap_
         );
     function realizePnL(bytes calldata unverifiedReport) external;
+    function updateLpSnapshot(address user, bytes calldata unverifiedReport) external;
     function removeLiquidity(
         uint256 liquidityStableToRemove,
         uint256 liquidityAssetToRemove,

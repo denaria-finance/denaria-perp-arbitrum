@@ -116,6 +116,8 @@ interface IPerpEngine {
 
     function realizePnLFor(address user, bytes calldata unverified_report) external returns (uint256, bool);
 
+    function updateLpSnapshot(address user, bytes calldata unverified_report) external;
+
     function enableAutoClose(uint256 profit_th, uint256 loss_th, uint256 max_slippage, uint256 max_liq_fee) external;
 
     function enableAutoCloseFor(
@@ -201,6 +203,8 @@ interface IPerpEngine {
         external;
 
     function getLpLiquidityBalance(address user) external view returns (uint256, uint256);
+
+    function getLpLiquidityEpoch(address user) external view returns (uint256);
 
     function getPrice() external view returns (uint256);
 

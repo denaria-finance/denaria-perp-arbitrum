@@ -43,6 +43,23 @@ impl PerpEngine {
         Ok((lp_stable, lp_asset))
     }
 
+    /// Solidity `internalPerpLogic._settleFundingAndUpdateSnapshots`: crystallize the user's accrued
+    /// funding fee into their virtual position, then migrate their LP snapshot to the current epoch.
+    pub(crate) fn settle_funding_and_update_snapshots(&mut self, user: Address) -> Result<(), Vec<u8>> {
+        let (lp_stable_balance, lp_asset_balance) = self.get_lp_liquidity_balance(user)?;
+
+        let (local_ff, local_ff_sign) = self.compute_funding_fee(user)?;
+        {
+            let mut pos = self.user_virtual_trader_position.setter(user);
+            let (nff, nffs) =
+                cm::signed_sum(pos.funding_fee.get(), pos.funding_fee_sign.get(), local_ff, local_ff_sign);
+            pos.funding_fee.set(nff);
+            pos.funding_fee_sign.set(nffs);
+        }
+
+        self.update_snapshots(user, lp_stable_balance, lp_asset_balance)
+    }
+
     /// Solidity `UtilMath._calcPnL(...)`. `use_spot_price=true` (the calcMR path)
     /// values the residual asset at spot; `false` (the close path) routes it
     /// through the curve (`computeShortReturn` / `computeExactAmountInLong`).

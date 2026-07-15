@@ -250,6 +250,11 @@ impl PerpEngine {
         #[cfg(feature = "stub_boundary")]
         let price = U256::from(300_000_000_000u64);
 
+        // Settle global funding to the current block before valuing the position (update_fg stamps
+        // last_operation_timestamp itself, idempotent within a block).
+        let last_op_ts = U256::from(self.last_operation_timestamp.get());
+        self.update_fg(price, last_op_ts)?;
+
         let (pnl, pnl_sign) = self.calc_pnl_user(user, price)?;
 
         let collateral: U256;
@@ -265,6 +270,9 @@ impl PerpEngine {
         if !(pnl_sign || pnl < collateral) {
             return Err(err(b"R1"));
         }
+
+        // Crystallize funding + migrate the LP snapshot to the current epoch before moving PnL.
+        self.settle_funding_and_update_snapshots(user)?;
 
         if !pnl_sign {
             let mut pos = self.user_virtual_trader_position.setter(user);

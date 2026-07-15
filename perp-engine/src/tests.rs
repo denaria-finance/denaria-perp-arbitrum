@@ -525,7 +525,7 @@
         assert_eq!(e.liquidity_epochs.getter(U256::ZERO).matrix_row_g0.get(), g0_first, "G unchanged by the idempotent second call");
     }
 
-    // ---- Epoch lifecycle (2C: epoch-based liquidity matrix) ----
+    // ---- Epoch lifecycle (epoch-based liquidity matrix) ----
 
     // A snapshot write rolls a fresh identity epoch once the current epoch's determinant has decayed
     // below liquidity_m_decimals / 1e12: the new LP pins to the fresh epoch and the drained one retires.
@@ -783,6 +783,74 @@
         assert_eq!(e.liquidity_position.getter(lp).snapshot_m00.get(), I256::ZERO, "snapshot M cleared");
         assert_eq!(e.liquidity_position.getter(lp).initial_stable_balance.get(), U256::ZERO, "initial balance cleared");
         assert_eq!(e.liquidity_position_epoch.getter(lp).get(), U256::ZERO, "epoch association reset");
+    }
+
+    // ---- LP snapshot-refresh entrypoints ----
+
+    // getLpLiquidityEpoch exposes the LP snapshot's accounting epoch id.
+    #[test]
+    fn get_lp_liquidity_epoch_returns_snapshot_epoch() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        e.init_protocol_constants();
+        let lp = addr(0x51);
+        assert_eq!(e.get_lp_liquidity_epoch(lp), U256::ZERO, "no snapshot -> epoch 0");
+        e.liquidity_position_epoch.setter(lp).set(U256::from(3u64));
+        assert_eq!(e.get_lp_liquidity_epoch(lp), U256::from(3u64), "reflects the pinned epoch");
+    }
+
+    // updateLpSnapshot reverts LS0 for an address with no active LP snapshot.
+    #[test]
+    fn update_lp_snapshot_reverts_ls0_for_non_lp() {
+        let vm = TestVM::new();
+        vm.set_block_timestamp(5000);
+        let mut e = PerpEngine::from(&vm);
+        e.init_protocol_constants();
+        let non_lp = addr(0x52);
+        assert_eq!(e.update_lp_snapshot(non_lp, Bytes::new()).unwrap_err(), err(b"LS0"), "no snapshot -> LS0");
+    }
+
+    // updateLpSnapshot drives the full flow (LS0 pass -> updateFG -> settle) and migrates an LP from
+    // its stale epoch into the current one.
+    #[test]
+    fn update_lp_snapshot_migrates_lp_to_current_epoch() {
+        let vm = TestVM::new();
+        vm.set_block_timestamp(5000);
+        let mut e = PerpEngine::from(&vm);
+        e.init_protocol_constants();
+        let d = e.liquidity_m_decimals.get();
+        // Non-zero pool so the LP's recovered balance is not capped to 0 (which would be a full exit).
+        e.global_liquidity_stable.set(U256::from(1_000_000u64));
+        e.global_liquidity_asset.set(U256::from(1_000_000u64));
+        // Epoch 0 holds the incumbent LP; epoch 1 is the healthy current epoch.
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::ZERO);
+            ep.liquidity_m00.set(d);
+            ep.liquidity_m11.set(d);
+            ep.active_lp_count.set(U256::from(1u64));
+        }
+        let lp = addr(0x53);
+        {
+            let mut p = e.liquidity_position.setter(lp);
+            p.snapshot_m00.set(d);
+            p.snapshot_m11.set(d);
+            p.initial_stable_balance.set(U256::from(1000u64));
+            p.initial_asset_balance.set(U256::from(1000u64));
+        }
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::from(1u64));
+            ep.liquidity_m00.set(d);
+            ep.liquidity_m11.set(d);
+        }
+        e.current_liquidity_epoch.set(U256::from(1u64));
+
+        e.update_lp_snapshot(lp, Bytes::new()).expect("updateLpSnapshot");
+
+        assert_eq!(e.get_lp_liquidity_epoch(lp), U256::from(1u64), "LP migrated to the current epoch");
+        assert_eq!(e.liquidity_epochs.getter(U256::from(1u64)).active_lp_count.get(), U256::from(1u64), "epoch 1 count");
+        assert_eq!(e.oldest_active_liquidity_epoch.get(), U256::from(1u64), "drained epoch 0 retired");
+        // Snapshot re-captured from epoch 1's identity matrix.
+        assert_eq!(e.liquidity_position.getter(lp).snapshot_m00.get(), d, "snapshot re-captured from epoch 1");
     }
 
     // Seeds a balanced engine (price 3000, stable 1.8e25, asset 6000e18) with the

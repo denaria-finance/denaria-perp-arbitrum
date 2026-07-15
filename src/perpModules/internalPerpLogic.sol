@@ -59,6 +59,12 @@ abstract contract InternalPerpLogic is PerpFunding, ReentrancyGuardTransient {
         if (lpAssetBalance > globalLiquidityAsset) lpAssetBalance = globalLiquidityAsset;
     }
 
+    /// @notice Return the liquidity accounting epoch used by an LP snapshot.
+    /// @param user LP address to inspect.
+    function getLpLiquidityEpoch(address user) external view returns (uint256) {
+        return liquidityPositionEpoch[user];
+    }
+
     /// @notice Update the snapshots in the position of the user for the funding rate (F), the matrix row G (G) and the initial shares.
     /// @param user Address of the user to update
     /// @param newInitialStableBalance New initial stable balance
@@ -103,6 +109,31 @@ abstract contract InternalPerpLogic is PerpFunding, ReentrancyGuardTransient {
         liquidityPositionEpoch[user] = newEpochId;
 
         _retireInactiveLiquidityEpochs();
+    }
+
+    /// @notice Crystallize the user's accrued funding fee into their position and migrate their LP
+    /// snapshot to the current accounting epoch.
+    function _settleFundingAndUpdateSnapshots(address user) internal {
+        (uint256 lpStableBalance, uint256 lpAssetBalance) = getLpLiquidityBalance(user);
+
+        (uint256 localFundingFee, bool localFundingFeeSign) = computeFundingFee(user);
+        VirtualTraderPosition storage position = userVirtualTraderPosition[user];
+        (position.fundingFee, position.fundingFeeSign) =
+            UtilMath.signedSum(position.fundingFee, position.fundingFeeSign, localFundingFee, localFundingFeeSign);
+
+        _updateSnapshots(user, lpStableBalance, lpAssetBalance);
+    }
+
+    /// @notice Force-refresh an LP snapshot into the current accounting epoch.
+    function updateLpSnapshot(address user, bytes memory unverifiedReport) external {
+        require(_hasActiveLiquiditySnapshot(liquidityPosition[user]), "LS0");
+        IOracleMiddleware(oracle).verifyReportIfNecessary(unverifiedReport);
+        uint256 price = getPrice();
+
+        // _updateFG stamps lastOperationTimestamp itself (idempotent within a block).
+        _updateFG(price, lastOperationTimestamp);
+
+        _settleFundingAndUpdateSnapshots(user);
     }
 
     ///@dev Computes the PnL for a user at a given oracle price.
@@ -205,9 +236,15 @@ abstract contract InternalPerpLogic is PerpFunding, ReentrancyGuardTransient {
     function realizePnL(bytes memory unverifiedReport) external nonReentrant returns (uint256, bool) {
         IOracleMiddleware(oracle).verifyReportIfNecessary(unverifiedReport);
         address user = _msgSender();
+        uint256 price = getPrice();
+        // _updateFG stamps lastOperationTimestamp itself (idempotent within a block).
+        _updateFG(price, lastOperationTimestamp);
+
         VirtualTraderPosition storage pos = userVirtualTraderPosition[user];
-        (uint256 pnl, bool pnlSign) = calcPnL(user, getPrice());
+        (uint256 pnl, bool pnlSign) = calcPnL(user, price);
         require(pnlSign || pnl < getCollateral(user), "R1");
+        _settleFundingAndUpdateSnapshots(user);
+
         if (!pnlSign) {
             if (pnl < pos.debtStable) {
                 pos.debtStable -= pnl;
