@@ -12,6 +12,97 @@ abstract contract PerpFunding is PerpConfig {
     using Math for uint256;
     using SignedMath for int256;
 
+    /// @dev Determinant (Q80) of an epoch's liquidity matrix; 0 for an uninitialized epoch.
+    function _liquidityEpochDeterminant(uint256 epochId) internal view returns (int256) {
+        LiquidityEpoch storage epoch = liquidityEpochs[epochId];
+        if (epoch.liquidityM[0][0] == 0) return 0;
+
+        return MatrixMath.sumMulDivSigned(
+            epoch.liquidityM[0][0],
+            epoch.liquidityM[1][1],
+            -epoch.liquidityM[1][0],
+            epoch.liquidityM[0][1],
+            decimals.liquidityMDecimals
+        );
+    }
+
+    /// @dev Reset an epoch to the Q80 identity matrix with a zeroed funding row (activeLpCount is left as-is).
+    function _initializeLiquidityEpoch(uint256 epochId) internal {
+        LiquidityEpoch storage epoch = liquidityEpochs[epochId];
+        epoch.liquidityM = [[decimals.liquidityMDecimals, int256(0)], [int256(0), decimals.liquidityMDecimals]];
+        delete epoch.matrixRowG;
+    }
+
+    /// @dev Advance oldestActiveLiquidityEpoch past any drained/uninitialized epoch below current, freeing storage.
+    function _retireInactiveLiquidityEpochs() internal {
+        while (oldestActiveLiquidityEpoch < currentLiquidityEpoch) {
+            LiquidityEpoch storage epoch = liquidityEpochs[oldestActiveLiquidityEpoch];
+            if (epoch.liquidityM[0][0] != 0 && epoch.activeLpCount != 0) return;
+            if (epoch.liquidityM[0][0] != 0) delete liquidityEpochs[oldestActiveLiquidityEpoch];
+            oldestActiveLiquidityEpoch += 1;
+        }
+    }
+
+    /// @dev Roll a fresh epoch once the current matrix determinant has decayed past the threshold, so new
+    /// snapshots key off a well-conditioned identity matrix. Reverts LECAP if the active window is full.
+    function _rollLiquidityEpochIfNeeded() internal {
+        int256 determinant = _liquidityEpochDeterminant(currentLiquidityEpoch);
+        if (determinant > decimals.liquidityMDecimals / int256(LIQUIDITY_EPOCH_DET_DENOMINATOR)) return;
+
+        uint256 previousEpoch = currentLiquidityEpoch;
+        uint256 activeWindow = previousEpoch + 1 - oldestActiveLiquidityEpoch;
+        if (liquidityEpochs[previousEpoch].activeLpCount == 0) activeWindow -= 1;
+        if (!(activeWindow < MAX_ACTIVE_LIQUIDITY_EPOCHS)) revert("LECAP");
+
+        currentLiquidityEpoch = previousEpoch + 1;
+        _initializeLiquidityEpoch(currentLiquidityEpoch);
+        _retireInactiveLiquidityEpochs();
+    }
+
+    /// @dev Whether an LP position holds a live snapshot (nonzero M and initial balance).
+    function _hasActiveLiquiditySnapshot(LiquidityPosition storage position) internal view returns (bool) {
+        return
+            position.snapshotM[0][0] != 0 && (position.initialStableBalance != 0 || position.initialAssetBalance != 0);
+    }
+
+    /// @dev Re-baseline an LP's funding G snapshot against its own epoch's current G (M untouched).
+    function _refreshLpFundingSnapshot(address user) internal {
+        LiquidityPosition storage lp = liquidityPosition[user];
+        if (!_hasActiveLiquiditySnapshot(lp)) return;
+        lp.snapshotG = liquidityEpochs[liquidityPositionEpoch[user]].matrixRowG;
+    }
+
+    /// @dev Apply a trade/fee matrix update to every active epoch. updateKind: 0 = long, 1 = short, 2 = fee.
+    function _applyLiquidityMatrixUpdate(int256 aX, int256 aY, uint8 updateKind) internal {
+        int256 liqMDec = decimals.liquidityMDecimals;
+
+        for (uint256 epochId = oldestActiveLiquidityEpoch; epochId <= currentLiquidityEpoch; epochId++) {
+            LiquidityEpoch storage epoch = liquidityEpochs[epochId];
+            if (epoch.liquidityM[0][0] == 0 || (epochId != currentLiquidityEpoch && epoch.activeLpCount == 0)) {
+                continue;
+            }
+
+            if (updateKind == 0) {
+                int256 m10 = epoch.liquidityM[1][0];
+                int256 m11 = epoch.liquidityM[1][1];
+                epoch.liquidityM[0][0] += aY * m10 / liqMDec;
+                epoch.liquidityM[0][1] += aY * m11 / liqMDec;
+                epoch.liquidityM[1][0] = m10 - UtilMath.divCeil(aX * m10, liqMDec);
+                epoch.liquidityM[1][1] = m11 - UtilMath.divCeil(aX * m11, liqMDec);
+            } else if (updateKind == 1) {
+                int256 m00 = epoch.liquidityM[0][0];
+                int256 m01 = epoch.liquidityM[0][1];
+                epoch.liquidityM[1][0] += aX * m00 / liqMDec;
+                epoch.liquidityM[1][1] += aX * m01 / liqMDec;
+                epoch.liquidityM[0][0] = m00 - UtilMath.divCeil(aY * m00, liqMDec);
+                epoch.liquidityM[0][1] = m01 - UtilMath.divCeil(aY * m01, liqMDec);
+            } else {
+                epoch.liquidityM[0][0] += (aY * epoch.liquidityM[1][0] + aX * epoch.liquidityM[0][0]) / liqMDec;
+                epoch.liquidityM[0][1] += (aY * epoch.liquidityM[1][1] + aX * epoch.liquidityM[0][1]) / liqMDec;
+            }
+        }
+    }
+
     ///@dev Returns the oracle price for the asset.
     ///@return price Oracle price of the asset.
     function getPrice() public view returns (uint256) {
@@ -79,6 +170,7 @@ abstract contract PerpFunding is PerpConfig {
         int256 invLMD = decimals.liquidityMDecimals;
         LiquidityPosition storage lp = liquidityPosition[user];
         VirtualTraderPosition storage vp = userVirtualTraderPosition[user];
+        LiquidityEpoch storage lpEpoch = liquidityEpochs[liquidityPositionEpoch[user]];
 
         (uint256 deltaF, bool deltaFSign) =
             UtilMath.signedSum(_fundingRate, _fundingRateSign, fundingRate, !fundingRateSign);
@@ -87,9 +179,11 @@ abstract contract PerpFunding is PerpConfig {
             b = -b;
         }
 
-        //Compute DeltaG
-        int256 deltaG0 = matrixRowG[0] - lp.snapshotG[0] + MatrixMath.mulDivSigned(b, liquidityM[1][0], invLMD);
-        int256 deltaG1 = matrixRowG[1] - lp.snapshotG[1] + MatrixMath.mulDivSigned(b, liquidityM[1][1], invLMD);
+        //Compute DeltaG against the LP's own epoch bases.
+        int256 deltaG0 =
+            lpEpoch.matrixRowG[0] - lp.snapshotG[0] + MatrixMath.mulDivSigned(b, lpEpoch.liquidityM[1][0], invLMD);
+        int256 deltaG1 =
+            lpEpoch.matrixRowG[1] - lp.snapshotG[1] + MatrixMath.mulDivSigned(b, lpEpoch.liquidityM[1][1], invLMD);
 
         // star = DeltaG * M^-1(t0) * v(t0), recovered via the adjugate from the RAW forward
         // snapshot M(t0). Only a live LP runs it (else star = 0); a real LP with a corrupted
@@ -145,9 +239,16 @@ abstract contract PerpFunding is PerpConfig {
             b = -b;
         }
 
-        //Compute G — overflow-safe signed mulDiv (Q80 matrix scale), replacing raw `b * m1j / invLMD`.
-        matrixRowG[0] += MatrixMath.mulDivSigned(b, liquidityM[1][0], invLMD);
-        matrixRowG[1] += MatrixMath.mulDivSigned(b, liquidityM[1][1], invLMD);
+        //Accrue G into every live LP accounting epoch — overflow-safe signed mulDiv (Q80 matrix scale).
+        for (uint256 epochId = oldestActiveLiquidityEpoch; epochId <= currentLiquidityEpoch; epochId++) {
+            LiquidityEpoch storage epoch = liquidityEpochs[epochId];
+            if (epoch.liquidityM[0][0] == 0 || (epochId != currentLiquidityEpoch && epoch.activeLpCount == 0)) {
+                continue;
+            }
+
+            epoch.matrixRowG[0] += MatrixMath.mulDivSigned(b, epoch.liquidityM[1][0], invLMD);
+            epoch.matrixRowG[1] += MatrixMath.mulDivSigned(b, epoch.liquidityM[1][1], invLMD);
+        }
 
         lastOperationTimestamp = block.timestamp;
     }

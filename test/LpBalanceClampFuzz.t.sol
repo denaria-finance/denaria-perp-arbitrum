@@ -33,10 +33,11 @@ contract LpClampHarness is PerpPair {
     { }
 
     function setM(int256 a, int256 b, int256 c, int256 d_) external {
-        liquidityM[0][0] = a;
-        liquidityM[0][1] = b;
-        liquidityM[1][0] = c;
-        liquidityM[1][1] = d_;
+        LiquidityEpoch storage e = liquidityEpochs[currentLiquidityEpoch];
+        e.liquidityM[0][0] = a;
+        e.liquidityM[0][1] = b;
+        e.liquidityM[1][0] = c;
+        e.liquidityM[1][1] = d_;
     }
 
     function setGlobals(uint256 gs, uint256 ga) external {
@@ -52,6 +53,8 @@ contract LpClampHarness is PerpPair {
         p.snapshotM[1][1] = i11;
         p.initialStableBalance = s;
         p.initialAssetBalance = a;
+        // Pin the LP to the current accounting epoch so getLpLiquidityBalance recovers against the matrix set via setM.
+        liquidityPositionEpoch[u] = currentLiquidityEpoch;
     }
 
     /// Pre-clamp signed recovery legs — the reference the production clamp is applied to. Uses the
@@ -59,7 +62,11 @@ contract LpClampHarness is PerpPair {
     function rawLegs(address u) external view returns (int256 rawS, int256 rawA) {
         LiquidityPosition storage p = liquidityPosition[u];
         (rawS, rawA) = MatrixMath.recoverLpBalanceFromSnapshot(
-            liquidityM, p.snapshotM, p.initialStableBalance, p.initialAssetBalance, decimals.liquidityMDecimals
+            liquidityEpochs[currentLiquidityEpoch].liquidityM,
+            p.snapshotM,
+            p.initialStableBalance,
+            p.initialAssetBalance,
+            decimals.liquidityMDecimals
         );
     }
 }
@@ -110,6 +117,9 @@ contract LpBalanceClampFuzzTest is Test {
         i11 = _boundI(i11, lim);
         // snapshotM[0][0] must be non-zero, else getLpLiquidityBalance early-returns (0,0).
         if (i00 == 0) i00 = 1;
+        // The current epoch matrix M[0][0] must be non-zero too, else the epoch-liveness guard
+        // early-returns (0,0) before recovery, which rawLegs (a direct recovery) would not model.
+        if (m00 == 0) m00 = 1;
         // The adjugate recovery reverts MDET on det(snapshotM) <= 0; focus the clamp fuzz on the
         // valid (det > 0) domain, where a recovered leg can still go negative and must clamp to 0.
         vm.assume(i00 * i11 - i10 * i01 > 0);

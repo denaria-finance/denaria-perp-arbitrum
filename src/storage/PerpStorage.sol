@@ -34,6 +34,13 @@ abstract contract PerpStorage {
     /// The adjugate snapshot recovery keys its fast path off `liquidityMDecimals <= 2^80`.
     int256 internal constant LIQUIDITY_M_Q80 = int256(1) << 80;
 
+    /// @dev Roll a fresh LP accounting epoch once the current epoch's matrix determinant decays to
+    /// `liquidityMDecimals / LIQUIDITY_EPOCH_DET_DENOMINATOR` (~1e-12 of full scale), so LP snapshots
+    /// always recover against a well-conditioned matrix instead of an ill-conditioned global one.
+    uint256 internal constant LIQUIDITY_EPOCH_DET_DENOMINATOR = 1e12;
+    /// @dev Cap on the number of simultaneously-active LP accounting epochs.
+    uint256 internal constant MAX_ACTIVE_LIQUIDITY_EPOCHS = 8;
+
     /// @dev This structs contains decimals for many quantities that require decimal representation. It is initialized in the constructor.
     /**
      * The used values are:
@@ -107,9 +114,21 @@ abstract contract PerpStorage {
     /// @dev Parameter K used in the computation of the liquidity fee.
     uint256 internal liquidityFeeK = 1e10;
 
-    // --- Liquidity Matrix (M) ---
-    /// @dev Matrix used to track the liquidity changes when trades happen.
-    int256[2][2] internal liquidityM;
+    // --- Liquidity Matrix (M) — per accounting epoch ---
+    /// @dev Per-epoch LP accounting bases. Each epoch carries its own liquidity matrix M (tracking
+    /// the liquidity changes trades cause), funding accumulator row G, and a refcount of the LP
+    /// snapshots still pinned to it. Trades and funding updates touch every active epoch; an LP only
+    /// ever recovers against the epoch its snapshot was taken in.
+    struct LiquidityEpoch {
+        int256[2][2] liquidityM;
+        int256[2] matrixRowG;
+        uint256 activeLpCount;
+    }
+
+    /// @dev Epoch new LP snapshots attach to.
+    uint256 internal currentLiquidityEpoch;
+    /// @dev Lowest epoch that may still need trade/funding updates.
+    uint256 internal oldestActiveLiquidityEpoch;
 
     // --- Funding Rate ---
     /// @dev Parameter used in the computation of the funding rate. 5 decimals.
@@ -124,10 +143,6 @@ abstract contract PerpStorage {
     // --- Trader Exposure ---
     /// @dev Total exposure of all traders. Used to compute the funding rate too.
     uint256 public totalTraderExposure;
-
-    // --- Funding Matrix Row G ---
-    /// @dev Vector used during the computation of the funding fee to keep track of the liquidity movements of the liquidity of an LP due to trades.
-    int256[2] internal matrixRowG;
 
     // --- Curve Parameters ---
     /// @dev Parameters used for the curve equations. The last four are used to ensure that splitting a trade into multiple smaller ones does not bring an advantage.
@@ -384,6 +399,10 @@ abstract contract PerpStorage {
     mapping(address => VirtualTraderPosition) public userVirtualTraderPosition;
     /// @dev Mapping of the liquidity positions of LPs.
     mapping(address => LiquidityPosition) public liquidityPosition;
+    /// @dev LP accounting epoch associated with each user's current liquidity snapshot.
+    mapping(address => uint256) internal liquidityPositionEpoch;
+    /// @dev Epoch-local LP accounting bases (liquidity matrix M, funding row G, active-LP refcount).
+    mapping(uint256 => LiquidityEpoch) internal liquidityEpochs;
     /// @dev Mapping of users who opted into automatic closure, also contains thresholds for the closure.
     mapping(address => AutoCloseData) public autoCloseUsersData;
 

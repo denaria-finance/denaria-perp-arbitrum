@@ -89,12 +89,12 @@
         e.long_curve_parameter_a.set(U256::from(222));
         e.long_curve_parameter_b.set(U256::from(223));
 
-        e.liquidity_m00.set(si(-501));
-        e.liquidity_m01.set(si(502));
-        e.liquidity_m10.set(si(-503));
-        e.liquidity_m11.set(si(504));
-        e.matrix_row_g0.set(si(505));
-        e.matrix_row_g1.set(si(-506));
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m00.set(si(-501));
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m01.set(si(502));
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m10.set(si(-503));
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m11.set(si(504));
+        e.liquidity_epochs.setter(U256::ZERO).matrix_row_g0.set(si(505));
+        e.liquidity_epochs.setter(U256::ZERO).matrix_row_g1.set(si(-506));
 
         e.mmr_decimals.set(U256::from(301));
         e.liquidation_decimals.set(U256::from(302));
@@ -197,12 +197,12 @@
         assert_eq!(e.long_curve_parameter_a.get(), U256::from(222), "long_curve_parameter_a");
         assert_eq!(e.long_curve_parameter_b.get(), U256::from(223), "long_curve_parameter_b");
 
-        assert_eq!(e.liquidity_m00.get(), si(-501), "liquidity_m00");
-        assert_eq!(e.liquidity_m01.get(), si(502), "liquidity_m01");
-        assert_eq!(e.liquidity_m10.get(), si(-503), "liquidity_m10");
-        assert_eq!(e.liquidity_m11.get(), si(504), "liquidity_m11");
-        assert_eq!(e.matrix_row_g0.get(), si(505), "matrix_row_g0");
-        assert_eq!(e.matrix_row_g1.get(), si(-506), "matrix_row_g1");
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).liquidity_m00.get(), si(-501), "liquidity_m00");
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).liquidity_m01.get(), si(502), "liquidity_m01");
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).liquidity_m10.get(), si(-503), "liquidity_m10");
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).liquidity_m11.get(), si(504), "liquidity_m11");
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).matrix_row_g0.get(), si(505), "matrix_row_g0");
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).matrix_row_g1.get(), si(-506), "matrix_row_g1");
 
         assert_eq!(e.mmr_decimals.get(), U256::from(301), "mmr_decimals");
         assert_eq!(e.liquidation_decimals.get(), U256::from(302), "liquidation_decimals");
@@ -399,10 +399,10 @@
             e.liquidity_m_decimals.set(idecs(inp["invLMD"].as_str().unwrap()));
             e.liquidity_g_decimals.set(u256s(inp["liquidityGDecimals"].as_str().unwrap()));
             e.funding_rate_decimals.set(u256s(inp["fundingRateDecimals"].as_str().unwrap()));
-            e.matrix_row_g0.set(idecs(inp["matrixRowG0"].as_str().unwrap()));
-            e.matrix_row_g1.set(idecs(inp["matrixRowG1"].as_str().unwrap()));
-            e.liquidity_m10.set(idecs(inp["liquidityM10"].as_str().unwrap()));
-            e.liquidity_m11.set(idecs(inp["liquidityM11"].as_str().unwrap()));
+            e.liquidity_epochs.setter(U256::ZERO).matrix_row_g0.set(idecs(inp["matrixRowG0"].as_str().unwrap()));
+            e.liquidity_epochs.setter(U256::ZERO).matrix_row_g1.set(idecs(inp["matrixRowG1"].as_str().unwrap()));
+            e.liquidity_epochs.setter(U256::ZERO).liquidity_m10.set(idecs(inp["liquidityM10"].as_str().unwrap()));
+            e.liquidity_epochs.setter(U256::ZERO).liquidity_m11.set(idecs(inp["liquidityM11"].as_str().unwrap()));
 
             let user = addr(0x77);
             {
@@ -467,8 +467,11 @@
         // G-update params
         e.liquidity_g_decimals.set(U256::from(10_000_000_000u64)); // 1e10
         e.liquidity_m_decimals.set(cm::i(U256::from(10_000u64) * wad)); // 1e22
-        e.liquidity_m10.set(cm::i(U256::from(10_000u64) * wad)); // 1e22
-        e.liquidity_m11.set(cm::i(U256::from(20_000u64) * wad)); // 2e22
+        // Epoch 0 must be live (m00 != 0) for update_fg to accrue G into it (in production it is
+        // identity-initialized at construction; this unit test sets the matrix directly).
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m00.set(cm::i(U256::from(10_000u64) * wad)); // 1e22
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m10.set(cm::i(U256::from(10_000u64) * wad)); // 1e22
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m11.set(cm::i(U256::from(20_000u64) * wad)); // 2e22
         e.funding_rate.set(U256::ZERO);
         e.funding_rate_sign.set(true);
 
@@ -476,8 +479,8 @@
 
         assert_eq!(e.funding_rate.get(), u256s("104166666666666000"), "accumulated funding rate");
         assert!(e.funding_rate_sign.get(), "funding rate sign");
-        assert_eq!(e.matrix_row_g0.get(), cm::i(U256::from(1_041_666_666u64)), "G0 = b*m10/invLMD");
-        assert_eq!(e.matrix_row_g1.get(), cm::i(U256::from(2_083_333_332u64)), "G1 = b*m11/invLMD");
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).matrix_row_g0.get(), cm::i(U256::from(1_041_666_666u64)), "G0 = b*m10/invLMD");
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).matrix_row_g1.get(), cm::i(U256::from(2_083_333_332u64)), "G1 = b*m11/invLMD");
     }
 
     // update_fg stamps last_operation_timestamp itself and is idempotent within a block: a
@@ -501,8 +504,10 @@
         e.funding_rate_decimals.set(wad);
         e.liquidity_g_decimals.set(U256::from(10_000_000_000u64));
         e.liquidity_m_decimals.set(cm::i(U256::from(10_000u64) * wad));
-        e.liquidity_m10.set(cm::i(U256::from(10_000u64) * wad));
-        e.liquidity_m11.set(cm::i(U256::from(20_000u64) * wad));
+        // Epoch 0 must be live (m00 != 0) for update_fg to accrue G into it.
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m00.set(cm::i(U256::from(10_000u64) * wad));
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m10.set(cm::i(U256::from(10_000u64) * wad));
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m11.set(cm::i(U256::from(20_000u64) * wad));
         e.funding_rate.set(U256::ZERO);
         e.funding_rate_sign.set(true);
         e.last_operation_timestamp.set(U64::from(1000u64));
@@ -512,12 +517,272 @@
         assert_eq!(e.last_operation_timestamp.get(), U64::from(4600u64), "update_fg stamps the block timestamp");
         let fr_first = e.funding_rate.get();
         assert_eq!(fr_first, u256s("104166666666666000"), "funding settled once");
-        let g0_first = e.matrix_row_g0.get();
+        let g0_first = e.liquidity_epochs.getter(U256::ZERO).matrix_row_g0.get();
 
         // Second settle in the SAME block: idempotent early-return, nothing accumulates again.
         e.update_fg(price, U256::from(1000u64)).expect("second update_fg");
         assert_eq!(e.funding_rate.get(), fr_first, "no second funding accumulation within a block");
-        assert_eq!(e.matrix_row_g0.get(), g0_first, "G unchanged by the idempotent second call");
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).matrix_row_g0.get(), g0_first, "G unchanged by the idempotent second call");
+    }
+
+    // ---- Epoch lifecycle (2C: epoch-based liquidity matrix) ----
+
+    // A snapshot write rolls a fresh identity epoch once the current epoch's determinant has decayed
+    // below liquidity_m_decimals / 1e12: the new LP pins to the fresh epoch and the drained one retires.
+    #[test]
+    fn update_snapshots_rolls_epoch_on_determinant_decay() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        e.init_protocol_constants();
+        let d = e.liquidity_m_decimals.get();
+        // Collapse epoch 0's determinant far below the roll threshold.
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::ZERO);
+            ep.liquidity_m00.set(I256::ONE);
+            ep.liquidity_m11.set(I256::ONE);
+        }
+        let lp = addr(0x11);
+        e.update_snapshots(lp, U256::from(1000u64), U256::from(1000u64)).expect("update_snapshots");
+
+        assert_eq!(e.current_liquidity_epoch.get(), U256::from(1u64), "rolled to epoch 1");
+        assert_eq!(e.liquidity_position_epoch.getter(lp).get(), U256::from(1u64), "LP pinned to the fresh epoch");
+        assert_eq!(e.liquidity_epochs.getter(U256::from(1u64)).liquidity_m00.get(), d, "fresh epoch is Q80 identity");
+        assert_eq!(e.liquidity_epochs.getter(U256::from(1u64)).active_lp_count.get(), U256::from(1u64), "count on fresh epoch");
+        assert_eq!(e.oldest_active_liquidity_epoch.get(), U256::from(1u64), "empty epoch 0 retired");
+    }
+
+    // A roll that would push the active-epoch window to MAX_ACTIVE_LIQUIDITY_EPOCHS (8) reverts LECAP.
+    #[test]
+    fn roll_reverts_lecap_when_window_full() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        e.init_protocol_constants();
+        let d = e.liquidity_m_decimals.get();
+        // Full window [0..7]: each epoch initialized (m00 != 0) with a live LP refcount.
+        for id in 0u64..8 {
+            let mut ep = e.liquidity_epochs.setter(U256::from(id));
+            ep.liquidity_m00.set(d);
+            ep.liquidity_m11.set(d);
+            ep.active_lp_count.set(U256::from(1u64));
+        }
+        e.oldest_active_liquidity_epoch.set(U256::ZERO);
+        e.current_liquidity_epoch.set(U256::from(7u64));
+        // Decay the current epoch so a roll is attempted; the window is already 8 -> LECAP.
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::from(7u64));
+            ep.liquidity_m00.set(I256::ONE);
+            ep.liquidity_m11.set(I256::ONE);
+        }
+        assert_eq!(e.roll_liquidity_epoch_if_needed().unwrap_err(), err(b"LECAP"), "full window reverts LECAP");
+    }
+
+    // retire advances oldest past drained/uninitialized epochs, stopping at the first still-active one.
+    #[test]
+    fn retire_advances_oldest_past_drained_epochs() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        e.init_protocol_constants();
+        let d = e.liquidity_m_decimals.get();
+        // Epochs 0,1 drained (initialized, count 0); epoch 2 active; current = 3.
+        for id in 0u64..3 {
+            let mut ep = e.liquidity_epochs.setter(U256::from(id));
+            ep.liquidity_m00.set(d);
+            ep.liquidity_m11.set(d);
+        }
+        e.liquidity_epochs.setter(U256::from(2u64)).active_lp_count.set(U256::from(1u64));
+        e.current_liquidity_epoch.set(U256::from(3u64));
+        e.oldest_active_liquidity_epoch.set(U256::ZERO);
+
+        e.retire_inactive_liquidity_epochs();
+
+        assert_eq!(e.oldest_active_liquidity_epoch.get(), U256::from(2u64), "oldest advanced to the first active epoch");
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).liquidity_m00.get(), I256::ZERO, "epoch 0 freed");
+        assert_eq!(e.liquidity_epochs.getter(U256::from(1u64)).liquidity_m00.get(), I256::ZERO, "epoch 1 freed");
+    }
+
+    // The core determinant-collapse protection: an LP snapshotted in epoch 0 recovers against its OWN
+    // epoch's matrix, unaffected by a later (differently-scaled) epoch becoming current.
+    #[test]
+    fn stale_lp_recovers_against_its_own_epoch() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        e.init_protocol_constants();
+        let d = e.liquidity_m_decimals.get();
+        e.global_liquidity_stable.set(U256::from(1_000_000u64));
+        e.global_liquidity_asset.set(U256::from(1_000_000u64));
+        // Epoch 0: identity; a live LP whose fresh snapshot recovers to its initial (1000, 1000).
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::ZERO);
+            ep.liquidity_m00.set(d);
+            ep.liquidity_m11.set(d);
+            ep.active_lp_count.set(U256::from(1u64));
+        }
+        let lp = addr(0x21);
+        {
+            let mut p = e.liquidity_position.setter(lp);
+            p.snapshot_m00.set(d);
+            p.snapshot_m11.set(d);
+            p.initial_stable_balance.set(U256::from(1000u64));
+            p.initial_asset_balance.set(U256::from(1000u64));
+        }
+        // A later epoch 1 with a DOUBLED matrix becomes current; recovery must ignore it.
+        e.current_liquidity_epoch.set(U256::from(1u64));
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::from(1u64));
+            ep.liquidity_m00.set(d + d);
+            ep.liquidity_m11.set(d + d);
+            ep.active_lp_count.set(U256::from(1u64));
+        }
+
+        let (s, a) = e.get_lp_liquidity_balance(lp).expect("recover");
+        assert_eq!(s, U256::from(1000u64), "recovered against epoch 0, not the doubled current epoch");
+        assert_eq!(a, U256::from(1000u64), "recovered against epoch 0, not the doubled current epoch");
+    }
+
+    // update_fg accrues funding G into EVERY active epoch, each against its own matrix row — the
+    // central multi-epoch fan-out invariant on the funding write path.
+    #[test]
+    fn update_fg_accrues_g_into_all_active_epochs() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(4600);
+        let mut e = PerpEngine::from(&vm);
+        e.global_liquidity_asset.set(U256::from(6_000u64) * wad);
+        e.global_liquidity_stable.set(U256::from(18_000_000u64) * wad);
+        e.total_trader_exposure.set(U256::from(100u64) * wad);
+        e.total_trader_exposure_sign.set(true);
+        e.oracle_decimals.set(U64::from(100_000_000u64));
+        e.funding_c.set(U32::from(1_000_000u32));
+        e.funding_interval.set(U64::from(86_400u64));
+        e.funding_c_decimals.set(U256::from(100_000u64));
+        e.funding_rate_decimals.set(wad);
+        e.liquidity_g_decimals.set(U256::from(10_000_000_000u64)); // 1e10
+        e.liquidity_m_decimals.set(cm::i(U256::from(10_000u64) * wad)); // 1e22
+        let d = e.liquidity_m_decimals.get();
+        // Two active epochs with DISTINCT matrix rows (epoch 1's are 3x/2x epoch 0's) so their
+        // per-epoch G accrual (b * m1j / invLMD) must differ.
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::ZERO);
+            ep.liquidity_m00.set(d);
+            ep.liquidity_m10.set(cm::i(U256::from(10_000u64) * wad)); // 1e22
+            ep.liquidity_m11.set(cm::i(U256::from(20_000u64) * wad)); // 2e22
+            ep.active_lp_count.set(U256::from(1u64));
+        }
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::from(1u64));
+            ep.liquidity_m00.set(d);
+            ep.liquidity_m10.set(cm::i(U256::from(30_000u64) * wad)); // 3e22
+            ep.liquidity_m11.set(cm::i(U256::from(40_000u64) * wad)); // 4e22
+            ep.active_lp_count.set(U256::from(1u64));
+        }
+        e.current_liquidity_epoch.set(U256::from(1u64));
+        e.funding_rate.set(U256::ZERO);
+        e.funding_rate_sign.set(true);
+
+        e.update_fg(U256::from(300_000_000_000u64), U256::from(1000u64)).expect("update_fg");
+
+        // Epoch 0: b*m10/invLMD (m10 = 1e22 = invLMD) -> the single-epoch reference value.
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).matrix_row_g0.get(), cm::i(U256::from(1_041_666_666u64)), "epoch0 G0");
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).matrix_row_g1.get(), cm::i(U256::from(2_083_333_332u64)), "epoch0 G1");
+        // Epoch 1: rows are 3x/4x -> G scales 3x/4x, proving the loop uses each epoch's OWN matrix.
+        assert_eq!(e.liquidity_epochs.getter(U256::from(1u64)).matrix_row_g0.get(), cm::i(U256::from(3_124_999_998u64)), "epoch1 G0 = 3x");
+        assert_eq!(e.liquidity_epochs.getter(U256::from(1u64)).matrix_row_g1.get(), cm::i(U256::from(4_166_666_664u64)), "epoch1 G1 = 4x");
+    }
+
+    // apply_liquidity_matrix_update fans out to active epochs but SKIPS an inactive (activeLpCount==0)
+    // non-current epoch, so a trade never mutates an epoch no live LP is pinned to.
+    #[test]
+    fn apply_matrix_update_fans_out_and_skips_inactive_epochs() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        e.init_protocol_constants();
+        let d = e.liquidity_m_decimals.get();
+        // Epoch 0 active, epoch 1 inactive (count 0, non-current), epoch 2 active current.
+        for id in 0u64..3 {
+            let mut ep = e.liquidity_epochs.setter(U256::from(id));
+            ep.liquidity_m00.set(d);
+            ep.liquidity_m11.set(d);
+        }
+        e.liquidity_epochs.setter(U256::ZERO).active_lp_count.set(U256::from(1u64));
+        e.liquidity_epochs.setter(U256::from(2u64)).active_lp_count.set(U256::from(1u64));
+        e.oldest_active_liquidity_epoch.set(U256::ZERO);
+        e.current_liquidity_epoch.set(U256::from(2u64));
+
+        // Fee-kind update with a_x = d, a_y = 0: on identity (m10 = 0) each live epoch's m00 -> 2d.
+        e.apply_liquidity_matrix_update(d, I256::ZERO, 2);
+
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).liquidity_m00.get(), d + d, "active epoch 0 updated");
+        assert_eq!(e.liquidity_epochs.getter(U256::from(1u64)).liquidity_m00.get(), d, "inactive non-current epoch 1 skipped");
+        assert_eq!(e.liquidity_epochs.getter(U256::from(2u64)).liquidity_m00.get(), d + d, "active current epoch 2 updated");
+    }
+
+    // An incumbent LP re-snapshotting after a roll hands its refcount from the old epoch to the new
+    // one and re-captures its snapshot from the new epoch.
+    #[test]
+    fn update_snapshots_hands_off_refcount_across_epochs() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        e.init_protocol_constants();
+        let d = e.liquidity_m_decimals.get();
+        // Epoch 0 holds the incumbent LP; epoch 1 is a healthy (identity) current epoch.
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::ZERO);
+            ep.liquidity_m00.set(d);
+            ep.liquidity_m11.set(d);
+            ep.active_lp_count.set(U256::from(1u64));
+        }
+        let lp = addr(0x31);
+        {
+            let mut p = e.liquidity_position.setter(lp);
+            p.snapshot_m00.set(d);
+            p.snapshot_m11.set(d);
+            p.initial_stable_balance.set(U256::from(1000u64));
+            p.initial_asset_balance.set(U256::from(1000u64));
+        }
+        // posEpoch[lp] defaults to 0. A roll already advanced current to 1 (identity -> no re-roll).
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::from(1u64));
+            ep.liquidity_m00.set(d);
+            ep.liquidity_m11.set(d);
+        }
+        e.current_liquidity_epoch.set(U256::from(1u64));
+
+        e.update_snapshots(lp, U256::from(2000u64), U256::from(2000u64)).expect("hand-off");
+
+        assert_eq!(e.liquidity_position_epoch.getter(lp).get(), U256::from(1u64), "LP handed off to epoch 1");
+        assert_eq!(e.liquidity_epochs.getter(U256::from(1u64)).active_lp_count.get(), U256::from(1u64), "epoch 1 count incremented");
+        // Epoch 0 drained -> retired (freed, oldest advanced to 1).
+        assert_eq!(e.oldest_active_liquidity_epoch.get(), U256::from(1u64), "drained epoch 0 retired");
+    }
+
+    // A full exit (update_snapshots with 0,0) drops the LP snapshot and releases its epoch refcount.
+    #[test]
+    fn update_snapshots_full_exit_releases_epoch() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        e.init_protocol_constants();
+        let d = e.liquidity_m_decimals.get();
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::ZERO);
+            ep.liquidity_m00.set(d);
+            ep.liquidity_m11.set(d);
+            ep.active_lp_count.set(U256::from(1u64));
+        }
+        let lp = addr(0x41);
+        {
+            let mut p = e.liquidity_position.setter(lp);
+            p.snapshot_m00.set(d);
+            p.snapshot_m11.set(d);
+            p.initial_stable_balance.set(U256::from(1000u64));
+            p.initial_asset_balance.set(U256::from(1000u64));
+        }
+
+        e.update_snapshots(lp, U256::ZERO, U256::ZERO).expect("full exit");
+
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).active_lp_count.get(), U256::ZERO, "epoch 0 refcount released");
+        assert_eq!(e.liquidity_position.getter(lp).snapshot_m00.get(), I256::ZERO, "snapshot M cleared");
+        assert_eq!(e.liquidity_position.getter(lp).initial_stable_balance.get(), U256::ZERO, "initial balance cleared");
+        assert_eq!(e.liquidity_position_epoch.getter(lp).get(), U256::ZERO, "epoch association reset");
     }
 
     // Seeds a balanced engine (price 3000, stable 1.8e25, asset 6000e18) with the
@@ -547,8 +812,8 @@
         // liquidity matrix M = identity * liqMDec (det normalized 1)
         let liq_m_dec = U256::from(10_000u64) * wad; // 1e22
         e.liquidity_m_decimals.set(cm::i(liq_m_dec));
-        e.liquidity_m00.set(cm::i(liq_m_dec));
-        e.liquidity_m11.set(cm::i(liq_m_dec));
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m00.set(cm::i(liq_m_dec));
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m11.set(cm::i(liq_m_dec));
         // funding config (so update_fg / compute_funding_fee don't divide by zero)
         e.funding_rate_decimals.set(wad);
         e.liquidity_g_decimals.set(U256::from(10_000_000_000u64)); // 1e10
@@ -630,8 +895,8 @@
         let mut e = PerpEngine::from(&vm);
         let d = U256::from(10_000u64) * wad; // 1e22
         e.liquidity_m_decimals.set(cm::i(d));
-        e.liquidity_m00.set(cm::i(d));
-        e.liquidity_m11.set(cm::i(d));
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m00.set(cm::i(d));
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m11.set(cm::i(d));
         e.global_liquidity_stable.set(U256::from(18_000_000u64) * wad);
         e.global_liquidity_asset.set(U256::from(6_000u64) * wad);
 
@@ -674,8 +939,8 @@
         let mut e = PerpEngine::from(&vm);
         let d = U256::from(10_000u64) * wad; // 1e22
         e.liquidity_m_decimals.set(cm::i(d));
-        e.liquidity_m00.set(-cm::i(d)); // stable leg -> negative recovery
-        e.liquidity_m11.set(cm::i(d)); // asset leg  -> positive recovery
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m00.set(-cm::i(d)); // stable leg -> negative recovery
+        e.liquidity_epochs.setter(U256::ZERO).liquidity_m11.set(cm::i(d)); // asset leg  -> positive recovery
         e.global_liquidity_stable.set(U256::from(18_000_000u64) * wad);
         e.global_liquidity_asset.set(U256::from(6_000u64) * wad);
 
@@ -1570,8 +1835,8 @@
             let mut e = PerpEngine::from(&vm);
             let lpa = addr(0x01);
             // Valid current matrix = identity * scale; degenerate per-LP snapshot.
-            e.liquidity_m00.set(s);
-            e.liquidity_m11.set(s);
+            e.liquidity_epochs.setter(U256::ZERO).liquidity_m00.set(s);
+            e.liquidity_epochs.setter(U256::ZERO).liquidity_m11.set(s);
             e.liquidity_m_decimals.set(s);
             {
                 let mut lp = e.liquidity_position.setter(lpa);
@@ -1738,7 +2003,7 @@
         // fixed constants identical to the benchmark init
         assert_eq!(e.minimum_trade_size.get(), U256::from(48u64) * wad, "minimumTradeSize const");
         assert_eq!(e.mmr_decimals.get(), U256::from(1_000_000u64), "mmrDecimals const");
-        assert_eq!(e.liquidity_m00.get(), cm::i(U256::from_limbs([0u64, 65_536u64, 0, 0])), "identity M const (2^80)");
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).liquidity_m00.get(), cm::i(U256::from_limbs([0u64, 65_536u64, 0, 0])), "identity M const (2^80)");
         assert_eq!(e.funding_c.get(), U32::from(1_000_000u32), "fundingC const");
         assert!(e.has_role(keccak256("MOD_ROLE"), e.vm().msg_sender()), "deployer granted MOD_ROLE");
         assert!(e.initialized.get(), "initialized");
@@ -2211,8 +2476,8 @@
             assert_eq!(e.total_trader_exposure.get(), us("exposure"), "op {i} exposure");
             assert_eq!(e.total_trader_exposure_sign.get(), bs("exposureSign"), "op {i} exposureSign");
             assert_eq!(U256::from(e.last_operation_timestamp.get()), us("lastOpTs"), "op {i} lastOpTs");
-            assert_eq!(e.matrix_row_g0.get(), idecs(op["g0"].as_str().unwrap()), "op {i} g0");
-            assert_eq!(e.matrix_row_g1.get(), idecs(op["g1"].as_str().unwrap()), "op {i} g1");
+            assert_eq!(e.liquidity_epochs.getter(U256::ZERO).matrix_row_g0.get(), idecs(op["g0"].as_str().unwrap()), "op {i} g0");
+            assert_eq!(e.liquidity_epochs.getter(U256::ZERO).matrix_row_g1.get(), idecs(op["g1"].as_str().unwrap()), "op {i} g1");
             assert_eq!(e.insurance_fund.get(), us("insurance"), "op {i} insurance");
             assert_eq!(e.insurance_fund_sign.get(), bs("insuranceSign"), "op {i} insuranceSign");
             // acting user's virtual position
@@ -2279,12 +2544,12 @@
             assert_eq!(e.insurance_fund.get(), us("insurance"), "op {i} insurance");
             assert_eq!(e.insurance_fund_sign.get(), bs("insuranceSign"), "op {i} insuranceSign");
             // liquidity matrix M + row G
-            assert_eq!(e.liquidity_m00.get(), is("m00"), "op {i} m00");
-            assert_eq!(e.liquidity_m01.get(), is("m01"), "op {i} m01");
-            assert_eq!(e.liquidity_m10.get(), is("m10"), "op {i} m10");
-            assert_eq!(e.liquidity_m11.get(), is("m11"), "op {i} m11");
-            assert_eq!(e.matrix_row_g0.get(), is("g0"), "op {i} g0");
-            assert_eq!(e.matrix_row_g1.get(), is("g1"), "op {i} g1");
+            assert_eq!(e.liquidity_epochs.getter(U256::ZERO).liquidity_m00.get(), is("m00"), "op {i} m00");
+            assert_eq!(e.liquidity_epochs.getter(U256::ZERO).liquidity_m01.get(), is("m01"), "op {i} m01");
+            assert_eq!(e.liquidity_epochs.getter(U256::ZERO).liquidity_m10.get(), is("m10"), "op {i} m10");
+            assert_eq!(e.liquidity_epochs.getter(U256::ZERO).liquidity_m11.get(), is("m11"), "op {i} m11");
+            assert_eq!(e.liquidity_epochs.getter(U256::ZERO).matrix_row_g0.get(), is("g0"), "op {i} g0");
+            assert_eq!(e.liquidity_epochs.getter(U256::ZERO).matrix_row_g1.get(), is("g1"), "op {i} g1");
             // LP position
             let lp = e.liquidity_position.getter(user);
             assert_eq!(lp.initial_stable_balance.get(), us("initS"), "op {i} initS");
@@ -2368,8 +2633,8 @@
             assert_eq!(e.total_trader_exposure.get(), us("exposure"), "op {i} exposure");
             assert_eq!(e.total_trader_exposure_sign.get(), bs("exposureSign"), "op {i} exposureSign");
             assert_eq!(U256::from(e.last_operation_timestamp.get()), us("lastOpTs"), "op {i} lastOpTs");
-            assert_eq!(e.matrix_row_g0.get(), idecs(op["g0"].as_str().unwrap()), "op {i} g0");
-            assert_eq!(e.matrix_row_g1.get(), idecs(op["g1"].as_str().unwrap()), "op {i} g1");
+            assert_eq!(e.liquidity_epochs.getter(U256::ZERO).matrix_row_g0.get(), idecs(op["g0"].as_str().unwrap()), "op {i} g0");
+            assert_eq!(e.liquidity_epochs.getter(U256::ZERO).matrix_row_g1.get(), idecs(op["g1"].as_str().unwrap()), "op {i} g1");
             assert_eq!(e.insurance_fund.get(), us("insurance"), "op {i} insurance");
             assert_eq!(e.insurance_fund_sign.get(), bs("insuranceSign"), "op {i} insuranceSign");
             let p = e.user_virtual_trader_position.getter(user);

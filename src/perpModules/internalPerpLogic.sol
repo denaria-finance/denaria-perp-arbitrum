@@ -34,11 +34,14 @@ abstract contract InternalPerpLogic is PerpFunding, ReentrancyGuardTransient {
 
         // If user has no LP position, return (0,0)
         if (position.snapshotM[0][0] == 0) return (0, 0);
+        // Recover against the LP's OWN accounting epoch matrix M(t); a retired/empty epoch yields (0,0).
+        LiquidityEpoch storage epoch = liquidityEpochs[liquidityPositionEpoch[user]];
+        if (epoch.liquidityM[0][0] == 0) return (0, 0);
 
         // Recover the balance from the RAW forward snapshot M(t0) via the adjugate (no stored
         // inverse): M(t) * adj(M(t0)) * v(t0) / det(M(t0)). Reverts MDET when det(M(t0)) <= 0.
         (int256 stableResult, int256 assetResult) = MatrixMath.recoverLpBalanceFromSnapshot(
-            liquidityM,
+            epoch.liquidityM,
             position.snapshotM,
             position.initialStableBalance,
             position.initialAssetBalance,
@@ -63,9 +66,43 @@ abstract contract InternalPerpLogic is PerpFunding, ReentrancyGuardTransient {
     function _updateSnapshots(address user, uint256 newInitialStableBalance, uint256 newInitialAssetBalance) internal {
         userVirtualTraderPosition[user].initialFundingRate = fundingRate;
         userVirtualTraderPosition[user].initialFundingRateSign = fundingRateSign;
-        liquidityPosition[user].snapshotG = matrixRowG;
-        liquidityPosition[user].initialStableBalance = newInitialStableBalance;
-        liquidityPosition[user].initialAssetBalance = newInitialAssetBalance;
+
+        LiquidityPosition storage position = liquidityPosition[user];
+        bool hadActiveSnapshot = _hasActiveLiquiditySnapshot(position);
+        uint256 oldEpochId = liquidityPositionEpoch[user];
+
+        // Full exit: drop the snapshot, release its epoch refcount, and retire drained epochs.
+        if (newInitialStableBalance == 0 && newInitialAssetBalance == 0) {
+            if (hadActiveSnapshot) {
+                liquidityEpochs[oldEpochId].activeLpCount -= 1;
+            }
+            position.initialStableBalance = 0;
+            position.initialAssetBalance = 0;
+            delete position.snapshotM;
+            delete position.snapshotG;
+            delete liquidityPositionEpoch[user];
+            _retireInactiveLiquidityEpochs();
+            return;
+        }
+
+        // Roll BEFORE choosing the target epoch, then attach the snapshot to the current epoch.
+        _rollLiquidityEpochIfNeeded();
+
+        uint256 newEpochId = currentLiquidityEpoch;
+        if (!hadActiveSnapshot) {
+            liquidityEpochs[newEpochId].activeLpCount += 1;
+        } else if (oldEpochId != newEpochId) {
+            liquidityEpochs[oldEpochId].activeLpCount -= 1;
+            liquidityEpochs[newEpochId].activeLpCount += 1;
+        }
+
+        position.snapshotG = liquidityEpochs[newEpochId].matrixRowG;
+        position.snapshotM = liquidityEpochs[newEpochId].liquidityM;
+        position.initialStableBalance = newInitialStableBalance;
+        position.initialAssetBalance = newInitialAssetBalance;
+        liquidityPositionEpoch[user] = newEpochId;
+
+        _retireInactiveLiquidityEpochs();
     }
 
     ///@dev Computes the PnL for a user at a given oracle price.

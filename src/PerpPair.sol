@@ -77,9 +77,7 @@ contract PerpPair is PerpLiquidation {
         emaParam = _emaParam;
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
         _grantRole(MOD_ROLE, _msgSender());
-        liquidityM = [
-            [int256(1) * decimals.liquidityMDecimals, int256(0) * decimals.liquidityMDecimals],
-            [int256(0) * decimals.liquidityMDecimals, int256(1) * decimals.liquidityMDecimals]
-        ];
+        // Bootstrap epoch 0 to the Q80 identity matrix; currentLiquidityEpoch/oldestActiveLiquidityEpoch default to 0.
+        _initializeLiquidityEpoch(0);
     }
 }

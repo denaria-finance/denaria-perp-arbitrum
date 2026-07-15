@@ -125,13 +125,10 @@ sol_storage! {
         uint256 long_curve_parameter_a;
         uint256 long_curve_parameter_b;
 
-        // --- liquidity matrix M (flattened 2x2) + funding row G (flattened) ---
-        int256 liquidity_m00;
-        int256 liquidity_m01;
-        int256 liquidity_m10;
-        int256 liquidity_m11;
-        int256 matrix_row_g0;
-        int256 matrix_row_g1;
+        // --- LP accounting epochs: the per-epoch liquidity matrix M (flattened 2x2) and funding row
+        // G (flattened) live in liquidity_epochs; these two pointers bound the active epoch window. ---
+        uint256 current_liquidity_epoch;
+        uint256 oldest_active_liquidity_epoch;
 
         // --- Decimals (config) ---
         uint256 mmr_decimals;
@@ -152,6 +149,8 @@ sol_storage! {
         // --- positions / per-user data ---
         mapping(address => VirtualTraderPosition) user_virtual_trader_position;
         mapping(address => LiquidityPosition) liquidity_position;
+        mapping(address => uint256) liquidity_position_epoch;
+        mapping(uint256 => LiquidityEpoch) liquidity_epochs;
         mapping(address => AutoCloseData) auto_close_users_data;
 
         // --- AccessControl role membership (OZ-style): role => account => member ---
@@ -191,6 +190,16 @@ sol_storage! {
         uint256 loss_th;
         uint256 max_slippage;
         uint256 max_liq_fee;
+    }
+
+    pub struct LiquidityEpoch {
+        int256 liquidity_m00;
+        int256 liquidity_m01;
+        int256 liquidity_m10;
+        int256 liquidity_m11;
+        int256 matrix_row_g0;
+        int256 matrix_row_g1;
+        uint256 active_lp_count;
     }
 }
 

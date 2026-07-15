@@ -55,7 +55,8 @@ contract PerpEngineRef is PerpPair {
     }
 
     function getG() external view returns (int256, int256) {
-        return (matrixRowG[0], matrixRowG[1]);
+        return
+            (liquidityEpochs[currentLiquidityEpoch].matrixRowG[0], liquidityEpochs[currentLiquidityEpoch].matrixRowG[1]);
     }
 
     function getInsurance() external view returns (uint256, bool) {

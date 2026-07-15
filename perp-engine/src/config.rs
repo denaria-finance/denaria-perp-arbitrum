@@ -43,8 +43,9 @@ impl PerpEngine {
         // The adjugate snapshot recovery keys its fast path off `liquidityMDecimals <= 2^80`.
         let liq_m_dec = U256::from_limbs([0u64, 65_536u64, 0, 0]); // 2^80 = 2^16 << 64
         self.liquidity_m_decimals.set(cm::i(liq_m_dec));
-        self.liquidity_m00.set(cm::i(liq_m_dec));
-        self.liquidity_m11.set(cm::i(liq_m_dec));
+        // Bootstrap LP accounting epoch 0 to the Q80 identity matrix; the current/oldest epoch
+        // pointers default to 0. All subsequent matrix/funding state lives per epoch.
+        self.initialize_liquidity_epoch(U256::ZERO);
         // Decimals matching the real PerpPair constructor:
         // Decimals(1e6,1e6,1e6,1e10,1e18,1e5,2^80,1e18,1e24).
         self.mmr_decimals.set(U256::from(1_000_000u64)); // 1e6

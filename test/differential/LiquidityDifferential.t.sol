@@ -38,11 +38,13 @@ contract PerpLiquidityRef is PerpPair {
     { }
 
     function getM() external view returns (int256, int256, int256, int256) {
-        return (liquidityM[0][0], liquidityM[0][1], liquidityM[1][0], liquidityM[1][1]);
+        LiquidityEpoch storage e = liquidityEpochs[currentLiquidityEpoch];
+        return (e.liquidityM[0][0], e.liquidityM[0][1], e.liquidityM[1][0], e.liquidityM[1][1]);
     }
 
     function getG() external view returns (int256, int256) {
-        return (matrixRowG[0], matrixRowG[1]);
+        return
+            (liquidityEpochs[currentLiquidityEpoch].matrixRowG[0], liquidityEpochs[currentLiquidityEpoch].matrixRowG[1]);
     }
 
     function getInsurance() external view returns (uint256, bool) {

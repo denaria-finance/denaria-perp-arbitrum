@@ -205,8 +205,6 @@ impl PerpEngine {
         let (local_ff, local_ff_sign) = self.compute_funding_fee(user)?;
         let cur_fr = self.funding_rate.get();
         let cur_fr_sign = self.funding_rate_sign.get();
-        let g0 = self.matrix_row_g0.get();
-        let g1 = self.matrix_row_g1.get();
 
         if direction {
             let (exp, exp_s) = cm::signed_sum(
@@ -222,11 +220,8 @@ impl PerpEngine {
             self.total_trader_exposure_sign.set(exp_s);
         }
 
-        {
-            let mut lp = self.liquidity_position.setter(user);
-            lp.snapshot_g0.set(g0);
-            lp.snapshot_g1.set(g1);
-        }
+        // Re-baseline the LP funding snapshot against the user's own epoch (a no-op for a pure trader).
+        self.refresh_lp_funding_snapshot(user);
         {
             let mut pos = self.user_virtual_trader_position.setter(user);
             let (nff, nff_sign) =
@@ -272,24 +267,14 @@ impl PerpEngine {
             }
             let a_y = cm::i(cm::md(adj_size, liq_m_dec_u, asset_liq));
             let a_x = cm::i(cm::md(trade_return, liq_m_dec_u, asset_liq));
-            let m10 = self.liquidity_m10.get();
-            let m11 = self.liquidity_m11.get();
-            self.liquidity_m00.set(self.liquidity_m00.get() + a_y * m10 / liq_m_dec);
-            self.liquidity_m01.set(self.liquidity_m01.get() + a_y * m11 / liq_m_dec);
-            self.liquidity_m10.set(m10 - cm::div_ceil(a_x * m10, liq_m_dec));
-            self.liquidity_m11.set(m11 - cm::div_ceil(a_x * m11, liq_m_dec));
+            self.apply_liquidity_matrix_update(a_x, a_y, 0);
             self.global_liquidity_stable.set(self.global_liquidity_stable.get() + adj_size);
             self.global_liquidity_asset.set(self.global_liquidity_asset.get() - trade_return);
         } else {
             let net_return = short_total_trade_return - fee_lp_share;
             let a_x = cm::i(cm::md(size, liq_m_dec_u, stable_liq));
             let a_y = cm::i(cm::md(net_return, liq_m_dec_u, stable_liq));
-            let m00 = self.liquidity_m00.get();
-            let m01 = self.liquidity_m01.get();
-            self.liquidity_m10.set(self.liquidity_m10.get() + a_x * m00 / liq_m_dec);
-            self.liquidity_m11.set(self.liquidity_m11.get() + a_x * m01 / liq_m_dec);
-            self.liquidity_m00.set(m00 - cm::div_ceil(a_y * m00, liq_m_dec));
-            self.liquidity_m01.set(m01 - cm::div_ceil(a_y * m01, liq_m_dec));
+            self.apply_liquidity_matrix_update(a_x, a_y, 1);
             self.global_liquidity_stable.set(self.global_liquidity_stable.get() - net_return);
             self.global_liquidity_asset.set(self.global_liquidity_asset.get() + size);
         }

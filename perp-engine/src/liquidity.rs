@@ -3,25 +3,84 @@ use super::*;
 
 #[allow(dead_code)]
 impl PerpEngine {
-    /// Solidity `internalPerpLogic._updateSnapshots`: stamp the position's
-    /// initial funding rate and the LP's matrix-row G + initial shares.
-    pub(crate) fn update_snapshots(&mut self, user: Address, new_initial_stable: U256, new_initial_asset: U256) {
+    /// Solidity `internalPerpLogic._updateSnapshots`: stamp the position's initial funding rate and,
+    /// for a live LP, capture the current accounting epoch's matrix M(t0)/row G + initial shares while
+    /// maintaining the epoch refcount, rolling a fresh epoch when the current matrix has decayed, and
+    /// retiring drained epochs. A full exit (0,0) drops the snapshot and releases its epoch.
+    pub(crate) fn update_snapshots(
+        &mut self,
+        user: Address,
+        new_initial_stable: U256,
+        new_initial_asset: U256,
+    ) -> Result<(), Vec<u8>> {
         let fr = self.funding_rate.get();
         let frs = self.funding_rate_sign.get();
-        let g0 = self.matrix_row_g0.get();
-        let g1 = self.matrix_row_g1.get();
         {
             let mut pos = self.user_virtual_trader_position.setter(user);
             pos.initial_funding_rate.set(fr);
             pos.initial_funding_rate_sign.set(frs);
         }
+
+        let had_active = self.has_active_liquidity_snapshot(user);
+        let old_epoch_id = self.liquidity_position_epoch.getter(user).get();
+
+        // Full exit: drop the snapshot, release its epoch refcount, and retire drained epochs.
+        if new_initial_stable == U256::ZERO && new_initial_asset == U256::ZERO {
+            if had_active {
+                self.decrement_active_lp_count(old_epoch_id);
+            }
+            {
+                let mut lp = self.liquidity_position.setter(user);
+                lp.initial_stable_balance.set(U256::ZERO);
+                lp.initial_asset_balance.set(U256::ZERO);
+                lp.snapshot_m00.set(I256::ZERO);
+                lp.snapshot_m01.set(I256::ZERO);
+                lp.snapshot_m10.set(I256::ZERO);
+                lp.snapshot_m11.set(I256::ZERO);
+                lp.snapshot_g0.set(I256::ZERO);
+                lp.snapshot_g1.set(I256::ZERO);
+            }
+            self.liquidity_position_epoch.setter(user).set(U256::ZERO);
+            self.retire_inactive_liquidity_epochs();
+            return Ok(());
+        }
+
+        // Roll BEFORE choosing the target epoch, then attach the snapshot to the current epoch.
+        self.roll_liquidity_epoch_if_needed()?;
+
+        let new_epoch_id = self.current_liquidity_epoch.get();
+        if !had_active {
+            self.increment_active_lp_count(new_epoch_id);
+        } else if old_epoch_id != new_epoch_id {
+            self.decrement_active_lp_count(old_epoch_id);
+            self.increment_active_lp_count(new_epoch_id);
+        }
+
+        let (em00, em01, em10, em11, eg0, eg1) = {
+            let e = self.liquidity_epochs.getter(new_epoch_id);
+            (
+                e.liquidity_m00.get(),
+                e.liquidity_m01.get(),
+                e.liquidity_m10.get(),
+                e.liquidity_m11.get(),
+                e.matrix_row_g0.get(),
+                e.matrix_row_g1.get(),
+            )
+        };
         {
             let mut lp = self.liquidity_position.setter(user);
-            lp.snapshot_g0.set(g0);
-            lp.snapshot_g1.set(g1);
+            lp.snapshot_g0.set(eg0);
+            lp.snapshot_g1.set(eg1);
+            lp.snapshot_m00.set(em00);
+            lp.snapshot_m01.set(em01);
+            lp.snapshot_m10.set(em10);
+            lp.snapshot_m11.set(em11);
             lp.initial_stable_balance.set(new_initial_stable);
             lp.initial_asset_balance.set(new_initial_asset);
         }
+        self.liquidity_position_epoch.setter(user).set(new_epoch_id);
+        self.retire_inactive_liquidity_epochs();
+        Ok(())
     }
 
     /// Solidity `perpLiquidity._distributeLiquidityFee`: split the removal fee
@@ -38,12 +97,7 @@ impl PerpEngine {
             let fee_stable = cm::md(fee_value, gs, total_liq_value);
             let a_x = cm::i(cm::md(fee_stable, liq_m_dec_u, gs));
             let a_y = cm::i(cm::md(fee_value - fee_stable, liq_m_dec_u, ga));
-            let m00 = self.liquidity_m00.get();
-            let m01 = self.liquidity_m01.get();
-            let m10 = self.liquidity_m10.get();
-            let m11 = self.liquidity_m11.get();
-            self.liquidity_m00.set(m00 + (a_y * m10 + a_x * m00) / liq_m_dec);
-            self.liquidity_m01.set(m01 + (a_y * m11 + a_x * m01) / liq_m_dec);
+            self.apply_liquidity_matrix_update(a_x, a_y, 2);
             self.global_liquidity_stable.set(gs + fee_value);
         }
     }
@@ -77,21 +131,8 @@ impl PerpEngine {
             pos.funding_fee_sign.set(nffs);
         }
 
-        self.update_snapshots(user, lp_stable_balance - stable_to_remove, lp_asset_balance - asset_to_remove);
-
-        // Store the RAW forward matrix M(t0) snapshot (adjugate recovery defers the inverse to
-        // read time); no materialized inverse, no det-zero write-side revert.
-        {
-            let (m00, m01, m10, m11) = (
-                self.liquidity_m00.get(), self.liquidity_m01.get(),
-                self.liquidity_m10.get(), self.liquidity_m11.get(),
-            );
-            let mut lp = self.liquidity_position.setter(user);
-            lp.snapshot_m00.set(m00);
-            lp.snapshot_m01.set(m01);
-            lp.snapshot_m10.set(m10);
-            lp.snapshot_m11.set(m11);
-        }
+        // Snapshot new values into the current accounting epoch (captures M(t0)/G, initials, epoch id).
+        self.update_snapshots(user, lp_stable_balance - stable_to_remove, lp_asset_balance - asset_to_remove)?;
 
         let gs = self.global_liquidity_stable.get();
         let ga = self.global_liquidity_asset.get();
@@ -229,39 +270,24 @@ impl PerpEngine {
         liquidity_stable += old_lp_stable;
         liquidity_asset += old_lp_asset;
 
-        self.update_snapshots(sender, U256::ZERO, U256::ZERO);
-        {
-            let mut lp = self.liquidity_position.setter(sender);
-            lp.initial_stable_balance.set(liquidity_stable);
-            lp.initial_asset_balance.set(liquidity_asset);
-        }
-
         // Rebase the global liquidity by the incumbent LP balance only when the pool is non-empty
-        // (an empty pool has nothing to subtract). Then store the RAW forward matrix M(t0) snapshot
-        // unconditionally — on an empty pool `liquidity_m` is still the identity * scale from init,
-        // so this reproduces the old empty-pool bootstrap without a special case.
+        // (an empty pool has nothing to subtract).
         if self.global_liquidity_asset.get() != U256::ZERO || self.global_liquidity_stable.get() != U256::ZERO {
             let gs = self.global_liquidity_stable.get();
             let ga = self.global_liquidity_asset.get();
             self.global_liquidity_stable.set(gs - old_lp_stable);
             self.global_liquidity_asset.set(ga - old_lp_asset);
         }
-        {
-            let (m00, m01, m10, m11) = (
-                self.liquidity_m00.get(), self.liquidity_m01.get(),
-                self.liquidity_m10.get(), self.liquidity_m11.get(),
-            );
-            let mut lp = self.liquidity_position.setter(sender);
-            lp.snapshot_m00.set(m00);
-            lp.snapshot_m01.set(m01);
-            lp.snapshot_m10.set(m10);
-            lp.snapshot_m11.set(m11);
-        }
 
         let gs = self.global_liquidity_stable.get();
         self.global_liquidity_stable.set(gs + liquidity_stable);
         let ga = self.global_liquidity_asset.get();
         self.global_liquidity_asset.set(ga + liquidity_asset);
+
+        // Snapshot the LP into the current accounting epoch: captures the RAW forward matrix M(t0)/G
+        // from the epoch (on an empty pool the epoch matrix is still identity * scale, reproducing the
+        // old bootstrap), the new initial balances, and the epoch id / activeLpCount.
+        self.update_snapshots(sender, liquidity_stable, liquidity_asset)?;
 
         self.emit(LiquidityMoved {
             user: sender,

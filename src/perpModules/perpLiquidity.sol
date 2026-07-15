@@ -140,24 +140,21 @@ abstract contract PerpLiquidity is InternalPerpLogic {
             liquidityAsset += oldLpAssetBalance;
         }
 
-        _updateSnapshots(sender, 0, 0);
-
-        liquidityPos.initialStableBalance = liquidityStable;
-        liquidityPos.initialAssetBalance = liquidityAsset;
         // Rebase the global liquidity by the incumbent LP balance only when the pool is non-empty.
         if (globalLiquidityAsset != 0 || globalLiquidityStable != 0) {
             globalLiquidityStable -= oldLpStableBalance;
             globalLiquidityAsset -= oldLpAssetBalance;
         }
-        // Store the RAW forward matrix M(t0) snapshot (adjugate recovery defers the inverse to read
-        // time); on an empty pool liquidityM is still the identity * scale, reproducing the old
-        // bootstrap without a special case.
-        liquidityPos.snapshotM = liquidityM;
 
         unchecked {
             globalLiquidityStable += liquidityStable;
             globalLiquidityAsset += liquidityAsset;
         }
+
+        // Snapshot the LP into the current accounting epoch: captures the RAW forward matrix M(t0) and
+        // funding row G from the epoch (on an empty pool the epoch matrix is still the identity * scale,
+        // reproducing the old bootstrap), the new initial balances, and the epoch id / activeLpCount.
+        _updateSnapshots(sender, liquidityStable, liquidityAsset);
 
         emit LiquidityMoved(sender, liquidityStable, liquidityAsset, feeValue, true);
     }
@@ -220,11 +217,9 @@ abstract contract PerpLiquidity is InternalPerpLogic {
         (position.fundingFee, position.fundingFeeSign) =
             UtilMath.signedSum(position.fundingFee, position.fundingFeeSign, localFundingFee, localFundingFeeSign);
 
-        // Snapshot new values
+        // Snapshot new values into the current accounting epoch (captures M(t0)/G, initials, epoch id).
         _updateSnapshots(user, lpStableBalance - liquidityStableToRemove, lpAssetBalance - liquidityAssetToRemove);
         LiquidityPosition storage liqPosition = liquidityPosition[user];
-        // Store the RAW forward matrix M(t0) snapshot (no materialized inverse).
-        liqPosition.snapshotM = liquidityM;
 
         // Compute removal fee
         uint256 fee = FeeManager.computeLiquidityRemovalFee(
@@ -313,8 +308,7 @@ abstract contract PerpLiquidity is InternalPerpLogic {
                 int256 aY = SafeCast.toInt256(
                     (feeValue - feeStable) * SafeCast.toUint256(decimals.liquidityMDecimals) / globalLiquidityAsset
                 );
-                liquidityM[0][0] += (aY * liquidityM[1][0] + aX * liquidityM[0][0]) / decimals.liquidityMDecimals;
-                liquidityM[0][1] += (aY * liquidityM[1][1] + aX * liquidityM[0][1]) / decimals.liquidityMDecimals;
+                _applyLiquidityMatrixUpdate(aX, aY, 2);
                 globalLiquidityStable += feeValue;
             }
         }

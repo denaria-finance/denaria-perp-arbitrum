@@ -225,7 +225,8 @@ abstract contract PerpTrade is PerpLiquidity {
             // Store new snapshots
             userPosition.initialFundingRate = fundingRate;
             userPosition.initialFundingRateSign = fundingRateSign;
-            liquidityPosition[user].snapshotG = matrixRowG;
+            // Re-baseline the LP funding snapshot against the user's own epoch (no-op for a pure trader).
+            _refreshLpFundingSnapshot(user);
 
             if (direction) {
                 (totalTraderExposure, totalTraderExposureSign) =
@@ -269,13 +270,7 @@ abstract contract PerpTrade is PerpLiquidity {
                 aY = SafeCast.toInt256(adjSize * liqMDecU / assetLiq);
                 aX = SafeCast.toInt256(tradeReturn * liqMDecU / assetLiq);
 
-                int256 m10 = liquidityM[1][0];
-                int256 m11 = liquidityM[1][1];
-
-                liquidityM[0][0] += aY * m10 / liqMDec;
-                liquidityM[0][1] += aY * m11 / liqMDec;
-                liquidityM[1][0] = m10 - UtilMath.divCeil(aX * m10, liqMDec);
-                liquidityM[1][1] = m11 - UtilMath.divCeil(aX * m11, liqMDec);
+                _applyLiquidityMatrixUpdate(aX, aY, 0);
 
                 globalLiquidityStable += adjSize;
                 globalLiquidityAsset -= tradeReturn;
@@ -287,13 +282,7 @@ abstract contract PerpTrade is PerpLiquidity {
                 aX = SafeCast.toInt256(size * liqMDecU / stableLiq);
                 aY = SafeCast.toInt256(netReturn * liqMDecU / stableLiq);
 
-                int256 m00 = liquidityM[0][0];
-                int256 m01 = liquidityM[0][1];
-
-                liquidityM[1][0] += aX * m00 / liqMDec;
-                liquidityM[1][1] += aX * m01 / liqMDec;
-                liquidityM[0][0] = m00 - UtilMath.divCeil(aY * m00, liqMDec);
-                liquidityM[0][1] = m01 - UtilMath.divCeil(aY * m01, liqMDec);
+                _applyLiquidityMatrixUpdate(aX, aY, 1);
 
                 globalLiquidityStable -= netReturn;
                 globalLiquidityAsset += size;

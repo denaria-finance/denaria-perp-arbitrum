@@ -11,10 +11,16 @@ impl PerpEngine {
         if lp.snapshot_m00.get() == I256::ZERO {
             return Ok((U256::ZERO, U256::ZERO));
         }
+        // Recover against the LP's OWN accounting epoch matrix M(t); a retired/empty epoch yields (0,0).
+        let epoch_id = self.liquidity_position_epoch.getter(user).get();
+        let epoch = self.liquidity_epochs.getter(epoch_id);
+        if epoch.liquidity_m00.get() == I256::ZERO {
+            return Ok((U256::ZERO, U256::ZERO));
+        }
         // Recover the balance from the RAW forward snapshot M(t0) via the adjugate (no stored
         // inverse). `recover_lp_balance_from_snapshot` reverts MDET when det(M(t0)) ≤ 0.
         let (stable_signed, asset_signed) = cm::recover_lp_balance_from_snapshot(
-            self.liquidity_m00.get(), self.liquidity_m01.get(), self.liquidity_m10.get(), self.liquidity_m11.get(),
+            epoch.liquidity_m00.get(), epoch.liquidity_m01.get(), epoch.liquidity_m10.get(), epoch.liquidity_m11.get(),
             lp.snapshot_m00.get(), lp.snapshot_m01.get(), lp.snapshot_m10.get(), lp.snapshot_m11.get(),
             lp.initial_stable_balance.get(),
             lp.initial_asset_balance.get(),
