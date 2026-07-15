@@ -1,0 +1,24 @@
+# cargo-audit configuration.
+#
+# The gate is meant to fail on NEWLY introduced advisories. The IDs below are the current
+# known set: each is either build-time-only (proc-macro / tooling), not present in the
+# deployed engine's runtime dependency tree, or verified non-reachable. Re-review this list
+# on every dependency bump — remove an entry once the underlying dependency is fixed.
+
+[advisories]
+ignore = [
+  # ruint: RUSTSEC-2025-0137 is NOT reachable (the affected reciprocal_mg10 path is unused and
+  # ordinary division normalizes the divisor first). stylus-sdk deliberately constrains ruint
+  # below 1.17 (1.17 broke SDK storage encoding), so do NOT force-upgrade. Track an
+  # SDK-compatible fix upstream.
+  "RUSTSEC-2025-0137",
+  # quinn-proto: not in the engine's runtime dependency tree (transitive tooling dependency only).
+  "RUSTSEC-2026-0185",
+  # Unmaintained build-time proc-macros pulled transitively by the SDK/tooling (no runtime surface):
+  "RUSTSEC-2024-0370", # proc-macro-error
+  "RUSTSEC-2024-0388", # derivative
+  "RUSTSEC-2024-0436", # paste
+  # Unsound/unmaintained advisories in build/tooling dependencies, not the engine runtime:
+  "RUSTSEC-2026-0173",
+  "RUSTSEC-2026-0190",
+]

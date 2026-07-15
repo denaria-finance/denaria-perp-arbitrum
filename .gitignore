@@ -32,3 +32,9 @@ abi/
 plotData/
 reports/
 LocalServer/node_modules/
+
+# Deploy-artifact pipeline outputs (build_deploy_artifact.sh) + SBOM + Nitro E2E addresses
+engine.Oz.wasm
+deploy-artifact-report.txt
+*.cdx.json
+nitro-addresses.json

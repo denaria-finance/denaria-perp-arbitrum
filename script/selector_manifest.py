@@ -95,6 +95,10 @@ def extract_stylus():
                     break
             name = fm.group(1)
             selname = sel if sel else camel(name)
+            if selname == "constructor":  # a Stylus #[constructor] is deploy-time init, not a runtime ABI selector
+                sel = None
+                i += 1
+                continue
             abis = []
             for a in (x.strip() for x in acc[start + 1:end].split(",") if x.strip()):
                 if a.startswith("&self") or a.startswith("&mut self") or ":" not in a:
@@ -104,6 +108,12 @@ def extract_stylus():
                 if base == "FixedBytes":  # FixedBytes<N> → bytesN (e.g. supportsInterface bytes4)
                     n = ty.split("<", 1)[1].split(">", 1)[0].strip()
                     abis.append(f"bytes{n}")
+                    continue
+                if base == "Vec":  # Vec<T> → T[] (e.g. batchLiquidateFor: Vec<Address> → address[])
+                    inner = ty.split("<", 1)[1].rsplit(">", 1)[0].strip().split("<")[0].strip()
+                    if inner not in RUST_TO_ABI:
+                        sys.exit(f"UNMAPPED Vec inner type {inner!r} in {name}")
+                    abis.append(f"{RUST_TO_ABI[inner]}[]")
                     continue
                 if base not in RUST_TO_ABI:
                     sys.exit(f"UNMAPPED Rust type {base!r} in {name}")
@@ -128,15 +138,11 @@ def extract_solidity():
 # Same canonical signature on both engines → identical 4-byte selector (full parity).
 # (Derived as sol_sigs ∩ stylus_sigs; listed here so a drift fails the check.)
 
-# Same function, DIVERGENT selector: the Stylus governance setters flatten the
-# Solidity `ClampParameters` struct (a 3-field tuple) into 3 inline uint256 args, which
-# changes the selector. Governance-only (MOD_ROLE); not on the manager/production path.
-DIVERGENT = {
-    "prepareTimeLockedParameters(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,(uint256,uint256,uint256),uint256,uint256)":
-        "prepareTimeLockedParameters(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)",
-    "setTimeLockedParameters(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,(uint256,uint256,uint256),uint256,uint256)":
-        "setTimeLockedParameters(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)",
-}
+# Same function, DIVERGENT selector: previously the Stylus governance setters flattened the
+# Solidity `ClampParameters` struct into inline uint256 args. The funding-clamp removal deleted
+# `ClampParameters` from BOTH sides, so `prepareTimeLockedParameters`/`setTimeLockedParameters`
+# now share an identical signature again (they fall in `supported`). No divergent selectors remain.
+DIVERGENT = {}
 
 # Intentionally NOT exposed on the Stylus engine (documented gaps), grouped by reason.
 #
@@ -152,9 +158,13 @@ UNSUPPORTED = {
     # Redundant funding alias dropped to fit under the activation cap: the FE and UtilMath
     # use _computeFundingFee; nothing calls the no-arg-rate convenience variant.
     "computeFundingFee(address)",
+    # Standalone getters CONSOLIDATED into ReadFees/ReadParameters on the engine (the getter
+    # consolidation) — the Solidity reference still declares them individually.
+    "ReadFundingParameters()", "ReadInsuranceFund()", "fundingRate()", "fundingRateSign()",
+    "totalTraderExposure()", "totalTraderExposureSign()",
     # Storage views still dropped (not needed on-chain: UtilMath probes curveMathAdapter
     # via a TOLERANT staticcall with a graceful linked-CurveMath fallback).
-    "trustedForwarder()", "autoCloseUsersData(address)", "curveMathAdapter()",
+    "trustedForwarder()", "curveMathAdapter()",
     # Collateral now lives in the Vault; FE reads Vault.getUserTotalCollateral and UtilMath
     # resolves the Vault via ReadParameters()[0].
     "getCollateral(address)",
@@ -176,13 +186,11 @@ ADDITIONS = {
     "disableAutoCloseFor(address)",
     # Settable trusted forwarder (OZ's is immutable).
     "setTrustedForwarder(address)",
-    # Initializer (no Stylus #[constructor]). The benchmark entrypoints
-    # (initializeBenchmark/seedBenchmarkState) live in a cfg-gated NON-#[public] impl,
-    # so they are not additions and the brace-depth extractor correctly excludes them.
-    "initializeProduction(address,address,address,uint256,bytes32,uint32,uint32,address,uint256,uint256,uint256)",
-    # Flattened-clamp governance setters (the Stylus side of DIVERGENT).
-    "prepareTimeLockedParameters(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)",
-    "setTimeLockedParameters(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)",
+    # Batch liquidation (keeper convenience; no Solidity counterpart). The initializer is a
+    # Stylus #[constructor] (deploy-time, not a selector) so it is excluded by the extractor;
+    # the benchmark entrypoints (initializeBenchmark/seedBenchmarkState) live in a cfg-gated
+    # NON-#[public] impl, so they are not additions either.
+    "batchLiquidateFor(address,address[],uint256[],bytes)",
 }
 
 

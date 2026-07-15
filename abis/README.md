@@ -9,7 +9,7 @@ Network: Arbitrum Sepolia (`421614`).
 
 | Contract | ABI file | Address | Notes |
 | --- | --- | --- | --- |
-| `PerpEngine` | `PerpEngine.json` | `0xC46E6F46B24177Cc0B3A0D14f005b8AB24B9A600` | Stylus WASM engine ABI generated from `perp-engine`; reproducible artifact hash `957e7cd6...`; not fully Arbiscan source-verified via managed Stylus flow |
+| `PerpEngine` | `PerpEngine.json` | `0xC46E6F46B24177Cc0B3A0D14f005b8AB24B9A600` | Stylus WASM engine ABI of the **deployed** engine at this address (reproducible artifact hash `957e7cd6...`), **not** the current `perp-engine` source — it is intentionally pinned to the live contract and is regenerated only on redeploy; not fully Arbiscan source-verified via managed Stylus flow |
 | `CallBatcher` | `CallBatcher.json` | `0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c` | Solidity read batcher; source-verified; redeployed 2026-06-19 to read collateral from the Vault instead of `PerpEngine.getCollateral` |
 | `StylusPerpMultiCalls` | `StylusPerpMultiCalls.json` | `0xF52Ea4c86501a9428ddC5CbD1637831C997f3986` | Solidity manager / trusted forwarder; source-verified |
 | `Vault` | `Vault.json` | `0xCBcb733D0c6D550026F50e9d7F7F0470105eC2Ac` | Solidity collateral custody; source-verified |

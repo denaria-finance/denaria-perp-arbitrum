@@ -24,7 +24,18 @@
 //! internal_logic).
 
 #![cfg_attr(not(any(test, feature = "export-abi")), no_main)]
-#![allow(clippy::too_many_arguments)]
+// Deliberately-allowed clippy lints: the `SET*`/config guards use `if !(a && b && ...)` and
+// `== true` shapes that MIRROR the Solidity `require(a && b && ...)` reference for line-by-line
+// parity/readability (nonminimal_bool, bool_comparison); the multi-field getter tuples must match
+// the Solidity ABI return shapes (type_complexity); a few `x = x + y` reads clearer inline
+// (assign_op_pattern). These are style choices, not defects.
+#![allow(
+    clippy::too_many_arguments,
+    clippy::nonminimal_bool,
+    clippy::bool_comparison,
+    clippy::type_complexity,
+    clippy::assign_op_pattern
+)]
 
 // `stub_boundary` replaces oracle/Vault boundary calls with test constants; it must
 // never reach a deployable artifact. Native host tests (target_arch != wasm32) are

@@ -1,5 +1,9 @@
 name: CI
 
+# NOTE (supply-chain hardening): pinning third-party actions to immutable commit SHAs is
+# recommended (actions/checkout, foundry-rs/foundry-toolchain). They are left on version tags
+# here for readability; pin to SHAs when tightening the release process.
+
 on:
   push:
   pull_request:
@@ -61,15 +65,112 @@ jobs:
           python3 script/selector_dependency_audit.py
         id: selector_audit
 
+      # Selector MANIFEST: classify every Solidity-reference selector as supported / divergent /
+      # intentionally-unsupported, and require every Stylus-only selector to be a declared
+      # addition. Catches silent ABI drift between the reference and the engine surface.
+      - name: Selector manifest (Solidity <-> Stylus classification)
+        run: |
+          python3 script/selector_manifest.py
+        id: selector_manifest
+
       # The deployed contract is the Rust/WASM PerpEngine, but CI previously ran only the
       # Foundry suite — the engine and curve-math crates (the real deployed logic, with their
       # unit/differential/golden-vector tests) were ungated. rust-toolchain.toml pins the
       # toolchain (auto-installed on first cargo call). `stub_boundary` mocks the oracle
       # boundary so the oracle-path tests (trade/close/liquidation/funding) execute; without
-      # it they compile out.
+      # it they compile out. `--locked` fails if Cargo.lock is stale.
       - name: Run Rust engine + curve-math tests
         run: |
           rustc --version
-          cargo test -p denaria-curve-math-stylus
-          cargo test -p denaria-perp-engine-stylus --features stub_boundary
+          cargo test --locked -p denaria-curve-math-stylus
+          cargo test --locked -p denaria-perp-engine-stylus --features stub_boundary
         id: rust_test
+
+      # Clippy with warnings denied. The crates carry justified crate-level allows for the
+      # deliberately-Solidity-mirroring boolean shapes and ABI tuple returns; anything else is
+      # a hard failure. (NOTE: `cargo fmt --check` is intentionally NOT a gate — the Rust
+      # sources do not follow rustfmt's default style, and forge fmt covers the Solidity side.)
+      - name: Clippy (deny warnings)
+        run: |
+          rustup component add clippy
+          cargo clippy --locked -p denaria-curve-math-stylus -- -D warnings
+          cargo clippy --locked -p denaria-perp-engine-stylus --features stub_boundary -- -D warnings
+        id: clippy
+
+  supply-chain:
+    name: Supply-chain (advisories + SBOM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # RustSec advisory scan. `.cargo/audit.toml` grandfathers the current known advisories
+      # (each build-time-only / not in the engine runtime tree / non-reachable, with rationale),
+      # so this gate fails only on NEWLY introduced advisories.
+      - name: cargo audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+        id: audit
+
+      # CycloneDX SBOM as a release inventory. Best-effort: never fails the build.
+      - name: Generate SBOM (CycloneDX)
+        continue-on-error: true
+        run: |
+          cargo install cargo-cyclonedx --locked
+          cargo cyclonedx --format json
+        id: sbom
+      - name: Upload SBOM
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: "**/*.cdx.json"
+
+  # H1 — canonical deploy-artifact pipeline: build the verify-tree wasm, apply the pinned
+  # wasm-opt post-pass, structurally validate, and emit a size/fragment/provenance report.
+  # workflow_dispatch only (installs cargo-stylus + binaryen; the on-chain activation check
+  # needs an RPC and is left to the operator per the runbook).
+  deploy-artifact:
+    name: Deploy-artifact pipeline (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build + wasm-opt + validate + report
+        run: |
+          rustup component add rust-src
+          cargo install cargo-stylus --version 0.10.7 --locked
+          bash script/build_deploy_artifact.sh
+      - name: Upload optimized artifact + report
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-artifact
+          path: |
+            engine.Oz.wasm
+            deploy-artifact-report.txt
+
+  # H2 — Nitro mixed-VM end-to-end money-path lane. Heavy (docker + a ~3.5 GB Nitro image),
+  # so workflow_dispatch only; best run on a self-hosted runner. Codifies the real
+  # Stylus<->EVM boundary test (deploy engine + periphery, drive open->close on ArbOS 60).
+  nitro-e2e:
+    name: Nitro E2E (manual, heavy)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+      - name: Run the Nitro E2E money-path
+        run: |
+          rustup component add rust-src
+          cargo install cargo-stylus --version 0.10.7 --locked
+          bash script/nitro_e2e.sh

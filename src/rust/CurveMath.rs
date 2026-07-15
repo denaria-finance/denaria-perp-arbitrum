@@ -15,7 +15,9 @@
 //!
 
 #![cfg_attr(not(any(test, feature = "export-abi")), no_main)]
-#![allow(clippy::too_many_arguments)]
+// `nonminimal_bool` is allowed: the sign/branch guards mirror the Solidity reference's
+// explicit boolean form for line-by-line parity (see the porting notes above).
+#![allow(clippy::too_many_arguments, clippy::nonminimal_bool)]
 #[cfg(feature = "standalone-abi")]
 extern crate alloc;
 
