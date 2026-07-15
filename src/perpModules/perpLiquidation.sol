@@ -49,15 +49,10 @@ abstract contract PerpLiquidation is PerpAutoClose {
 
         (uint256 pnlBefore, bool pnlBeforeSign) = _calcPnLLiquidationSafe(user, spotPrice);
 
-        // accrue funding fees for both the user and the liquidator
-        (uint256 localFundingFee, bool localFundingFeeSign) = computeFundingFee(_msgSender());
-        (liquidatorPosition.fundingFee, liquidatorPosition.fundingFeeSign) = UtilMath.signedSum(
-            liquidatorPosition.fundingFee, liquidatorPosition.fundingFeeSign, localFundingFee, localFundingFeeSign
-        );
-        (localFundingFee, localFundingFeeSign) = computeFundingFee(user);
-        (userPosition.fundingFee, userPosition.fundingFeeSign) = UtilMath.signedSum(
-            userPosition.fundingFee, userPosition.fundingFeeSign, localFundingFee, localFundingFeeSign
-        );
+        // Settle funding for both the liquidator and the user AND refresh their LP snapshots into the
+        // current epoch, so a subsequent removeLiquidity / LP-liquidation can't re-harvest the interval.
+        _settleFundingAndUpdateSnapshots(_msgSender());
+        _settleFundingAndUpdateSnapshots(user);
 
         //withdraw fraction of user LP liquidity
         (uint256 stableLiquidity, uint256 assetLiquidity) = getLpLiquidityBalance(user);
@@ -68,13 +63,22 @@ abstract contract PerpLiquidation is PerpAutoClose {
             / UtilMath.diffAbs(assetLiquidity + userPosition.balanceAsset, userPosition.debtAsset + LpDebtAsset);
         bool expositionSide = assetLiquidity + userPosition.balanceAsset > userPosition.debtAsset + LpDebtAsset;
         if (stableLiquidity != 0 || assetLiquidity != 0) {
-            _removeLiquidity(
-                stableLiquidity * fraction / decimals.liquidationDecimals,
-                assetLiquidity * fraction / decimals.liquidationDecimals,
-                user,
-                spotPrice,
-                0
-            );
+            uint256 stableLiquidityToRemove = stableLiquidity * fraction / decimals.liquidationDecimals;
+            uint256 assetLiquidityToRemove = assetLiquidity * fraction / decimals.liquidationDecimals;
+            // For a net-long liquidation larger than the trader's own asset balance, pull enough asset
+            // liquidity to cover the LP debt + the liquidated size; revert LQ1 if the pool can't.
+            if (expositionSide && liquidatedPositionSize > userPosition.balanceAsset) {
+                uint256 requiredAssetLiquidityToRemove =
+                    LpDebtAsset + liquidatedPositionSize - userPosition.balanceAsset;
+                if (assetLiquidityToRemove < requiredAssetLiquidityToRemove) {
+                    assetLiquidityToRemove = requiredAssetLiquidityToRemove;
+                }
+                if (!(assetLiquidityToRemove <= assetLiquidity)) revert("LQ1");
+            }
+            // Skip a zero-amount removal (nothing to pull).
+            if (stableLiquidityToRemove != 0 || assetLiquidityToRemove != 0) {
+                _removeLiquidity(stableLiquidityToRemove, assetLiquidityToRemove, user, spotPrice, 0);
+            }
         }
 
         if (marginRatio <= MMR / 2) {
@@ -155,6 +159,8 @@ abstract contract PerpLiquidation is PerpAutoClose {
 
             uint256 dy = (decimals.liquidationDecimals - discount) * dyPrime / decimals.liquidationDecimals;
             uint256 insuranceFraction = discount / insFundFraction * dyPrime / decimals.liquidationDecimals;
+            // Guard the asset-balance subtraction against underflow (oversized net-long partial liq) -> clean LQ1.
+            if (!(userPosition.balanceAsset >= dAmount)) revert("LQ1");
             //transfer (dy, -dx) and (-dy, dx) between user and _msgSender
             userPosition.balanceAsset -= dAmount;
             liquidatorPosition.balanceAsset += dAmount;

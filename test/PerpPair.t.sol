@@ -1586,6 +1586,142 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         */
     }
 
+    function _toSignedValue(uint256 value, bool sign) private pure returns (int256) {
+        if (value == 0) return 0;
+        return sign ? int256(value) : -int256(value);
+    }
+
+    ///@dev Set up an LP-backed net-long position (bob is both an LP and a leveraged long) that is
+    ///     liquidatable after `elapsed`, so the liquidation exercises the LP-removal + funding-settle path.
+    function _setupLpBackedLiquidatableLong(
+        uint256 bobStableLiquidity,
+        uint256 bobAssetLiquidity,
+        uint256 elapsed
+    )
+        private
+        returns (address bob, uint256 liquidationSize)
+    {
+        uint256 initialPrice = 100 * oracleDecimals;
+        oracle.setPrice(initialPrice);
+
+        address alice = makeAddr("alice");
+        vm.prank(alice);
+        perpPair.addLiquidity(1_000_000 * 1e18, 10_000 * 1e18, maxUserLiquidityFee, fakeReport);
+
+        bob = makeAddr("bob");
+        vm.prank(bob);
+        perpPair.addLiquidity(bobStableLiquidity, bobAssetLiquidity, maxUserLiquidityFee, fakeReport);
+
+        vm.prank(bob);
+        Vault(vault).removeCollateral((2 * 10_000_000 - 60) * 1e18, fakeReport);
+
+        uint256 initialGuess = perpPair.globalLiquidityAsset();
+        vm.prank(bob);
+        perpPair.trade(true, 1000 * 1e18, 100 * 1e5, initialGuess, frontendAddress, 1, fakeReport);
+
+        skip(elapsed);
+        oracle.setPrice(95 * oracleDecimals);
+
+        (, uint256 lpAsset) = perpPair.getLpLiquidityBalance(bob);
+        (, uint256 balanceAsset,, uint256 debtAsset,,,,) = perpPair.userVirtualTraderPosition(bob);
+        (,,, uint256 lpDebtAsset) = perpPair.liquidityPosition(bob);
+
+        uint256 marginRatio = UtilMath.calcMR(
+            bob, 95 * oracleDecimals, address(perpPair), perpPair.getCollateral(bob), perpPair.lastOperationTimestamp()
+        );
+        assertLt(marginRatio, MMR, "setup is not liquidatable");
+
+        uint256 exposition = UtilMath.diffAbs(balanceAsset + lpAsset, debtAsset + lpDebtAsset);
+        liquidationSize = exposition * 40 / 100;
+    }
+
+    ///@dev Liquidating an LP-backed position must settle the trader's funding exactly once. A direct
+    ///     liquidate must yield the same trader funding + PnL as a manual updateLpSnapshot (which settles
+    ///     funding) immediately followed by the same liquidate.
+    function testLpLiquidationDoesNotDoubleSettleTraderFunding() public {
+        (address bob, uint256 liquidationSize) = _setupLpBackedLiquidatableLong(100 * 1e18, 1 * 1e18, 7 days);
+
+        uint256 snap = vm.snapshotState();
+        address charlie = makeAddr("charlie");
+
+        vm.prank(charlie);
+        perpPair.liquidate(bob, liquidationSize, fakeReport);
+        (,,,, uint256 directFundingFee, bool directFundingFeeSign,,) = perpPair.userVirtualTraderPosition(bob);
+        (uint256 directPnl, bool directPnlSign) = perpPair.calcPnL(bob, 95 * oracleDecimals);
+
+        assertTrue(vm.revertToState(snap), "snapshot restore before settled branch failed");
+
+        vm.prank(charlie);
+        perpPair.updateLpSnapshot(bob, fakeReport);
+        vm.prank(charlie);
+        perpPair.liquidate(bob, liquidationSize, fakeReport);
+        (,,,, uint256 settledFundingFee, bool settledFundingFeeSign,,) = perpPair.userVirtualTraderPosition(bob);
+        (uint256 settledPnl, bool settledPnlSign) = perpPair.calcPnL(bob, 95 * oracleDecimals);
+
+        assertEq(
+            _toSignedValue(directFundingFee, directFundingFeeSign),
+            _toSignedValue(settledFundingFee, settledFundingFeeSign),
+            "direct liquidation double-settled trader funding"
+        );
+        assertEq(
+            _toSignedValue(directPnl, directPnlSign),
+            _toSignedValue(settledPnl, settledPnlSign),
+            "direct liquidation changed victim pnl versus pre-settled control"
+        );
+    }
+
+    ///@dev A dust liquidation whose fraction rounds to zero must not remove any LP liquidity (skip-zero)
+    ///     and must not double-book the trader's funding.
+    function testDustLiquidationDoesNotDoubleBookFundingOrRemoveLp() public {
+        (address bob,) = _setupLpBackedLiquidatableLong(10 * 1e18, 1e17, 1 days);
+        perpPair.updateFG(fakeReport);
+
+        (uint256 lpStableBefore, uint256 lpAssetBefore) = perpPair.getLpLiquidityBalance(bob);
+        assertGt(lpStableBefore, 0, "victim needs stable LP balance");
+        assertGt(lpAssetBefore, 0, "victim needs asset LP balance");
+
+        (, uint256 balanceAsset,, uint256 debtAsset,,,,) = perpPair.userVirtualTraderPosition(bob);
+        (,,, uint256 lpDebtAsset) = perpPair.liquidityPosition(bob);
+        uint256 dustLiquidationSize = 1;
+        uint256 totalExposure = UtilMath.diffAbs(lpAssetBefore + balanceAsset, debtAsset + lpDebtAsset);
+        uint256 fraction = dustLiquidationSize * feeFractionDecimals / totalExposure;
+        assertEq(fraction, 0, "liquidation fraction should round to zero");
+
+        uint256 snapshotId = vm.snapshotState();
+        address charlie = makeAddr("charlie");
+
+        vm.prank(charlie);
+        perpPair.updateLpSnapshot(bob, fakeReport);
+        (,,,, uint256 baselineFunding, bool baselineFundingSign,,) = perpPair.userVirtualTraderPosition(bob);
+
+        assertTrue(vm.revertToState(snapshotId), "snapshot restore failed");
+
+        vm.prank(charlie);
+        perpPair.liquidate(bob, dustLiquidationSize, fakeReport);
+
+        (uint256 lpStableAfter, uint256 lpAssetAfter) = perpPair.getLpLiquidityBalance(bob);
+        assertEq(lpStableAfter, lpStableBefore, "dust liquidation should not remove stable LP");
+        assertEq(lpAssetAfter, lpAssetBefore, "dust liquidation should not remove asset LP");
+
+        (,,,, uint256 dustFunding, bool dustFundingSign,,) = perpPair.userVirtualTraderPosition(bob);
+        assertEq(
+            _toSignedValue(dustFunding, dustFundingSign),
+            _toSignedValue(baselineFunding, baselineFundingSign),
+            "dust liquidation double-booked trader funding"
+        );
+    }
+
+    ///@dev An oversized net-long liquidation whose required asset removal (LP debt + liquidated size
+    ///     minus the trader's own asset balance) exceeds the pool's asset liquidity must revert LQ1
+    ///     instead of over-pulling.
+    function testOversizedNetLongLiquidationRevertsLQ1() public {
+        (address bob,) = _setupLpBackedLiquidatableLong(100 * 1e18, 1 * 1e18, 7 days);
+        address charlie = makeAddr("charlie");
+        vm.expectRevert(bytes("LQ1"));
+        vm.prank(charlie);
+        perpPair.liquidate(bob, 10_000_000 * 1e18, fakeReport);
+    }
+
     ///@dev Test the base autoClosing feature in profit.
     ///@dev The auto-close lifecycle is observable via ToggledAutoClose: enabling emits the
     /// full config, disabling emits the cleared config with mode 0 in the last two fields.

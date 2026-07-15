@@ -80,23 +80,10 @@ impl PerpEngine {
         // PnL snapshot for the LiquidatedUser event (deltaPnl = pnlBefore - pnlAfter).
         let (pnl_before, pnl_before_sign) = self.calc_pnl_user_liquidation_safe(user, price)?;
 
-        // Funding fee for the liquidator, then the user.
-        let (lff, lffs) = self.compute_funding_fee(liquidator)?;
-        {
-            let mut lqp = self.user_virtual_trader_position.setter(liquidator);
-            let (nff, nffs) =
-                cm::signed_sum(lqp.funding_fee.get(), lqp.funding_fee_sign.get(), lff, lffs);
-            lqp.funding_fee.set(nff);
-            lqp.funding_fee_sign.set(nffs);
-        }
-        let (uff, uffs) = self.compute_funding_fee(user)?;
-        {
-            let mut up = self.user_virtual_trader_position.setter(user);
-            let (nff, nffs) =
-                cm::signed_sum(up.funding_fee.get(), up.funding_fee_sign.get(), uff, uffs);
-            up.funding_fee.set(nff);
-            up.funding_fee_sign.set(nffs);
-        }
+        // Settle funding for the liquidator, then the user, refreshing their LP snapshots into the
+        // current epoch so a subsequent removeLiquidity / LP-liquidation can't re-harvest the interval.
+        self.settle_funding_and_update_snapshots(liquidator)?;
+        self.settle_funding_and_update_snapshots(user)?;
 
         let (stable_liq, asset_liq) = self.get_lp_liquidity_balance(user)?;
         let lp_debt_asset = self.liquidity_position.getter(user).debt_asset.get();
@@ -107,9 +94,23 @@ impl PerpEngine {
         let fraction = cm::md(liquidated_position_size, liq_dec, denom);
         let exposition_side = (asset_liq + up_balance_asset) > (up_debt_asset + lp_debt_asset);
         if stable_liq != U256::ZERO || asset_liq != U256::ZERO {
-            self.remove_liquidity(
-                cm::md(stable_liq, fraction, liq_dec), cm::md(asset_liq, fraction, liq_dec), user, price, U256::ZERO,
-            )?;
+            let stable_to_remove = cm::md(stable_liq, fraction, liq_dec);
+            let mut asset_to_remove = cm::md(asset_liq, fraction, liq_dec);
+            // For a net-long liquidation larger than the trader's own asset balance, pull enough asset
+            // liquidity to cover the LP debt + the liquidated size; revert LQ1 if the pool can't.
+            if exposition_side && liquidated_position_size > up_balance_asset {
+                let required_asset_to_remove = lp_debt_asset + liquidated_position_size - up_balance_asset;
+                if asset_to_remove < required_asset_to_remove {
+                    asset_to_remove = required_asset_to_remove;
+                }
+                if !(asset_to_remove <= asset_liq) {
+                    return Err(err(b"LQ1"));
+                }
+            }
+            // Skip a zero-amount removal (nothing to pull).
+            if stable_to_remove != U256::ZERO || asset_to_remove != U256::ZERO {
+                self.remove_liquidity(stable_to_remove, asset_to_remove, user, price, U256::ZERO)?;
+            }
         }
 
         let mmr = U256::from(self.mmr.get());
@@ -287,6 +288,10 @@ impl PerpEngine {
             }
             let dy = cm::md(liq_dec - discount, dy_prime, liq_dec);
             let insurance_fraction = cm::md(discount / ins_fund_fraction, dy_prime, liq_dec);
+            // Guard the asset-balance subtraction against underflow (oversized net-long partial liq) -> clean LQ1.
+            if !(self.user_virtual_trader_position.getter(user).balance_asset.get() >= d_amount) {
+                return Err(err(b"LQ1"));
+            }
             {
                 let mut up = self.user_virtual_trader_position.setter(user);
                 let ba = up.balance_asset.get();
