@@ -82,7 +82,7 @@ impl PerpEngine {
         let (diff_asset, diff_asset_sign) = cm::signed_sum(balance_asset, true, debt_asset, false);
 
         let mut short_return = U256::ZERO;
-        let threshold = cm::md(U256::from(10u64).pow(U256::from(13u64)), oracle_dec, price);
+        let threshold = cm::md(U256::from(10_000_000_000_000u64), oracle_dec, price);
         if diff_asset > threshold {
             if use_spot_price {
                 short_return = cm::md(diff_asset, price, oracle_dec);

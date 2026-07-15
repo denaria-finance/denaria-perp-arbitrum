@@ -53,7 +53,7 @@ impl PerpEngine {
         self.liquidity_fee_decimals.set(U256::from(10_000_000_000u64)); // 1e10
         self.funding_rate_decimals.set(wad); // 1e18
         self.funding_c_decimals.set(U256::from(100_000u64)); // 1e5
-        self.liquidity_g_decimals.set(U256::from(10u64).pow(U256::from(24u64))); // 1e24
+        self.liquidity_g_decimals.set(U256::from(1_000_000_000_000_000_000u64) * U256::from(1_000_000u64)); // 1e24
         self.funding_c.set(U32::from(1_000_000u32)); // 10*1e5
         self.funding_interval.set(U64::from(86_400u64));
         self.param_time_lock.set(U64::from(10u64)); // real default

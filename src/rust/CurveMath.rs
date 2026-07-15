@@ -1042,7 +1042,7 @@ pub fn compute_liquidity_removal_fee(
     if initial_stable_liquidity == U256::ZERO || initial_asset_liquidity == U256::ZERO {
         return U256::ZERO;
     }
-    let ratio_decimals = U256::from(10u64).pow(U256::from(18u64)); // 1e18
+    let ratio_decimals = U256::from(1_000_000_000_000_000_000u64); // 1e18
     let ten_e18 = U256::from(10u64) * ratio_decimals; // 10e18
     // Fees waived if almost no liquidity is left in the pool.
     if (initial_stable_liquidity - stable_liquidity) < ten_e18
@@ -1126,7 +1126,7 @@ pub fn compute_liquidity_deposit_fee(
     if liquidity_max_fee == U256::ZERO {
         return U256::ZERO;
     }
-    let ratio_decimals = U256::from(10u64).pow(U256::from(18u64)); // 1e18
+    let ratio_decimals = U256::from(1_000_000_000_000_000_000u64); // 1e18
     let p;
     let p_prime;
     let p_second;
