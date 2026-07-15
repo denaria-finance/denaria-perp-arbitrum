@@ -112,12 +112,15 @@ More detail is in [docs/TESTING.md](docs/TESTING.md).
 
 The production-topology deploy is split intentionally:
 
-1. Build, deploy, activate, and cache the Stylus `perp-engine` WASM program.
-2. Set `PERP_ENGINE` and the Solidity periphery parameters in `.env`.
-3. Run `script/ArbitrumSepoliaProdDeploy.s.sol` to deploy and wire
+1. Set the Solidity periphery parameters in `.env`, then run
+   `script/ArbitrumSepoliaProdDeploy.s.sol` (with `PERP_ENGINE` unset) to deploy
    `StylusPerpMultiCalls`, `Vault`, and `LostAndFound`.
-4. Initialize the engine with `initializeProduction(...)`.
-5. Run the post-deploy read-surface smoke test before pointing any front-end at the stack.
+2. Build the Stylus `perp-engine` WASM program and deploy it via its `#[constructor]`,
+   passing the periphery addresses as constructor args — this activates and initializes the
+   engine atomically (no separate initializer call).
+3. Wire the periphery to the engine (`manager.initializeAddresses`,
+   `vault.initializeParameters`) and cache the program.
+4. Run the post-deploy read-surface smoke test before pointing any front-end at the stack.
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 

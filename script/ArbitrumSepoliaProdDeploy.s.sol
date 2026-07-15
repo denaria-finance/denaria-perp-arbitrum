@@ -13,12 +13,14 @@ import { StylusPerpMultiCalls } from "../src/manager/StylusPerpMultiCalls.sol";
 ///         `perp-engine` WASM program supplied via `PERP_ENGINE`.
 ///
 ///         IMPORTANT: Foundry's EVM cannot EXECUTE Stylus (WASM) contracts — a call to the
-///         engine reverts `OpcodeNotFound` in `forge script` simulation. So the engine's
-///         `initializeProduction(...)` (which sets trustedForwarder=manager and grants the
-///         deployer DEFAULT_ADMIN+MOD on the engine), all engine reads, and any engine role
-///         handoff are done via `cast` per the runbook — NOT here. This script only does the
-///         Solidity deploys + the Solidity-side wiring (`manager.initializeAddresses`,
-///         `vault.initializeParameters`, which merely store addresses) + Solidity asserts.
+///         engine reverts `OpcodeNotFound` in `forge script` simulation. The engine initializes
+///         atomically via its Stylus `#[constructor]` (deploy+activate+init through StylusDeployer,
+///         which closes the old public-initializer front-run window) — there is NO separate
+///         `initializeProduction` call. So this script deploys the Solidity periphery FIRST, and
+///         the engine is deployed AFTERWARDS with the periphery addresses as constructor args; the
+///         Solidity-side wiring (`manager.initializeAddresses` / `vault.initializeParameters`, which
+///         merely store the engine address) is then done via `cast` per the runbook. All engine
+///         reads and role handoff also go via `cast`.
 ///
 ///         All parameters are read from the environment unchanged; see docs/DEPLOYMENT.md.
 contract ArbitrumSepoliaProdDeploy is Script {
@@ -26,8 +28,12 @@ contract ArbitrumSepoliaProdDeploy is Script {
         uint256 deployerPk = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPk);
 
-        address engine = vm.envAddress("PERP_ENGINE");
-        require(engine != address(0) && engine.code.length > 0, "PERP_ENGINE not deployed/activated");
+        // PERP_ENGINE is OPTIONAL now: the engine initializes atomically via its Stylus
+        // `#[constructor]` (StylusDeployer), so the periphery is deployed FIRST and the engine
+        // afterwards with these addresses as constructor args. Leave PERP_ENGINE unset for that
+        // periphery-first flow (this script then logs the next steps). If PERP_ENGINE IS set
+        // (a pre-existing engine), the Solidity-side wiring is done inline as before.
+        address engine = vm.envOr("PERP_ENGINE", address(0));
         address oracle = vm.envAddress("EXISTING_ORACLE");
         require(oracle != address(0), "EXISTING_ORACLE not set");
         address stableCoin = vm.envAddress("STABLECOIN");
@@ -42,7 +48,7 @@ contract ArbitrumSepoliaProdDeploy is Script {
         vm.startBroadcast(deployerPk);
 
         // 1. Manager FIRST — its address is the Vault's immutable ERC2771 forwarder and the
-        //    engine's trustedForwarder (the latter set later via cast initializeProduction).
+        //    engine's trustedForwarder (passed to the engine constructor below).
         StylusPerpMultiCalls manager = new StylusPerpMultiCalls();
 
         // 2. Real Vault, with the manager as its (immutable) ERC2771 forwarder.
@@ -69,28 +75,44 @@ contract ArbitrumSepoliaProdDeploy is Script {
         // lost-and-found path reverts.
         lostAndFound.grantRole(lostAndFound.VAULT_ROLE(), address(vault));
 
-        // 4. Solidity-side wiring (pure storage setters — no engine call).
-        manager.initializeAddresses(engine, address(vault));
-        vault.initializeParameters(engine, address(lostAndFound));
+        // 4. Solidity-side wiring (pure storage setters — no engine call). Only possible once the
+        //    engine exists; in the periphery-first constructor flow it is done via cast afterwards.
+        bool haveEngine = engine != address(0) && engine.code.length > 0;
+        if (haveEngine) {
+            manager.initializeAddresses(engine, address(vault));
+            vault.initializeParameters(engine, address(lostAndFound));
+        }
 
         vm.stopBroadcast();
 
         // Solidity-only post-deploy assertions (the engine-side checks run via cast).
-        require(manager.perpPair() == engine, "manager.perpPair != engine");
-        require(manager.vault() == address(vault), "manager.vault != vault");
         require(
             lostAndFound.hasRole(lostAndFound.VAULT_ROLE(), address(vault)),
             "vault missing LostAndFound VAULT_ROLE"
         );
+        if (haveEngine) {
+            require(manager.perpPair() == engine, "manager.perpPair != engine");
+            require(manager.vault() == address(vault), "manager.vault != vault");
+        }
 
         console2.log("Deployer", deployer);
-        console2.log("PerpEngine (wasm, pre-deployed)", engine);
         console2.log("StylusPerpMultiCalls (manager)", address(manager));
         console2.log("Vault", address(vault));
         console2.log("LostAndFound", address(lostAndFound));
         console2.log("Oracle (existing)", oracle);
         console2.log("Stablecoin", stableCoin);
-        console2.log("NEXT (cast): engine.initializeProduction(oracle, vault, manager, MMR, ticker, feeFrontend, feeLP, feeProtocolAddr, tradingFee, flatTradingFee, emaParam)");
-        console2.log("THEN: cargo stylus cache bid <PERP_ENGINE>");
+        if (haveEngine) {
+            console2.log("PerpEngine (pre-existing, wired)", engine);
+        } else {
+            // Periphery-first flow: deploy the engine next, then wire it (cast).
+            console2.log("NEXT (1/2): deploy the engine via constructor with these args:");
+            console2.log("  admin=<governance/Safe>  oracle=", oracle);
+            console2.log("  vault=", address(vault));
+            console2.log("  multiCallManager=", address(manager));
+            console2.log("  (+ mmr, ticker, feeFrontend, feeLP, feeProtocolAddr, tradingFee, flatTradingFee, emaParam)");
+            console2.log("  cargo stylus deploy --wasm-file engine.Oz.wasm --constructor-signature 'constructor(address,address,address,address,uint256,bytes32,uint32,uint32,address,uint256,uint256,uint256)' --constructor-args <admin> <oracle> <vault> <manager> ...");
+            console2.log("NEXT (2/2, cast, after the engine is up):");
+            console2.log("  manager.initializeAddresses(<engine>, vault); vault.initializeParameters(<engine>, lostAndFound); then cargo stylus cache bid <engine> <BID>");
+        }
     }
 }

@@ -2043,12 +2043,13 @@
     fn initialize_production_parity_and_validation() {
         let wad = U256::from(WAD_U64);
         let ticker = B256::from(U256::from(0x455448u64)); // "ETH"
-        // Build a fresh engine + run initialize_production with the given params.
+        // Build a fresh engine + run the production constructor with the given params.
+        let admin = addr(0xAD);
         let go = |oracle, vault, fwd, mmr, ff: u64, fl: u64, fp, tf, flat| {
             let vm = TestVM::new();
             let mut e = PerpEngine::from(&vm);
-            let r = e.initialize_production(
-                oracle, vault, fwd, mmr, ticker, U32::from(ff as u32), U32::from(fl as u32), fp, tf, flat,
+            let r = e.constructor(
+                admin, oracle, vault, fwd, mmr, ticker, U32::from(ff as u32), U32::from(fl as u32), fp, tf, flat,
                 U256::from(90_000_000u64),
             );
             (e, r)
@@ -2073,7 +2074,9 @@
         assert_eq!(e.mmr_decimals.get(), U256::from(1_000_000u64), "mmrDecimals const");
         assert_eq!(e.liquidity_epochs.getter(U256::ZERO).liquidity_m00.get(), cm::i(U256::from_limbs([0u64, 65_536u64, 0, 0])), "identity M const (2^80)");
         assert_eq!(e.funding_c.get(), U32::from(1_000_000u32), "fundingC const");
-        assert!(e.has_role(keccak256("MOD_ROLE"), e.vm().msg_sender()), "deployer granted MOD_ROLE");
+        // Roles go to the EXPLICIT admin, not msg_sender (the StylusDeployer in production).
+        assert!(e.has_role(keccak256("MOD_ROLE"), addr(0xAD)), "admin granted MOD_ROLE");
+        assert!(e.has_role(B256::ZERO, addr(0xAD)), "admin granted DEFAULT_ADMIN_ROLE");
         assert!(e.initialized.get(), "initialized");
 
         // SET branches (each on a fresh engine)
@@ -2085,6 +2088,22 @@
         assert_eq!(go(v.0, v.1, v.2, v.3, v.4, v.5, v.6, U256::ZERO, U256::from(48u64) * wad).1, Err(err(b"SET6")), "flat fee too large -> SET6");
         assert_eq!(go(v.0, v.1, v.2, v.3, v.4, v.5, Address::ZERO, v.7, v.8).1, Err(err(b"SET7")), "feeProtocol=0 -> SET7");
         assert_eq!(go(v.0, v.1, v.2, U256::from(u64::MAX), v.4, v.5, v.6, v.7, v.8).1, Err(err(b"C")), "MMR > u32::MAX -> C");
+        // SET8: the trusted forwarder (multiCallManager) must be non-zero.
+        assert_eq!(go(v.0, v.1, Address::ZERO, v.3, v.4, v.5, v.6, v.7, v.8).1, Err(err(b"SET8")), "forwarder=0 -> SET8");
+        // SET6 checked multiplication: an enormous flatTradingFee overflows `flat*wad` and must
+        // revert MOV instead of wrapping under the bound (the audited U256-wrap parity gap).
+        let huge = U256::from(1u64) << 238;
+        assert_eq!(go(v.0, v.1, v.2, v.3, v.4, v.5, v.6, U256::ZERO, huge).1, Err(err(b"MOV")), "flat*wad overflow -> MOV");
+        // SET9: the explicit admin must be non-zero (fresh engine, admin=0).
+        {
+            let vm = TestVM::new();
+            let mut e = PerpEngine::from(&vm);
+            let r = e.constructor(
+                Address::ZERO, v.0, v.1, v.2, v.3, ticker, U32::from(v.4 as u32), U32::from(v.5 as u32), v.6, v.7, v.8,
+                U256::from(90_000_000u64),
+            );
+            assert_eq!(r, Err(err(b"SET9")), "admin=0 -> SET9");
+        }
     }
 
     // setUnguardedParameters: MOD_ROLE-gated (revert "AC" without it), then applies the
@@ -2180,11 +2199,11 @@
         ok.expect("funding_c == u32::MAX accepted");
         assert_eq!(e.funding_c.get(), U32::from(u32::MAX), "funding_c stored at boundary");
 
-        // initializeProduction: ema (u64) over-range reverts C
+        // production constructor: ema (u64) over-range reverts C
         let vm = TestVM::new();
         let mut e2 = PerpEngine::from(&vm);
-        let r = e2.initialize_production(
-            addr(0x01), addr(0x02), addr(0x03), U256::from(40_000u64), B256::ZERO, U32::from(300_000u32), U32::from(500_000u32),
+        let r = e2.constructor(
+            addr(0xAD), addr(0x01), addr(0x02), addr(0x03), U256::from(40_000u64), B256::ZERO, U32::from(300_000u32), U32::from(500_000u32),
             addr(0x04), U256::ZERO, U256::from(120_000_000_000_000_000u64), over_u64,
         );
         assert_eq!(r, Err(err(b"C")), "ema > u64::MAX -> C");

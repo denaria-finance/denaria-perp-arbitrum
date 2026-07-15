@@ -60,13 +60,14 @@ impl PerpEngine {
     }
 
     /// Common initializer tail: set `MOD_ROLE = keccak256("MOD_ROLE")`, grant
-    /// DEFAULT_ADMIN_ROLE (0x0) + MOD_ROLE to the deployer, and flip `initialized`.
-    pub(crate) fn finalize_init(&mut self) {
+    /// DEFAULT_ADMIN_ROLE (0x0) + MOD_ROLE to `admin`, and flip `initialized`. The admin is
+    /// passed explicitly (not read from `msg_sender()`) so the production `#[constructor]` — where
+    /// `msg_sender()` is the StylusDeployer — grants roles to the intended administrator.
+    pub(crate) fn finalize_init(&mut self, admin: Address) {
         let mod_role = keccak256("MOD_ROLE");
         self.mod_role.set(mod_role);
-        let deployer = self.vm().msg_sender();
-        self.grant_role_internal(B256::ZERO, deployer);
-        self.grant_role_internal(mod_role, deployer);
+        self.grant_role_internal(B256::ZERO, admin);
+        self.grant_role_internal(mod_role, admin);
         self.initialized.set(true);
     }
 

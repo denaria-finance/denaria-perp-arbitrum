@@ -71,9 +71,13 @@ PERP_ENGINE=<address> RPC="$ARBITRUM_SEPOLIA_RPC_URL" ./script/cache_keeper.sh
 Run it on a schedule (e.g. cron); a non-zero exit means the engine is not cached or is at
 eviction risk.
 
-## Solidity Periphery
+## Solidity Periphery + engine constructor
 
-Run the current deploy script after `PERP_ENGINE` is known:
+The engine initializes atomically through its Stylus `#[constructor]` (deploy + activate +
+initialize via StylusDeployer), so it is deployed AFTER the periphery and there is no separate
+`initializeProduction` call. Order:
+
+**1. Deploy the periphery first** (leave `PERP_ENGINE` unset so the script skips engine wiring):
 
 ```bash
 set -a
@@ -89,25 +93,31 @@ forge script script/ArbitrumSepoliaProdDeploy.s.sol:ArbitrumSepoliaProdDeploy \
   --etherscan-api-key "$ETHERSCAN_API_KEY"
 ```
 
-Foundry cannot execute Stylus WASM in local script simulation, so this script only deploys
-and wires the Solidity contracts. Initialize the engine separately with `cast`:
+Record the printed `manager`, `Vault`, and `LostAndFound` addresses.
+
+**2. Deploy the engine via its constructor**, passing the periphery addresses (`admin` is the
+governance/Safe address that receives DEFAULT_ADMIN + MOD roles):
 
 ```bash
-cast send "$PERP_ENGINE" \
-  "initializeProduction(address,address,address,uint256,bytes32,uint32,uint32,address,uint256,uint256,uint256)" \
-  "$EXISTING_ORACLE" \
-  "$VAULT" \
-  "$STYLUS_PERP_MULTICALLS" \
-  "$MMR" \
-  "$TICKER_ASSET_CURRENCY" \
-  "$FEE_FRONTEND" \
-  "$FEE_LP" \
-  "$FEE_PROTOCOL_ADDR" \
-  "$TRADING_FEE" \
-  "$FLAT_TRADING_FEE" \
-  "$EMA_PARAM" \
-  --rpc-url "$ARBITRUM_SEPOLIA_RPC_URL" \
-  --private-key "$PRIVATE_KEY"
+cargo stylus deploy \
+  --wasm-file engine.Oz.wasm \
+  --private-key "$PRIVATE_KEY" --endpoint "$ARBITRUM_SEPOLIA_RPC_URL" \
+  --constructor-signature "constructor(address,address,address,address,uint256,bytes32,uint32,uint32,address,uint256,uint256,uint256)" \
+  --constructor-args "$ADMIN" "$EXISTING_ORACLE" "$VAULT" "$STYLUS_PERP_MULTICALLS" \
+    "$MMR" "$TICKER_ASSET_CURRENCY" "$FEE_FRONTEND" "$FEE_LP" "$FEE_PROTOCOL_ADDR" \
+    "$TRADING_FEE" "$FLAT_TRADING_FEE" "$EMA_PARAM"
+# --constructor-args is variadic — keep it LAST. Confirm the engine is initialized afterwards
+# (e.g. `cast call $ENGINE 'MMR()(uint256)'` returns the configured value; $ADMIN holds the roles).
+```
+
+**3. Wire the periphery to the engine** with `cast` (stores the engine address), then cache it:
+
+```bash
+cast send "$STYLUS_PERP_MULTICALLS" "initializeAddresses(address,address)" "$PERP_ENGINE" "$VAULT" \
+  --rpc-url "$ARBITRUM_SEPOLIA_RPC_URL" --private-key "$PRIVATE_KEY"
+cast send "$VAULT" "initializeParameters(address,address)" "$PERP_ENGINE" "$LOST_AND_FOUND" \
+  --rpc-url "$ARBITRUM_SEPOLIA_RPC_URL" --private-key "$PRIVATE_KEY"
+cargo stylus cache bid "$PERP_ENGINE" "$BID" --endpoint "$ARBITRUM_SEPOLIA_RPC_URL" --private-key "$PRIVATE_KEY"
 ```
 
 ## Post-Deploy Gate

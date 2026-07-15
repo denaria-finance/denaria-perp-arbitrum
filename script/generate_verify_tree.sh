@@ -30,14 +30,14 @@ set -euo pipefail
 # Expected raw wasm from building THIS tree. The size matches a plain repo build
 # of the engine, but the sha256 differs on purpose: promoting the engine to the
 # workspace root changes Rust's crate-metadata hashes, so the tree has its own
-# deterministic, path-independent hash. NOTE: this ~306 KB tree wasm is NOT the
+# deterministic, path-independent hash. NOTE: this ~307 KB tree wasm is NOT the
 # deployed artifact and is OVER the ~283 KB activation cap by design — the deploy
-# artifact is this wasm run through `wasm-opt -Oz` (binaryen v119) to ~242 KB,
+# artifact is this wasm run through `wasm-opt -Oz` (binaryen v119) to ~243 KB,
 # which activates. Because cargo-stylus does not wasm-opt, `cargo stylus verify`
-# rebuilds to this ~306 KB tree and cannot reproduce the deployed 242 KB artifact;
+# rebuilds to this ~307 KB tree and cannot reproduce the deployed ~243 KB artifact;
 # re-derive the deployed bytes deterministically via the documented wasm-opt step.
-EXPECT_SIZE=306690
-EXPECT_SHA256=b6c15810e9837037337e6e8e797fd8997d0906f2fa46bebbc9111645c6b26cac
+EXPECT_SIZE=307479
+EXPECT_SHA256=91fe9892fa8754506f279da6452bf1f1d9b798c6588f12d33ec5c1d8c1687c88
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

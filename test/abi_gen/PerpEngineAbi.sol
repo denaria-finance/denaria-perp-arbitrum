@@ -7,21 +7,6 @@
 pragma solidity ^0.8.23;
 
 interface IPerpEngine {
-    function initializeProduction(
-        address oracle,
-        address vault,
-        address multi_call_manager,
-        uint256 mmr,
-        bytes32 ticker_asset_currency,
-        uint32 fee_frontend,
-        uint32 fee_lp,
-        address fee_protocol_addr,
-        uint256 trading_fee,
-        uint256 flat_trading_fee,
-        uint256 ema_param
-    )
-        external;
-
     function trade(
         bool direction,
         uint256 size,
@@ -112,11 +97,17 @@ interface IPerpEngine {
     )
         external;
 
+    function batchLiquidateFor(
+        address liquidator,
+        address[] memory users,
+        uint256[] memory liquidated_position_sizes,
+        bytes calldata unverified_report
+    )
+        external;
+
     function realizePnL(bytes calldata unverified_report) external returns (uint256, bool);
 
     function realizePnLFor(address user, bytes calldata unverified_report) external returns (uint256, bool);
-
-    function updateLpSnapshot(address user, bytes calldata unverified_report) external;
 
     function enableAutoClose(uint256 profit_th, uint256 loss_th, uint256 max_slippage, uint256 max_liq_fee) external;
 
@@ -143,10 +134,7 @@ interface IPerpEngine {
     )
         external;
 
-    function autoCloseUsersData(address user)
-        external
-        view
-        returns (bool authorized, uint256 profitTh, uint256 lossTh, uint256 maxSlippage, uint256 maxLiqFee);
+    function autoCloseUsersData(address user) external view returns (bool, uint256, uint256, uint256, uint256);
 
     function hasRole(bytes32 role, address account) external view returns (bool);
 
@@ -161,6 +149,8 @@ interface IPerpEngine {
     function isTrustedForwarder(address forwarder) external view returns (bool);
 
     function updateFG(bytes calldata unverified_report) external;
+
+    function updateLpSnapshot(address user, bytes calldata unverified_report) external;
 
     function prepareTimeLockedParameters(
         uint256 mmr,
@@ -208,6 +198,8 @@ interface IPerpEngine {
 
     function getPrice() external view returns (uint256);
 
+    function oracle() external view returns (address);
+
     function calcPnL(address user, uint256 price) external view returns (uint256, bool);
 
     function ReadParameters()
@@ -238,6 +230,15 @@ interface IPerpEngine {
 
     function maxLpLeverage() external view returns (uint256);
 
+    function marginCheckData(
+        address user,
+        uint256 price,
+        uint256 collateral
+    )
+        external
+        view
+        returns (uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256);
+
     function userVirtualTraderPosition(address user)
         external
         view
@@ -265,53 +266,4 @@ interface IPerpEngine {
         external
         view
         returns (uint256, bool);
-
-    event ExecutedTrade(
-        address indexed user,
-        bool direction,
-        uint256 tradeSize,
-        uint256 tradeReturn,
-        uint256 currentPrice,
-        uint256 leverage
-    );
-    event ClosedPosition(address indexed user, uint256 pnl, bool pnlSign);
-    event LiquidityMoved(
-        address indexed user, uint256 liquidityStable, uint256 liquidityAsset, uint256 fee, bool added
-    );
-    event LiquidatedUser(
-        address indexed user,
-        address liquidator,
-        uint256 fraction,
-        uint256 liquidationFee,
-        uint256 positionSize,
-        uint256 currentPrice,
-        int256 deltaPnl,
-        bool liquidationDirection
-    );
-    event ToggledAutoClose(
-        address indexed user, uint256 profitTh, uint256 lossTh, uint256 maxSlippage, uint256 maxLiqFee
-    );
-    event RealizedPnL(address indexed user, uint256 pnl, bool pnlSign);
-    event ParametersUpdated(
-        address _oracle,
-        uint256 _feeFrontend,
-        address _feeProtocolAddr,
-        uint256 _insuranceFundCap,
-        uint256 _maxLeverage,
-        uint256 _liquidationDiscount
-    );
-    event LockedParameterUpdate(
-        uint256 paramLockedUntil,
-        uint256 _MMR,
-        uint256 _tradingFee,
-        uint256 _flatTradingFee,
-        uint256 _feeLP,
-        uint256 _liquidityMinFee,
-        uint256 _liquidityMaxFee,
-        uint256 _liquidityFeeK,
-        uint256 _fundingC,
-        uint256 _paramTimeLock,
-        uint256 _minimumTradeSize
-    );
-    event TrustedForwarderUpdated(address indexed oldForwarder, address indexed newForwarder);
 }

@@ -224,18 +224,22 @@ sol_interface! {
 
 #[public]
 impl PerpEngine {
-    /// **Production initializer** — parity with the Solidity `PerpPair` constructor: takes
-    /// the full configurable parameter set and applies the constructor's `SET*` validation
-    /// (SET2 oracle≠0, SET3 vault≠0, SET1 fee-sum < feeFractionsDecimals, SET5 tradingFee
-    /// range, SET6 flat-fee bound, SET7 feeProtocol≠0; SET4 `_MMR ≥ 0` is vacuous → replaced
-    /// by the engine's u32 range narrowing, reverting `C`). The non-configurable protocol
-    /// constants (decimals, curve, clamp, identity liquidity matrix, funding/liquidation
-    /// defaults) are fixed exactly as the constructor hardcodes them. `multi_call_manager`
-    /// is the ERC2771 trusted forwarder.
-    #[selector(name = "initializeProduction")]
+    /// **Production constructor** — atomic deploy + activate + initialize via StylusDeployer,
+    /// so the engine cannot be seized by front-running a separate initializer transaction.
+    /// Parity with the Solidity `PerpPair` constructor: takes the full configurable parameter
+    /// set and applies the `SET*` validation (SET9 admin≠0, SET2 oracle≠0, SET3 vault≠0, SET8
+    /// forwarder≠0, SET1 fee-sum < feeFractionsDecimals, SET5 tradingFee range, SET6 flat-fee
+    /// bound, SET7 feeProtocol≠0; SET4 `_MMR ≥ 0` is vacuous → replaced by the engine's u32
+    /// range narrowing, reverting `C`). The non-configurable protocol constants (decimals,
+    /// curve, clamp, identity liquidity matrix, funding/liquidation defaults) are fixed exactly
+    /// as the constructor hardcodes them. `multi_call_manager` is the ERC2771 trusted forwarder.
+    /// `admin` receives DEFAULT_ADMIN_ROLE + MOD_ROLE and is passed explicitly: in a Stylus
+    /// constructor `msg_sender()` is the StylusDeployer, not the intended administrator.
+    #[constructor]
     #[allow(clippy::too_many_arguments)]
-    pub fn initialize_production(
+    pub fn constructor(
         &mut self,
+        admin: Address,
         oracle: Address,
         vault: Address,
         multi_call_manager: Address,
@@ -248,9 +252,8 @@ impl PerpEngine {
         flat_trading_fee: U256,
         ema_param: U256,
     ) -> Result<(), Vec<u8>> {
-        if self.initialized.get() {
-            return Err(err(b"INIT"));
-        }
+        // The SDK constructor wrapper guarantees single execution via its own storage slot;
+        // `finalize_init` still sets the `initialized` flag for op-gating reads.
         // Fixed protocol constants first, so the SET checks read the same
         // `feeFractionsDecimals`/`tradingFeeDecimals`/`minimumTradeSize` storage the
         // Solidity constructor reads.
@@ -259,11 +262,19 @@ impl PerpEngine {
         let fee_frac_dec = self.fee_fractions_decimals.get(); // 1e6
         let trading_fee_dec = self.trading_fee_decimals.get(); // 1e18
         let min_trade = self.minimum_trade_size.get(); // 48e18
+        // SET9: the explicit administrator must be non-zero (roles are granted to it below).
+        if admin == Address::ZERO {
+            return Err(err(b"SET9"));
+        }
         if oracle == Address::ZERO {
             return Err(err(b"SET2"));
         }
         if vault == Address::ZERO {
             return Err(err(b"SET3"));
+        }
+        // SET8: the trusted forwarder (multiCallManager) must be non-zero.
+        if multi_call_manager == Address::ZERO {
+            return Err(err(b"SET8"));
         }
         // SET1: feeFrontend + feeLP < feeFractionsDecimals (widen to U256 — no u32 overflow).
         if !(U256::from(fee_frontend) + U256::from(fee_lp) < fee_frac_dec) {
@@ -274,7 +285,12 @@ impl PerpEngine {
             return Err(err(b"SET5"));
         }
         // SET6: flatTradingFee*1e18 < (tradingFeeDecimals - tradingFee)*minimumTradeSize.
-        if !(flat_trading_fee * wad < (trading_fee_dec - trading_fee) * min_trade) {
+        // Checked multiplication: alloy U256 `*` wraps in release, but the Solidity 0.8
+        // reference reverts on overflow — match it so an out-of-range flatTradingFee cannot
+        // wrap under the bound.
+        let flat_scaled = flat_trading_fee.checked_mul(wad).ok_or_else(|| err(b"MOV"))?;
+        let bound = (trading_fee_dec - trading_fee).checked_mul(min_trade).ok_or_else(|| err(b"MOV"))?;
+        if !(flat_scaled < bound) {
             return Err(err(b"SET6"));
         }
         if fee_protocol_addr == Address::ZERO {
@@ -294,7 +310,7 @@ impl PerpEngine {
         self.flat_trading_fee.set(flat_trading_fee);
         // emaParam is uint256 in Solidity but stored narrowed to u64 here → range-revert `C`.
         self.ema_param.set(U64::from(u64::try_from(ema_param).map_err(|_| err(b"C"))?));
-        self.finalize_init();
+        self.finalize_init(admin);
         Ok(())
     }
 
@@ -705,10 +721,20 @@ impl PerpEngine {
         let one_e6 = U256::from(1_000_000u64);
         let one_e10 = U256::from(10_000_000_000u64);
         let wad = U256::from(WAD_U64);
+        // Check the ordering-sensitive bounds first (keeps `trading_fee_dec - trading_fee` from
+        // underflowing, exactly like the original `&&` short-circuit did).
         if !(mmr < one_e6
             && fee_lp <= fee_frac_dec - U256::from(self.fee_frontend.get())
-            && trading_fee < trading_fee_dec
-            && flat_trading_fee * wad < (trading_fee_dec - trading_fee) * minimum_trade_size
+            && trading_fee < trading_fee_dec)
+        {
+            return Err(err(b"C"));
+        }
+        // SET6 bound with checked multiplication: alloy U256 `*` wraps in release, but the
+        // Solidity 0.8 reference reverts on overflow — match it. `trading_fee < trading_fee_dec`
+        // holds here, so the subtraction cannot underflow.
+        let flat_scaled = flat_trading_fee.checked_mul(wad).ok_or_else(|| err(b"MOV"))?;
+        let fee_bound = (trading_fee_dec - trading_fee).checked_mul(minimum_trade_size).ok_or_else(|| err(b"MOV"))?;
+        if !(flat_scaled < fee_bound
             && liquidity_min_fee <= liquidity_max_fee
             && liquidity_max_fee <= one_e10)
         {
@@ -1091,7 +1117,9 @@ impl PerpEngine {
         self.flat_trading_fee.set(U256::from(120_000_000_000_000_000u64)); // 0.12e18
         self.ema_param.set(U64::from(90_000_000u64));
         self.init_protocol_constants();
-        self.finalize_init();
+        // Benchmark init is a direct (non-constructor) call, so the caller IS the admin.
+        let admin = self.vm().msg_sender();
+        self.finalize_init(admin);
         Ok(())
     }
 
