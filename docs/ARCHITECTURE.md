@@ -61,6 +61,27 @@ The engine uses a fresh packed storage layout rather than mirroring Solidity sto
 slot-for-slot. Narrowed fields are restricted to values whose protocol ranges fit the
 target integer width; WAD-scale and accumulating quantities remain full-width.
 
+## Arithmetic Overflow Parity
+
+Solidity 0.8 reverts on arithmetic overflow. The deployable WASM is built with
+`overflow-checks` off, and the underlying integer types wrap silently there rather than
+trap: `ruint` (`U256`) maps `+ - *` to unconditional `wrapping_*`, and `alloy` (`I256`)
+only traps under `debug-assertions`. Toggling the `overflow-checks` or `debug-assertions`
+profile flags does **not** restore the reverting behaviour for both types, so it is not a
+substitute for explicit checks.
+
+Because of this, the fund-critical fixed-point primitives in the Rust math crate use
+explicit checked arithmetic instead of the raw operators. The Q80 adjugate
+snapshot-recovery routines (`recover_lp_balance_from_snapshot`,
+`recover_funding_star_from_snapshot`) and the overflow-safe signed division
+(`sum_mul_div_signed`, `positive_determinant_fixed`) route every multiply/add/subtract/
+negate through checked helpers that return an `Error("MOV")` revert on overflow. This
+matches the Solidity reference's revert-on-overflow: an intermediate in the recovery fast
+path can grow large for a deep pool, and a silent wrap there would hand back a corrupted
+LP or funding balance instead of reverting. In the normal (non-overflow) operating range
+the checked helpers are value-identical to the raw operators, so the golden-vector
+differential against the Solidity reference remains bit-exact.
+
 ## Configuration Events
 
 The engine emits configuration-update events — `ParametersUpdated` and

@@ -686,6 +686,30 @@ fn abs_int(value: I256) -> U256 {
     }
 }
 
+// Checked arithmetic for the fund-critical snapshot-recovery primitives. The release/WASM
+// profile builds with `overflow-checks` off, and both ruint (`U256`) and alloy (`I256`) map
+// `+ - *` to silent `wrapping_*` there, whereas Solidity 0.8 reverts on overflow. In the raw
+// adjugate-recovery fast path an intermediate can reach ~2^240 for a deep pool, so a silent
+// wrap would hand back a corrupted balance instead of reverting. These helpers restore the
+// reference's revert-on-overflow: an overflow returns Err(b"MOV"), which the engine surfaces
+// as an Error("MOV") revert. In the non-overflow domain they are value-identical to the raw
+// operators, so every golden vector still matches bit-for-bit.
+fn cmul(a: I256, b: I256) -> Result<I256, Vec<u8>> {
+    a.checked_mul(b).ok_or_else(|| b"MOV".to_vec())
+}
+fn cadd(a: I256, b: I256) -> Result<I256, Vec<u8>> {
+    a.checked_add(b).ok_or_else(|| b"MOV".to_vec())
+}
+fn csub(a: I256, b: I256) -> Result<I256, Vec<u8>> {
+    a.checked_sub(b).ok_or_else(|| b"MOV".to_vec())
+}
+fn cneg(a: I256) -> Result<I256, Vec<u8>> {
+    a.checked_neg().ok_or_else(|| b"MOV".to_vec())
+}
+fn uadd(a: U256, b: U256) -> Result<U256, Vec<u8>> {
+    a.checked_add(b).ok_or_else(|| b"MOV".to_vec())
+}
+
 /// `floor(value*multiplier/denominator)` with sign, truncating toward zero. Bit-exact
 /// port of Solidity `MatrixMath.mulDivSigned` (magnitude via 512-bit mulDiv, sign reapplied).
 pub fn mul_div_signed(value: I256, multiplier: I256, denominator: I256) -> Result<I256, Vec<u8>> {
@@ -753,10 +777,10 @@ pub fn sum_mul_div_signed(
     }
 
     if first_positive == second_positive {
-        let mut quotient = first_quotient + second_quotient;
-        let remainder = first_remainder + second_remainder;
+        let mut quotient = uadd(first_quotient, second_quotient)?;
+        let remainder = uadd(first_remainder, second_remainder)?;
         if remainder >= abs_denominator {
-            quotient += U256::from(1u64);
+            quotient = uadd(quotient, U256::from(1u64))?;
         }
         let result = i(quotient);
         return Ok(if first_positive { result } else { -result });
@@ -794,7 +818,7 @@ fn positive_determinant_fixed(
     m11: I256,
     liquidity_m_decimals: I256,
 ) -> Result<I256, Vec<u8>> {
-    let det = sum_mul_div_signed(m00, m11, -m10, m01, liquidity_m_decimals)?;
+    let det = sum_mul_div_signed(m00, m11, cneg(m10)?, m01, liquidity_m_decimals)?;
     if !(det > I256::ZERO) {
         return Err(b"MDET".to_vec());
     }
@@ -823,15 +847,15 @@ pub fn recover_lp_balance_from_snapshot(
 
     if liquidity_m_decimals <= q80() {
         // Step 1: adj(M(t0)) * v(t0), with no division.
-        let u0 = d * p - b * q;
-        let u1 = -c * p + a * q;
+        let u0 = csub(cmul(d, p)?, cmul(b, q)?)?;
+        let u1 = cadd(cmul(cneg(c)?, p)?, cmul(a, q)?)?;
 
         // Step 2: M(t) * u, still with no division.
-        let z0 = current_m00 * u0 + current_m01 * u1;
-        let z1 = current_m10 * u0 + current_m11 * u1;
+        let z0 = cadd(cmul(current_m00, u0)?, cmul(current_m01, u1)?)?;
+        let z1 = cadd(cmul(current_m10, u0)?, cmul(current_m11, u1)?)?;
 
         // Step 3: det(M(t0)); det <= 0 means corrupted matrix state.
-        let det = snapshot_m00 * snapshot_m11 - snapshot_m10 * snapshot_m01;
+        let det = csub(cmul(snapshot_m00, snapshot_m11)?, cmul(snapshot_m10, snapshot_m01)?)?;
         if !(det > I256::ZERO) {
             return Err(b"MDET".to_vec());
         }
@@ -843,10 +867,10 @@ pub fn recover_lp_balance_from_snapshot(
     }
 
     // Larger Q scales need one bounded matrix-scale reduction before the LP vector is applied.
-    let n00 = sum_mul_div_signed(current_m00, d, -current_m01, c, liquidity_m_decimals)?;
-    let n01 = sum_mul_div_signed(-current_m00, b, current_m01, a, liquidity_m_decimals)?;
-    let n10 = sum_mul_div_signed(current_m10, d, -current_m11, c, liquidity_m_decimals)?;
-    let n11 = sum_mul_div_signed(-current_m10, b, current_m11, a, liquidity_m_decimals)?;
+    let n00 = sum_mul_div_signed(current_m00, d, cneg(current_m01)?, c, liquidity_m_decimals)?;
+    let n01 = sum_mul_div_signed(cneg(current_m00)?, b, current_m01, a, liquidity_m_decimals)?;
+    let n10 = sum_mul_div_signed(current_m10, d, cneg(current_m11)?, c, liquidity_m_decimals)?;
+    let n11 = sum_mul_div_signed(cneg(current_m10)?, b, current_m11, a, liquidity_m_decimals)?;
     let det_fixed = positive_determinant_fixed(a, b, c, d, liquidity_m_decimals)?;
     let stable_balance = sum_mul_div_signed(n00, p, n01, q, det_fixed)?;
     let asset_balance = sum_mul_div_signed(n10, p, n11, q, det_fixed)?;
@@ -873,28 +897,28 @@ pub fn recover_funding_star_from_snapshot(
 
     if liquidity_m_decimals <= q80() {
         // Step 1: adj(M(t0)) * v(t0), with no division.
-        let u0 = d * p - b * q;
-        let u1 = -c * p + a * q;
+        let u0 = csub(cmul(d, p)?, cmul(b, q)?)?;
+        let u1 = cadd(cmul(cneg(c)?, p)?, cmul(a, q)?)?;
 
         // Step 2: DeltaG * u, still with no division.
-        let z = delta_g0 * u0 + delta_g1 * u1;
+        let z = cadd(cmul(delta_g0, u0)?, cmul(delta_g1, u1)?)?;
 
         // Step 3: det(M(t0)); det <= 0 means corrupted matrix state.
-        let det = snapshot_m00 * snapshot_m11 - snapshot_m10 * snapshot_m01;
+        let det = csub(cmul(snapshot_m00, snapshot_m11)?, cmul(snapshot_m10, snapshot_m01)?)?;
         if !(det > I256::ZERO) {
             return Err(b"MDET".to_vec());
         }
 
         // Step 4: restore the matrix scale and remove the funding accumulator scale.
-        return mul_div_signed(z, liquidity_m_decimals, det * i(liquidity_g_decimals));
+        return mul_div_signed(z, liquidity_m_decimals, cmul(det, i(liquidity_g_decimals))?);
     }
 
     // Larger Q scales use the same bounded reduction as LP recovery.
-    let w0 = sum_mul_div_signed(delta_g0, d, -delta_g1, c, liquidity_m_decimals)?;
-    let w1 = sum_mul_div_signed(-delta_g0, b, delta_g1, a, liquidity_m_decimals)?;
-    let scaled_z = w0 * p + w1 * q;
+    let w0 = sum_mul_div_signed(delta_g0, d, cneg(delta_g1)?, c, liquidity_m_decimals)?;
+    let w1 = sum_mul_div_signed(cneg(delta_g0)?, b, delta_g1, a, liquidity_m_decimals)?;
+    let scaled_z = cadd(cmul(w0, p)?, cmul(w1, q)?)?;
     let det_fixed = positive_determinant_fixed(a, b, c, d, liquidity_m_decimals)?;
-    mul_div_signed(scaled_z, liquidity_m_decimals, det_fixed * i(liquidity_g_decimals))
+    mul_div_signed(scaled_z, liquidity_m_decimals, cmul(det_fixed, i(liquidity_g_decimals))?)
 }
 
 // -----------------------------------------------------------------------
@@ -1557,8 +1581,10 @@ mod parity {
 
     // Revert-parity guards for the new MatrixMath primitives — the reverting reference calls
     // cannot be carried as golden vectors (Solidity reverts rather than emitting a value), so
-    // they are pinned here: M0 on a zero denominator, and MDET on a non-positive snapshot
-    // determinant across BOTH the fast (Q80) and slow (Q88) recovery paths.
+    // they are pinned here: M0 on a zero denominator, MDET on a non-positive snapshot
+    // determinant across BOTH the fast (Q80) and slow (Q88) recovery paths, and MOV on a
+    // signed-arithmetic overflow (which the release/WASM profile would otherwise wrap silently,
+    // unlike Solidity 0.8's revert) in the raw fast path and the sum_mul_div carry.
     #[test]
     fn matrix_math_revert_guards() {
         let s = i(U256::from_limbs([0u64, 65_536u64, 0, 0])); // 2^80
@@ -1572,6 +1598,30 @@ mod parity {
         // M0: zero denominator.
         assert_eq!(mul_div_signed(one, one, z).unwrap_err(), b"M0".to_vec());
         assert_eq!(sum_mul_div_signed(one, one, one, one, z).unwrap_err(), b"M0".to_vec());
+
+        // MOV: a fast-path multiply that overflows I256 reverts instead of wrapping. With p ~ 2^179
+        // (a deep-pool initial balance) and d = 2^80, u0 = d*p ~ 2^259 overflows before the MDET
+        // check — the release profile would silently wrap this to a corrupted balance.
+        let big_p = u256("1000000000000000000000000000000000000000000000000000000"); // ~2^179
+        assert_eq!(
+            recover_lp_balance_from_snapshot(s, z, z, s, s, z, z, s, big_p, init_a, s).unwrap_err(),
+            b"MOV".to_vec(),
+            "fast-path LP recovery multiply overflow"
+        );
+        assert_eq!(
+            recover_funding_star_from_snapshot(one, one, s, z, z, s, big_p, init_a, s, g_dec).unwrap_err(),
+            b"MOV".to_vec(),
+            "fast-path funding-star recovery multiply overflow"
+        );
+        // MOV: the sum_mul_div_signed same-sign carry overflows U256. Each quotient is 2^255
+        // (floor(2^200 * 2^55 / 1)); their sum exceeds 2^256 and must revert, not wrap.
+        let v200 = i(U256::from_limbs([0, 0, 0, 1u64 << 8])); // 2^200
+        let m55 = i(U256::from(1u64 << 55)); // 2^55
+        assert_eq!(
+            sum_mul_div_signed(v200, m55, v200, m55, one).unwrap_err(),
+            b"MOV".to_vec(),
+            "sum_mul_div carry overflow"
+        );
 
         // MDET fast path (Q80): det == 0 and det < 0 in the snapshot matrix.
         assert_eq!(
