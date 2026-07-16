@@ -1,146 +1,80 @@
 # Verification
 
-The Solidity and Stylus verification paths are different and should not be described as
-one combined mechanism.
+The Solidity and Stylus verification paths are different and are described separately.
 
-## Solidity Contracts
+## Solidity contracts
 
-The latest Arbitrum Sepolia Solidity contracts are source-verified on Arbiscan:
+The Arbitrum Sepolia Solidity contracts are source-verified on Arbiscan via
+`forge script --verify` / `forge verify-contract` (with linked library addresses where
+needed):
 
-- `StylusPerpMultiCalls`
+- `StylusPerpMultiCalls` (manager)
 - `Vault`
 - `LostAndFound`
 - `CurveMath`
 - `UtilMath`
-- `TWAPOracleMiddleware`
+- `TWAPOracleMiddleware` (oracle)
 
-The Solidity verification flow uses `forge script --verify` or
-`forge verify-contract`, with linked library addresses where needed.
+Note on the oracle: the repository's `TWAPOracleMiddleware` dropped its vendored Chainlink
+dependency in favour of minimal local interfaces plus OpenZeppelin `SafeERC20`, so the
+current tree compiles to slightly different bytecode than a previously-deployed instance.
+At each stack redeploy the oracle is redeployed and re-verified from the current sources so
+repo and chain stay aligned.
 
-Note on the deployed oracle: after verification, the repository's
-`TWAPOracleMiddleware` dropped its vendored Chainlink dependency in favor of minimal
-local interfaces and the OpenZeppelin `SafeERC20`. The on-chain instance remains
-verified with its original sources (Arbiscan snapshots them), but the current tree
-compiles to slightly different bytecode — at the next stack redeploy the oracle should
-be redeployed and re-verified from the cleaned sources to realign repo and chain.
+## Stylus engine
 
-## Stylus Engine
+The deployed `PerpEngine` is a Rust/WASM Stylus program. Its **deploy artifact is a
+`wasm-opt`-optimised binary**, and this shapes how it is verified.
 
-The deployed `PerpEngine` is reproducibly buildable from the pinned repository toolchain:
+### Build recipe (reproducible)
 
-- `rust-toolchain.toml`: `nightly-2026-06-10`
-- `.cargo/config.toml`: WASM `build-std`, `-Cpanic=immediate-abort`, and
-  `-Zlocation-detail=none`
-- `stylus-sdk`: `0.10.7`
+- `rust-toolchain.toml`: `nightly-2025-09-01` (+ `rust-src`, `clippy`)
+- `.cargo/config.toml`: WASM `build-std` + `-Zlocation-detail=none` (so the binary carries
+  no local panic-location paths and is insensitive to comment/line edits)
+- `stylus-sdk`: `0.10.8`
+- Post-build optimisation: `wasm-opt -Oz` (Binaryen **version_119**, fixed flags) — see
+  `script/build_deploy_artifact.sh`
 
-The latest deployed engine artifact hash recorded for the Arbitrum Sepolia stack is:
+The build is two-stage:
 
-```text
-957e7cd63894c198f611d8e035b84b9586e9e70154bd463df2644b1a29bacaf4
-```
+1. `script/generate_verify_tree.sh --build` emits a small, mechanically-generated tree
+   (engine crate at the root, curve-math vendored as a child, test files stripped) and
+   builds the **raw** engine wasm. It fails if the source layout drifts or the wasm does
+   not match the recorded `EXPECT_SIZE` / `EXPECT_SHA256`.
+2. `script/build_deploy_artifact.sh` applies the pinned `wasm-opt -Oz` pass to that raw
+   wasm, validates it (`wasm-tools`), reports size / fragments / hashes, and (with an RPC)
+   runs the read-only `cargo stylus check` activation simulation.
 
-This is reproducible-build evidence, not full Arbiscan Stylus source verification.
+`cargo-stylus` does not run `wasm-opt`; it only brotli-compresses. The optimised artifact is
+therefore materially smaller than the raw build and is the binary that is actually deployed
+and that must activate.
 
-## Current Arbiscan Stylus Blocker
+### Why not Arbiscan managed source-verify
 
-Arbiscan's Stylus verification flow relies on cargo-stylus managed deployment metadata:
-cargo-stylus injects a project hash during managed builds, and verification rebuilds the
-source tree and compares that hash.
+Arbiscan's managed Stylus flow (and `cargo stylus verify`) rebuild the source tree and
+compare against the deployed bytes. Because the deployed artifact is the **post-`wasm-opt`**
+binary — which a plain source rebuild does not reproduce — the managed flow structurally
+cannot byte-match the deployment. **Do not present the wasm-opt'd engine as Arbiscan
+source-verified.**
 
-The current engine deployments were made from a prebuilt WASM file. That path does not
-inject the managed project hash, so those deployed engine instances cannot pass the
-Arbiscan/cargo-stylus managed verification flow after the fact.
+### Path C — reproducible-artifact verification
 
-The controlled path to full Stylus source verification is:
+Provenance is attested by deterministic re-derivation of the exact deployed bytes:
 
-1. produce a cargo-stylus managed build that fits the Stylus activation limits;
-2. perform a throwaway managed deploy;
-3. prove `cargo stylus verify --deployment-tx <tx>` succeeds;
-4. only then redeploy the real stack with the same managed source tree.
+1. rebuild the raw verify-tree wasm (`generate_verify_tree.sh`, matches `EXPECT_SHA256`);
+2. re-apply the pinned `wasm-opt -Oz` (Binaryen version_119, same flags);
+3. confirm the resulting `sha256` equals the deployed optimised artifact's hash.
 
-## Source Hosting Constraint
+The verify-tree build is deterministic and path-independent (promoting the engine to the
+tree root changes crate-metadata hashes, so the *raw* tree sha differs from a plain in-repo
+build while remaining stable across environments — expected and correct). Deploy the artifact
+built **from the tree**, and record both hashes as the verification evidence.
 
-Arbiscan's Git-fetch Stylus flow expects the contract crate at the repository root. The
-current project keeps the engine in `perp-engine/` inside a wider contracts repository.
+### Recorded hashes
 
-For public verification, the cleanest structure is a dedicated public verification repo:
-
-```text
-Cargo.toml
-Cargo.lock
-rust-toolchain.toml
-Stylus.toml
-src/
-curve-math/
-```
-
-The engine crate should live at the root, and the curve-math crate should be vendored as
-a child path. Strip tests from that verification tree if they are not intended to be
-published; Stylus project hashes include all `.rs` files in the project.
-
-## Toolchain Matrix
-
-For Arbiscan verification the engine must be built by the cargo-stylus 0.10.7 managed
-flow AND activate under the on-chain raw-size limit (~283 KB). The two requirements pull
-in opposite directions across toolchains:
-
-| Toolchain | Raw size | Activates | Managed-buildable |
-| --- | --- | --- | --- |
-| nightly-2026-06-10 + `-Cpanic=immediate-abort` | 248.5 KB | yes | no — cargo-stylus 0.10.7 injects the pre-rename `build-std-features=panic_immediate_abort`, which this nightly rejects |
-| stable | 328 KB | no | yes |
-| nightly-2025-09-01 + `build-std-features=panic_immediate_abort` (before the size diet) | 298.6 KB | no | yes |
-
-### Resolution
-
-The dominant contributor to engine code size was the inlined expansion of ruint U256
-multiply-then-divide arithmetic, repeated across the curve solver and the engine hot
-paths. Outlining that arithmetic behind a single helper reduces the pre-rename nightly
-managed build from **298.6 KB to 259.9 KB raw** — clearing the activation cap with
-~22.5 KB of headroom. That build both activates on-chain and is reproducible by the
-cargo-stylus 0.10.7 managed/verify flow, so it is the pinned recipe:
-
-- `rust-toolchain.toml`: `nightly-2025-09-01`
-- `.cargo/config.toml`: `rustflags = ["-Zlocation-detail=none"]` only — cargo-stylus
-  injects `build-std` + `panic_immediate_abort` for the wasm build itself, so host
-  `cargo test` stays on the default std.
-
-`cargo stylus build` produces the 259,864-byte artifact; a plain `cargo build --release
---target wasm32-unknown-unknown` matches it byte-for-byte when the managed flags are added
-explicitly (`-Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort`).
-
-Do not present a future Stylus deployment as Arbiscan source-verified until a managed
-throwaway deploy has passed `cargo stylus verify`.
-
-## Verification Source Tree
-
-This repository cannot serve directly as the Arbiscan fetch source, for two reasons:
-
-1. Arbiscan cannot verify a contract crate in a repository subdirectory, and the engine
-   lives in `perp-engine/` (the root crate is the curve-math library).
-2. The managed project hash binds **every `.rs` file** reachable from the build root —
-   including `perp-engine/src/tests.rs` and the inline test module in
-   `src/rust/CurveMath.rs`. Tests must not be part of the on-chain-verified source.
-
-The verification source must therefore be a small, mechanically generated tree:
-
-```text
-Cargo.toml          engine package at the root
-Cargo.lock
-rust-toolchain.toml
-Stylus.toml         [contract]
-.cargo/config.toml
-src/                engine modules, tests.rs removed, `mod tests` line removed
-curve-math/         the curve crate as a child path dependency, test module stripped
-```
-
-Generate it with the committed script `script/generate_verify_tree.sh` (it emits the tree
-deterministically and fails if the source layout drifts), publish it as the dedicated public
-verification repo, run the managed throwaway deploy + verify from it, and only then redeploy
-the production stack from the same tree.
-
-Promoting the engine to the workspace root changes Rust's crate-metadata hashes, so the tree
-builds to a wasm of the same size as a plain repo build but a different sha256. The tree build
-is deterministic and path-independent, so this is expected and correct: deploy the artifact
-built **from the tree**, and `cargo stylus verify` (which rebuilds the published tree) will
-match the on-chain bytes. Run `script/generate_verify_tree.sh --build` to regenerate and check
-the wasm against the recorded size and hash.
+The current recorded hashes are baked into `script/generate_verify_tree.sh`
+(`EXPECT_SIZE` / `EXPECT_SHA256`, the raw verify-tree build) and printed by
+`script/build_deploy_artifact.sh` (raw + optimised size and sha256). They change with every
+engine edit and with the toolchain/SDK/Binaryen versions, so treat the script output — not a
+copied number — as the source of truth, and refresh the published address/hash records at
+each redeploy.

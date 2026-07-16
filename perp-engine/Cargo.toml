@@ -10,7 +10,7 @@ crate-type = ["lib", "cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-stylus-sdk = "0.10.7"
+stylus-sdk = "0.10.8"
 # Direct dep so the `sol!` event macro can resolve `alloy_sol_types` as an extern
 # crate. Pinned to stylus-sdk's requirement (resolves to the SAME 1.6.0 instance,
 # so the SolEvent trait identity matches stylus_sdk::alloy_sol_types).
@@ -25,8 +25,8 @@ denaria-curve-math-stylus = { path = "..", default-features = false }
 # macro-generated `From<&TestVM>` constructor for the entrypoint struct so the
 # storage round-trip test can run on the host. Test-only; never pulled into the
 # deployable wasm.
-stylus-test = "0.10.7"
-stylus-sdk = { version = "0.10.7", features = ["stylus-test"] }
+stylus-test = "0.10.8"
+stylus-sdk = { version = "0.10.8", features = ["stylus-test"] }
 serde_json = "1"
 
 [features]

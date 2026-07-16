@@ -37,7 +37,7 @@ set -euo pipefail
 # rebuilds to this ~307 KB tree and cannot reproduce the deployed ~243 KB artifact;
 # re-derive the deployed bytes deterministically via the documented wasm-opt step.
 EXPECT_SIZE=314597
-EXPECT_SHA256=37d6e54ff53bac9ebb24a290747c7c7f7e5be357d737e565537ebff70b7065c3
+EXPECT_SHA256=5aa62764a044623e4ccf26fda82f7529443feb6a1e1b083b7803ba5bad453931
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

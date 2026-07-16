@@ -9,13 +9,13 @@ description = "Denaria CurveMath dynamic-curve AMM solver - Arbitrum Stylus (Rus
 crate-type = ["cdylib", "lib"]
 path = "src/rust/CurveMath.rs"
 
-# stylus-sdk 0.10.7 is used to match the Arbiscan-supported cargo-stylus 0.10.7 verification flow.
+# stylus-sdk 0.10.8 is used to match the Arbiscan-supported cargo-stylus 0.10.8 verification flow.
 # If compilation fails, verify compatibility with your cargo-stylus version:
 #   cargo stylus new --minimal temp_check
 # and match the SDK version from the generated Cargo.toml.
 
 [dependencies]
-stylus-sdk = "0.10.7"
+stylus-sdk = "0.10.8"
 
 [features]
 # `standalone-abi` (default) builds the standalone CurveMath Stylus program

@@ -1,22 +1,22 @@
-# cargo-stylus 0.10.8 evaluation
+# cargo-stylus 0.10.8 adoption
 
-Evaluation of upgrading the deploy-machine `cargo-stylus` CLI from 0.10.7 to 0.10.8, as a
-**CLI-only** change (the engine crate keeps `stylus-sdk = "0.10.7"`).
+The project has been updated from `cargo-stylus` / `stylus-sdk` 0.10.7 to **0.10.8**.
 
 ## Summary
 
-- **The engine crate stays on `stylus-sdk = "0.10.7"`.** 0.10.8's headline fix — verification of
-  large, multi-fragment contracts — is a cargo-stylus CLI (off-chain) fix, not an SDK library
-  change, so it needs no code edit, no dependency bump, and no rebuild.
-- Upgrading the CLI is **optional** for this project: the deploy artifact is produced by a
+- **`stylus-sdk = "0.10.8"`** in the engine, curve-math, and verify-tree crates, with the matching
+  0.10.8 CLI on the deploy machine. 0.10.8's headline fix (verification of large, multi-fragment
+  contracts) is a CLI-side change; the SDK bump itself is a minor codegen change over 0.10.7.
+- **Validated after the bump:** engine 81/81 and curve-math 9/9 tests pass, `clippy -D warnings` is
+  clean, the deploy artifact was rebuilt (same raw size, 314,597 B; a different sha, since codegen
+  changed) and re-derived through the pinned `wasm-opt` pass, and activation was re-confirmed on
+  Arbitrum Sepolia via the read-only `cargo stylus check` (priced data fee). `ruint` stays `< 1.17`
+  (0.10.8's constraint), so SDK storage encoding is unaffected.
+- **The verification story is unchanged by the bump.** The deployed artifact is produced by a
   post-build `wasm-opt` pass, and `cargo stylus verify` rebuilds only the plain Cargo output, so it
-  cannot reproduce the optimized bytes regardless of CLI version. The deployed artifact is instead
-  reproduced deterministically from the published source plus the documented, version-pinned
-  `wasm-opt` step. The 0.10.8 verify improvement therefore does not change this project's
-  verification story.
-- If the CLI is upgraded, do it **CLI-only first**: compare raw/optimized hashes, sizes, fragment
-  counts, ABI, tests, activation, and gas against the 0.10.7 baseline, and only consider an SDK bump
-  separately, after those checks pass.
+  cannot reproduce the optimized bytes regardless of SDK/CLI version. Provenance stays **Path C**:
+  deterministic re-derivation from the published source plus the version-pinned `wasm-opt` step (see
+  `docs/VERIFICATION.md`).
 
 ## Caveats observed
 
@@ -33,6 +33,7 @@ Evaluation of upgrading the deploy-machine `cargo-stylus` CLI from 0.10.7 to 0.1
 
 ## Recommendation
 
-Keep `stylus-sdk = "0.10.7"` in the engine crate. Treat a 0.10.8 CLI install on the deploy machine
-as optional; if adopted, follow the CLI-only-first sequence above and keep the `wasm-opt` +
-deterministic-reproduction verification flow unchanged.
+Keep the `wasm-opt` + deterministic Path-C reproduction verification flow; the 0.10.8 verify
+improvement does not apply to a wasm-opt'd artifact. Re-run the full validation (tests, clippy,
+artifact re-derivation, on-chain activation check) on any future SDK / CLI / toolchain / Binaryen
+bump before deploying.
