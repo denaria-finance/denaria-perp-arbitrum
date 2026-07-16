@@ -19,6 +19,25 @@ Network: Arbitrum Sepolia (`421614`).
 | `Oracle` | `Oracle.json` | `0x539937f3A18604E89f3AaafB13F6e417342c4b90` | `TWAPOracleMiddleware`; source-verified; carries the empty-report short-circuit fix |
 | `Stablecoin` | `ERC20.json` | `0xad78f7E737288e4a8CdF27d8e9c59B15399936EA` | Reused USDC.e-style test token, 6 decimals |
 
+## ABI lanes: deployed vs candidate
+
+Two explicit lanes are kept (per the tooling audit):
+
+- **Deployed ABI** — [`PerpEngine.json`](PerpEngine.json): pinned to the LIVE engine
+  (`0xC46E…`, reproducible hash `957e7cd6…`), regenerated only on redeploy. Off-chain
+  consumers decoding calls to the *current on-chain* engine use this.
+- **Candidate ABI** — [`PerpEngine.candidate.abi.sol`](PerpEngine.candidate.abi.sol): the
+  macro-authoritative interface generated from the *current* `perp-engine` source
+  (`cargo run -p denaria-perp-engine-stylus --features export-abi`). CI runs
+  `script/candidate_abi.sh`, which regenerates it, fails on drift, and prints the
+  deployed-vs-candidate function delta — the selectors a redeploy will add
+  (`updateLpSnapshot`, `getLpLiquidityEpoch`, `marginCheckData`, `oracle`, `batchLiquidateFor`,
+  `autoCloseUsersData`) or remove (`ReadFundingParameters`, `ReadInsuranceFund`, `fundingRate*`,
+  `totalTraderExposure*`, `initializeProduction`).
+
+On redeploy, regenerate `PerpEngine.json` from this same source (runbook §11) so the two lanes
+converge.
+
 ## Engine ABI Notes
 
 - `PerpEngine.json` is generated from the Stylus engine export ABI plus the event

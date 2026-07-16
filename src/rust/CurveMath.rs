@@ -1433,6 +1433,66 @@ impl CurveMath {
 //   - "coefficients" vectors: checked separately in `coefficient_vectors`
 //     against the extracted inverse-coefficient helpers.
 // -----------------------------------------------------------------------
+// Shrinking property tests (H8) over the pure, fund-critical math. proptest is a
+// host-only dev-dependency (no wasm impact); minimized counterexamples are the value
+// over the fixed golden vectors. Each property cross-checks an algebraic law or the
+// signed<->unsigned relationship the Q80 adjugate recovery relies on.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // i128 -> I256 without going through a lossy cast (i128 spans the sign-boundary cases).
+    fn i256_from(x: i128) -> I256 {
+        if x >= 0 {
+            i(U256::from(x as u128))
+        } else {
+            -i(U256::from(x.unsigned_abs()))
+        }
+    }
+
+    proptest! {
+        // md(a, c, c) == a: mul-div is exact when the multiplier equals the denominator.
+        #[test]
+        fn md_multiplier_equal_to_denominator_is_identity(a in any::<u128>(), c in 1u128..) {
+            prop_assert_eq!(md(U256::from(a), U256::from(c), U256::from(c)), U256::from(a));
+        }
+
+        // A zero operand annihilates the product; a widened numerator never overflows.
+        #[test]
+        fn md_zero_operand_is_zero(a in any::<u128>(), b in any::<u128>(), c in 1u128..) {
+            prop_assert_eq!(md(U256::from(a), U256::ZERO, U256::from(c)), U256::ZERO);
+            prop_assert_eq!(md(U256::ZERO, U256::from(b), U256::from(c)), U256::ZERO);
+        }
+
+        // signed_sum is commutative as a signed value.
+        #[test]
+        fn signed_sum_is_commutative(x in any::<u128>(), sx in any::<bool>(), y in any::<u128>(), sy in any::<bool>()) {
+            prop_assert_eq!(
+                signed_sum_to_int(U256::from(x), sx, U256::from(y), sy),
+                signed_sum_to_int(U256::from(y), sy, U256::from(x), sx),
+            );
+        }
+
+        // signed_sum's (magnitude, sign) folds to the same signed value as signed_sum_to_int
+        // (they must agree; the engine reads both forms).
+        #[test]
+        fn signed_sum_agrees_with_signed_sum_to_int(x in any::<u128>(), sx in any::<bool>(), y in any::<u128>(), sy in any::<bool>()) {
+            let (mag, sign) = signed_sum(U256::from(x), sx, U256::from(y), sy);
+            let folded = if sign { i(mag) } else { -i(mag) };
+            prop_assert_eq!(folded, signed_sum_to_int(U256::from(x), sx, U256::from(y), sy));
+        }
+
+        // The signed mul-div's magnitude equals the unsigned md of the absolute values
+        // (all-positive case) — cross-checks the Q80 adjugate primitive against md.
+        #[test]
+        fn mul_div_signed_magnitude_matches_md(v in 0i128.., m in 0i128.., d in 1i128..) {
+            let expect = i(md(U256::from(v as u128), U256::from(m as u128), U256::from(d as u128)));
+            prop_assert_eq!(mul_div_signed(i256_from(v), i256_from(m), i256_from(d)).unwrap(), expect);
+        }
+    }
+}
+
 #[cfg(test)]
 mod parity {
     use super::*;

@@ -8,6 +8,9 @@
     "ToggledAutoClose": "0xbf95dfd92bfd4552c7fca2e20be823c43b99a3afb123038ec02a45342db6923b",
     "RealizedPnL": "0xa8f6de86486e0ee00ef266091212a65fd265ec7039655cb49fad79104bd2fb5d",
     "ParametersUpdated": "0x38166bbec5212bbe64212a8b777dfba53d5c50c26177589de6efb6cabf378e48",
-    "LockedParameterUpdate": "0xcf347b84864f65f9e6027abb4e84d4a52b26c09ea0f60e3e30595f3ebe4c7400"
+    "LockedParameterUpdate": "0xcf347b84864f65f9e6027abb4e84d4a52b26c09ea0f60e3e30595f3ebe4c7400",
+    "RoleGranted": "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d",
+    "RoleRevoked": "0xf6391f5c32d9c69d2a47ea670b442974b53935d1edc7fd64eb21e047a839171b",
+    "TradingPaused": "0x7ebfd2dd68692100d1145ea3039a22694523fab0b7d0e45c595c9ad233b543e7"
   }
 }

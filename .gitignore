@@ -38,3 +38,6 @@ engine.Oz.wasm
 deploy-artifact-report.txt
 *.cdx.json
 nitro-addresses.json
+
+# Coverage output (script/coverage.sh --lcov / --html)
+lcov.info

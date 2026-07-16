@@ -14,13 +14,26 @@ impl PerpEngine {
         self.role_members.getter(role).get(account)
     }
 
-    /// OZ `AccessControl._grantRole` (no admin check).
+    /// OZ `AccessControl._grantRole` — grants the role and emits `RoleGranted` ONLY on an
+    /// actual change (matching OZ, which returns whether it granted), with `sender` = caller.
     pub(crate) fn grant_role_internal(&mut self, role: B256, account: Address) {
+        if self.has_role(role, account) {
+            return;
+        }
         self.role_members.setter(role).setter(account).set(true);
+        let sender = self.vm().msg_sender();
+        self.emit(RoleGranted { role, account, sender });
     }
 
+    /// OZ `AccessControl._revokeRole` — revokes the role and emits `RoleRevoked` ONLY on an
+    /// actual change, with `sender` = caller.
     pub(crate) fn revoke_role_internal(&mut self, role: B256, account: Address) {
+        if !self.has_role(role, account) {
+            return;
+        }
         self.role_members.setter(role).setter(account).set(false);
+        let sender = self.vm().msg_sender();
+        self.emit(RoleRevoked { role, account, sender });
     }
 
     /// OZ `onlyRole(role)` modifier — reverts unless the direct caller holds `role`.

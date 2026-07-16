@@ -191,6 +191,12 @@ ADDITIONS = {
     # the benchmark entrypoints (initializeBenchmark/seedBenchmarkState) live in a cfg-gated
     # NON-#[public] impl, so they are not additions either.
     "batchLiquidateFor(address,address[],uint256[],bytes)",
+    # Batch auto-close keeper helper (best-effort; no Solidity counterpart).
+    "batchAutoCloseUserPositionFor(address,address[],address[],bytes)",
+    # Emergency breaker (granular pause of the OPEN-position path; no Solidity counterpart).
+    "pauseTrading()",
+    "unpauseTrading()",
+    "tradingPaused()",
 }
 
 

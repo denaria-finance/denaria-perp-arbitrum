@@ -1711,6 +1711,187 @@
         );
     }
 
+    // Batch-liquidation bounds + dedup (H9b): the protocol cap and duplicate rejection are checked
+    // BEFORE any liquidation work, so these need no liquidatable setup. Edge lengths: 0 (no-op),
+    // MAX (accepted-shape), MAX+1 (BL2). A duplicate target reverts BL3. Atomicity policy: a batch
+    // is all-or-nothing (any per-user failure reverts the whole call — see batch_liquidate_impl).
+    #[cfg(feature = "stub_boundary")]
+    #[test]
+    fn batch_liquidate_bounds_and_dedup() {
+        use crate::liquidation::MAX_LIQUIDATION_BATCH;
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        let liquidator = addr(0x71);
+
+        // Empty batch: a no-op success (defined behavior).
+        assert_eq!(e.batch_liquidate_impl(liquidator, vec![], vec![], Bytes::new()), Ok(()), "empty batch is a no-op");
+
+        // users/sizes length mismatch -> BL1 (checked first).
+        assert_eq!(
+            e.batch_liquidate_impl(liquidator, vec![addr(0x01)], vec![], Bytes::new()),
+            Err(err(b"BL1")),
+            "length mismatch -> BL1",
+        );
+
+        // MAX+1 entries -> BL2, rejected before any per-user work.
+        let over: Vec<Address> = (0..=MAX_LIQUIDATION_BATCH).map(|k| addr(k as u8)).collect();
+        assert_eq!(over.len(), MAX_LIQUIDATION_BATCH + 1, "constructed MAX+1 targets");
+        assert_eq!(
+            e.batch_liquidate_impl(liquidator, over, vec![wad; MAX_LIQUIDATION_BATCH + 1], Bytes::new()),
+            Err(err(b"BL2")),
+            "batch over MAX_LIQUIDATION_BATCH -> BL2",
+        );
+
+        // Duplicate target within the batch -> BL3.
+        let dup = addr(0x51);
+        assert_eq!(
+            e.batch_liquidate_impl(liquidator, vec![dup, addr(0x52), dup], vec![wad, wad, wad], Bytes::new()),
+            Err(err(b"BL3")),
+            "duplicate target -> BL3",
+        );
+    }
+
+    // item20 batch auto-close: BEST-EFFORT keeper sweep — an eligible user is closed, an ineligible
+    // (unauthorized / threshold-unmet) user is SKIPPED (not fatal), so one call sweeps every eligible
+    // position. Plus bounds (BA1/BA2) + dedup (BA3). Eligible setup mirrors the differential op.
+    #[cfg(feature = "stub_boundary")]
+    #[test]
+    fn batch_auto_close_best_effort_and_bounds() {
+        use crate::auto_close::MAX_AUTOCLOSE_BATCH;
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.trusted_forwarder.set(e.vm().msg_sender()); // so enable_auto_close_for's forwarder gate passes
+        let caller = addr(0xFE); // auto-close fee recipient
+        let eligible = addr(0x71);
+        let ineligible = addr(0x72); // never authorizes auto-close
+
+        // Eligible: an underwater long with a loss-threshold auto-close (mirrors the differential op).
+        {
+            let mut up = e.user_virtual_trader_position.setter(eligible);
+            up.balance_asset.set(wad);
+            up.debt_stable.set(U256::from(3500u64) * wad);
+        }
+        e.enable_auto_close_for(eligible, U256::ZERO, U256::from(1u64), U256::from(50_000u64), wad)
+            .expect("enable eligible");
+
+        // Batch [eligible, ineligible]: closes the eligible one, skips the ineligible one -> Ok.
+        e.batch_auto_close_user_position_impl(
+            caller,
+            vec![eligible, ineligible],
+            vec![Address::ZERO, Address::ZERO],
+            Bytes::new(),
+        )
+        .expect("best-effort batch succeeds despite an ineligible target");
+        let elig = e.user_virtual_trader_position.getter(eligible);
+        assert_eq!(elig.balance_asset.get(), U256::ZERO, "eligible long closed");
+        assert_eq!(elig.debt_stable.get(), U256::ZERO, "eligible debt cleared");
+        assert!(!e.auto_close_users_data.getter(eligible).authorized.get(), "eligible config cleared on close");
+
+        // Bounds + dedup (checked before any per-user work).
+        assert_eq!(
+            e.batch_auto_close_user_position_impl(caller, vec![addr(0x01)], vec![], Bytes::new()),
+            Err(err(b"BA1")),
+            "len mismatch -> BA1",
+        );
+        let over: Vec<Address> = (0..=MAX_AUTOCLOSE_BATCH).map(|k| addr(k as u8)).collect();
+        assert_eq!(
+            e.batch_auto_close_user_position_impl(caller, over, vec![Address::ZERO; MAX_AUTOCLOSE_BATCH + 1], Bytes::new()),
+            Err(err(b"BA2")),
+            "over cap -> BA2",
+        );
+        let dup = addr(0x51);
+        assert_eq!(
+            e.batch_auto_close_user_position_impl(caller, vec![dup, addr(0x52), dup], vec![Address::ZERO; 3], Bytes::new()),
+            Err(err(b"BA3")),
+            "duplicate -> BA3",
+        );
+    }
+
+    // Emergency breaker (H9c) — role gate + event. pause/unpause are MOD_ROLE-gated; each emits one
+    // TradingPaused(paused, account) with account indexed and the bool in data.
+    #[cfg(feature = "stub_boundary")]
+    #[test]
+    fn breaker_role_gated_and_emits() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        e.mod_role.set(keccak256("MOD_ROLE"));
+        let gov = e.vm().msg_sender();
+
+        // Without MOD_ROLE -> AC on both engage and lift.
+        assert_eq!(e.pause_trading(), Err(err(b"AC")), "pause without MOD_ROLE -> AC");
+        assert_eq!(e.unpause_trading(), Err(err(b"AC")), "unpause without MOD_ROLE -> AC");
+
+        e.grant_role_internal(keccak256("MOD_ROLE"), gov);
+        let base = vm.get_emitted_logs().len(); // the grant already emitted a RoleGranted
+
+        e.pause_trading().expect("MOD pauses");
+        assert_eq!(e.trading_paused_public(), Ok(true), "tradingPaused reflects engaged");
+        let logs = vm.get_emitted_logs();
+        assert_eq!(logs.len(), base + 1, "pause emits exactly one event");
+        let (topics, data) = &logs[base];
+        assert_eq!(topics[0], TradingPaused::SIGNATURE_HASH, "topic0 = TradingPaused");
+        assert_eq!(topics[1], gov.into_word(), "topic1 = indexed account");
+        assert_eq!(U256::from_be_slice(&data[0..32]), U256::from(1u64), "data: paused = true");
+
+        e.unpause_trading().expect("MOD unpauses");
+        assert_eq!(e.trading_paused_public(), Ok(false), "tradingPaused reflects lifted");
+        let logs = vm.get_emitted_logs();
+        assert_eq!(U256::from_be_slice(&logs[base + 1].1[0..32]), U256::ZERO, "data: paused = false");
+    }
+
+    // Emergency breaker LIVENESS (H9c, the audit's key guarantee): while paused, OPENING/INCREASING
+    // a position is blocked (PAUSED), but every DE-RISK + EXIT path — realizePnL, close, and
+    // removeLiquidity — stays LIVE. Mirrors financial_invariants' op vocabulary.
+    #[cfg(feature = "stub_boundary")]
+    #[test]
+    fn breaker_blocks_open_but_preserves_derisk_and_exit() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_000);
+        let mut e = PerpEngine::from(&vm);
+        e.initialize_benchmark(addr(0x01), addr(0x02), addr(0x03)).expect("init"); // grants gov MOD_ROLE
+        e.seed_benchmark_state(U256::from(18_000_000u64) * wad, U256::from(6_000u64) * wad).expect("seed");
+        e.trusted_forwarder.set(e.vm().msg_sender());
+        let a = addr(0xA1);
+        let d = addr(0xD1); // liquidity provider
+
+        // Open a long + add liquidity while UNPAUSED.
+        e.trade_for(a, true, U256::from(1_000u64) * wad, U256::ZERO, U256::ZERO, Address::ZERO, 1, Bytes::new())
+            .expect("open long (unpaused)");
+        vm.set_block_timestamp(4_600);
+        e.add_liquidity_for(d, U256::from(3_000u64) * wad, wad, U256::ZERO, Bytes::new()).expect("add lp (unpaused)");
+
+        // Engage the breaker.
+        e.pause_trading().expect("MOD pauses");
+
+        // New risk BLOCKED.
+        assert_eq!(
+            e.trade_for(a, true, U256::from(1_000u64) * wad, U256::ZERO, U256::ZERO, Address::ZERO, 1, Bytes::new()),
+            Err(err(b"PAUSED")),
+            "opening/increasing a position is blocked while paused",
+        );
+
+        // LIVENESS while paused: de-risk (realizePnL), exit (close), and LP withdrawal all succeed.
+        vm.set_block_timestamp(8_200);
+        e.realize_pnl_for(a, Bytes::new()).expect("realizePnL LIVE while paused");
+        let (ds, da) = e.get_lp_liquidity_balance(d).unwrap();
+        e.remove_liquidity_for(d, ds / U256::from(2u64), da / U256::from(2u64), U256::ZERO, Bytes::new())
+            .expect("removeLiquidity LIVE while paused");
+        e.close_and_withdraw_for(a, U256::from(50_000u64), wad, addr(0xFE), Bytes::new())
+            .expect("close LIVE while paused");
+
+        // Lifting the breaker resumes trading.
+        e.unpause_trading().expect("MOD unpauses");
+        e.trade_for(addr(0xB1), true, U256::from(1_000u64) * wad, U256::ZERO, U256::ZERO, Address::ZERO, 1, Bytes::new())
+            .expect("trading resumes after unpause");
+    }
+
     // LP-victim liquidation coverage (parity item 2E). During liquidation the engine settles the
     // victim's funding while ALSO refreshing their LP snapshot; these two regression tests cover the
     // composition properties the Solidity reference asserts in
@@ -1893,6 +2074,46 @@
         assert_eq!(RealizedPnL::SIGNATURE_HASH, want("RealizedPnL"), "RealizedPnL");
         assert_eq!(ParametersUpdated::SIGNATURE_HASH, want("ParametersUpdated"), "ParametersUpdated");
         assert_eq!(LockedParameterUpdate::SIGNATURE_HASH, want("LockedParameterUpdate"), "LockedParameterUpdate");
+        assert_eq!(RoleGranted::SIGNATURE_HASH, want("RoleGranted"), "RoleGranted");
+        assert_eq!(RoleRevoked::SIGNATURE_HASH, want("RoleRevoked"), "RoleRevoked");
+        assert_eq!(TradingPaused::SIGNATURE_HASH, want("TradingPaused"), "TradingPaused");
+    }
+
+    // grantRole/revokeRole emit the OZ role events, and ONLY on an actual change (OZ semantics):
+    // topic0 = signature, topics 1..4 = indexed role/account/sender, no data. A no-op emits nothing.
+    #[test]
+    fn role_grant_revoke_emit_events() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        let sender = e.vm().msg_sender();
+        let role = keccak256("MOD_ROLE");
+        let account = addr(0x77);
+
+        e.grant_role_internal(role, account);
+        let logs = vm.get_emitted_logs();
+        assert_eq!(logs.len(), 1, "grant emits one RoleGranted");
+        let (topics, data) = &logs[0];
+        assert_eq!(topics[0], RoleGranted::SIGNATURE_HASH, "topic0 = RoleGranted");
+        assert_eq!(topics[1], role, "topic1 = indexed role");
+        assert_eq!(topics[2], account.into_word(), "topic2 = indexed account");
+        assert_eq!(topics[3], sender.into_word(), "topic3 = indexed sender");
+        assert!(data.is_empty(), "all three params indexed -> no data");
+
+        // Re-granting a role the account already holds is a no-op -> no event.
+        e.grant_role_internal(role, account);
+        assert_eq!(vm.get_emitted_logs().len(), 1, "no event on a no-op grant");
+
+        // Revoke emits RoleRevoked with the same indexed shape.
+        e.revoke_role_internal(role, account);
+        let logs = vm.get_emitted_logs();
+        assert_eq!(logs.len(), 2, "revoke emits one RoleRevoked");
+        assert_eq!(logs[1].0[0], RoleRevoked::SIGNATURE_HASH, "topic0 = RoleRevoked");
+        assert_eq!(logs[1].0[1], role, "topic1 = role");
+        assert_eq!(logs[1].0[2], account.into_word(), "topic2 = account");
+
+        // Revoking a role the account no longer holds is a no-op -> no event.
+        e.revoke_role_internal(role, account);
+        assert_eq!(vm.get_emitted_logs().len(), 2, "no event on a no-op revoke");
     }
 
     // End-to-end emit: enableAutoClose emits one ToggledAutoClose log with topic0 =
@@ -2342,11 +2563,12 @@
         assert!(e.is_trusted_forwarder(addr(0xAB)).unwrap(), "AB is the forwarder");
         assert!(!e.is_trusted_forwarder(addr(0xCD)).unwrap(), "CD is not");
 
-        // The change is observable — one TrustedForwarderUpdated(old=0x0, new=0xAB)
-        // (the earlier AC revert emitted nothing). Both addresses are indexed topics.
+        // The change is observable — the grant emits one RoleGranted, then setTrustedForwarder
+        // emits one TrustedForwarderUpdated(old=0x0, new=0xAB) (the earlier AC revert emitted
+        // nothing). Both forwarder addresses are indexed topics.
         let logs = vm.get_emitted_logs();
-        assert_eq!(logs.len(), 1, "exactly one forwarder-update event");
-        let (topics, data) = &logs[0];
+        assert_eq!(logs.len(), 2, "one RoleGranted (from the grant) + one forwarder-update event");
+        let (topics, data) = &logs[1];
         assert_eq!(topics[0], TrustedForwarderUpdated::SIGNATURE_HASH, "topic0 = event signature");
         assert_eq!(topics[1], Address::ZERO.into_word(), "topic1 = old forwarder (0x0)");
         assert_eq!(topics[2], addr(0xAB).into_word(), "topic2 = new forwarder");

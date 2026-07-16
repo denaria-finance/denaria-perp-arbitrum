@@ -74,6 +74,12 @@ sol! {
     // forwarder is a critical privileged address — every `*For` entrypoint trusts it — so
     // changes are made observable.
     event TrustedForwarderUpdated(address indexed oldForwarder, address indexed newForwarder);
+    // OZ AccessControl role events — restore parity with the Solidity reference (which uses
+    // OpenZeppelin AccessControl and already emits these); the hand-rolled engine AC did not.
+    event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
+    event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
+    // Emergency breaker (H9c): granular pause of the OPEN-position path only.
+    event TradingPaused(bool paused, address indexed account);
 }
 
 // Shared pure math (curve solver, MatrixMath, UtilMath helpers). Depended on
@@ -91,6 +97,7 @@ sol_storage! {
         bool last_trade_direction;
         bool entered;                // reentrancy guard
         bool initialized;            // one-shot init guard
+        bool trading_paused;         // emergency breaker: blocks OPENING/INCREASING positions (H9c)
         uint8 max_leverage;          // <= 255 (15)
         uint8 max_lp_leverage;       // <= 255 (15)
         uint8 ins_fund_fraction;     // <= 255 (6)
@@ -588,6 +595,21 @@ impl PerpEngine {
         self.auto_close_user_position_impl(caller, user, frontend_address, unverified_report)
     }
 
+    /// Forwarded BATCH `autoCloseUserPosition` (keeper helper): trusted-forwarder-only, explicit
+    /// `caller` (the auto-close fee recipient). Best-effort — users that are not currently eligible
+    /// are skipped, not fatal; see `batch_auto_close_user_position_impl` for the atomicity policy.
+    #[selector(name = "batchAutoCloseUserPositionFor")]
+    pub fn batch_auto_close_user_position_for(
+        &mut self,
+        caller: Address,
+        users: Vec<Address>,
+        frontend_addresses: Vec<Address>,
+        unverified_report: Bytes,
+    ) -> Result<(), Vec<u8>> {
+        let caller = self.require_forwarder(caller)?;
+        self.batch_auto_close_user_position_impl(caller, users, frontend_addresses, unverified_report)
+    }
+
     /// `autoCloseUsersData(user)` — the user's auto-close config (authorized, profitTh, lossTh,
     /// maxSlippage, maxLiqFee). Lets the manager / CallBatcher read the config to pick which
     /// positions to auto-close; matches the reference PerpPair's public-mapping auto-getter.
@@ -632,6 +654,36 @@ impl PerpEngine {
         }
         self.revoke_role_internal(role, caller);
         Ok(())
+    }
+
+    /// Emergency breaker (H9c) — MOD_ROLE-gated. `pauseTrading` blocks the OPEN-position path
+    /// (`trade`/`tradeFor`) while leaving close, liquidation, removeLiquidity, realizePnL, and
+    /// auto-close LIVE, so users can always de-risk and exit. This is a GRANULAR circuit breaker,
+    /// deliberately NOT a global pause (disabling close/liquidation can trap users and worsen
+    /// insolvency).
+    #[selector(name = "pauseTrading")]
+    pub fn pause_trading(&mut self) -> Result<(), Vec<u8>> {
+        self.only_role(self.mod_role.get())?;
+        self.trading_paused.set(true);
+        let account = self.vm().msg_sender();
+        self.emit(TradingPaused { paused: true, account });
+        Ok(())
+    }
+
+    /// Lift the emergency breaker — MOD_ROLE-gated.
+    #[selector(name = "unpauseTrading")]
+    pub fn unpause_trading(&mut self) -> Result<(), Vec<u8>> {
+        self.only_role(self.mod_role.get())?;
+        self.trading_paused.set(false);
+        let account = self.vm().msg_sender();
+        self.emit(TradingPaused { paused: false, account });
+        Ok(())
+    }
+
+    /// `tradingPaused()` — is the emergency breaker engaged (the OPEN-position path blocked)?
+    #[selector(name = "tradingPaused")]
+    pub fn trading_paused_public(&self) -> Result<bool, Vec<u8>> {
+        Ok(self.trading_paused.get())
     }
 
     /// MOD_ROLE-gated: set the trusted forwarder for the explicit-sender `*For` entrypoints.

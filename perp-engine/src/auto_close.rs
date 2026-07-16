@@ -1,6 +1,10 @@
 //! Auto-close (perpAutoClose) enable + execute bodies. Internal `pub(crate)` methods on `PerpEngine`; the public ABI lives in lib.rs.
 use super::*;
 
+/// Protocol-level cap on a single `batchAutoCloseUserPositionFor` call — bounds worst-case
+/// resource consumption to a predictable maximum (mirrors `MAX_LIQUIDATION_BATCH`).
+pub(crate) const MAX_AUTOCLOSE_BATCH: usize = 100;
+
 #[allow(dead_code)]
 impl PerpEngine {
     /// Shared `enableAutoClose` body (EOA + forwarded) parameterized by the position
@@ -66,6 +70,23 @@ impl PerpEngine {
         #[cfg(feature = "stub_boundary")]
         let price = U256::from(300_000_000_000u64);
 
+        self.auto_close_with_price(caller, user, frontend_address, price)?;
+        self.entered.set(false);
+        Ok(())
+    }
+
+    /// Guard-free per-user auto-close body, parameterized by the already-read `price`. Shared by
+    /// the single (`auto_close_user_position_impl`) and batch (`batch_auto_close_user_position_impl`)
+    /// paths so the batch pays the reentrancy guard + report verify + oracle read ONCE. Returns A1
+    /// for an INELIGIBLE user (not authorized / threshold not met) so the batch can skip it; any
+    /// other Err is a hard failure that must propagate.
+    pub(crate) fn auto_close_with_price(
+        &mut self,
+        caller: Address,
+        user: Address,
+        frontend_address: Address,
+        price: U256,
+    ) -> Result<(), Vec<u8>> {
         if !self.auto_close_users_data.getter(user).authorized.get() {
             return Err(err(b"A1"));
         }
@@ -125,6 +146,66 @@ impl PerpEngine {
         }
         #[cfg(feature = "stub_boundary")]
         let _ = (cpnl, cpnl_sign);
+
+        Ok(())
+    }
+
+    /// Batch `autoCloseUserPosition` (forwarded keeper helper): verify the report + read the oracle
+    /// price ONCE, then run the per-user auto-close body for each target. BEST-EFFORT — a user that
+    /// is not currently eligible (A1: not authorized / threshold not met) is SKIPPED, not fatal, so
+    /// a keeper can sweep every eligible position in one call. Any OTHER per-user failure reverts the
+    /// whole batch (all-or-nothing on real errors; a skip leaves no partial state — the A1 returns
+    /// precede any mutation). Bounded by MAX_AUTOCLOSE_BATCH; duplicate targets are rejected (BA3).
+    pub(crate) fn batch_auto_close_user_position_impl(
+        &mut self,
+        caller: Address,
+        users: Vec<Address>,
+        frontend_addresses: Vec<Address>,
+        unverified_report: Bytes,
+    ) -> Result<(), Vec<u8>> {
+        if users.len() != frontend_addresses.len() {
+            return Err(err(b"BA1"));
+        }
+        if users.len() > MAX_AUTOCLOSE_BATCH {
+            return Err(err(b"BA2"));
+        }
+        for i in 0..users.len() {
+            for j in (i + 1)..users.len() {
+                if users[i] == users[j] {
+                    return Err(err(b"BA3"));
+                }
+            }
+        }
+        if self.entered.get() {
+            return Err(err(b"R"));
+        }
+        self.entered.set(true);
+
+        #[cfg(not(feature = "stub_boundary"))]
+        {
+            let oracle = IOracleMiddleware::new(self.oracle.get());
+            let cfg = Call::new_mutating(self);
+            oracle.verify_report_if_necessary(self.vm(), cfg, unverified_report.into())?;
+        }
+        #[cfg(feature = "stub_boundary")]
+        let _ = unverified_report;
+
+        #[cfg(not(feature = "stub_boundary"))]
+        let price = {
+            let oracle = IOracleMiddleware::new(self.oracle.get());
+            cm::u(oracle.get_price(self.vm(), Call::new())?)
+        };
+        #[cfg(feature = "stub_boundary")]
+        let price = U256::from(300_000_000_000u64);
+
+        let ineligible = err(b"A1");
+        for (user, frontend) in users.iter().zip(frontend_addresses.iter()) {
+            match self.auto_close_with_price(caller, *user, *frontend, price) {
+                Ok(()) => {}
+                Err(e) if e == ineligible => continue, // not eligible at this price -> skip
+                Err(e) => return Err(e),               // hard failure -> revert the whole batch
+            }
+        }
 
         self.entered.set(false);
         Ok(())

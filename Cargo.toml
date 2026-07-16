@@ -27,10 +27,12 @@ standalone-abi = []
 export-abi = ["standalone-abi", "stylus-sdk/export-abi"]
 contract-client-gen = []
 
-# Host-only test dependencies. `cargo test` builds for the native target, so
-# pulling serde_json here does not affect the deployable wasm artifact.
+# Host-only test dependencies. `cargo test` builds for the native target, so these
+# do not affect the deployable wasm artifact (dev-deps are excluded from the release
+# build; verified byte-identical after adding proptest).
 [dev-dependencies]
 serde_json = "1"
+proptest = "1"
 
 [profile.release]
 codegen-units = 1

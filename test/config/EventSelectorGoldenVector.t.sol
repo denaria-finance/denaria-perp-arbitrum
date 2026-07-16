@@ -59,6 +59,9 @@ contract EventSelectorGoldenVectorTest is Test {
         uint256 _paramTimeLock,
         uint256 _minimumTradeSize
     );
+    event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
+    event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
+    event TradingPaused(bool paused, address indexed account);
 
     string internal constant FIXTURE_PATH = "/test/fixtures/event_selector_vectors.json";
 
@@ -80,7 +83,13 @@ contract EventSelectorGoldenVectorTest is Test {
                 ",\n",
                 row("ParametersUpdated", ParametersUpdated.selector),
                 ",\n",
-                rowLast("LockedParameterUpdate", LockedParameterUpdate.selector),
+                row("LockedParameterUpdate", LockedParameterUpdate.selector),
+                ",\n",
+                row("RoleGranted", RoleGranted.selector),
+                ",\n",
+                row("RoleRevoked", RoleRevoked.selector),
+                ",\n",
+                rowLast("TradingPaused", TradingPaused.selector),
                 "\n  }\n}\n"
             )
         );

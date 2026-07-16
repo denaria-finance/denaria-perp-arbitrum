@@ -134,6 +134,14 @@ interface IPerpEngine {
     )
         external;
 
+    function batchAutoCloseUserPositionFor(
+        address caller,
+        address[] memory users,
+        address[] memory frontend_addresses,
+        bytes calldata unverified_report
+    )
+        external;
+
     function autoCloseUsersData(address user) external view returns (bool, uint256, uint256, uint256, uint256);
 
     function hasRole(bytes32 role, address account) external view returns (bool);
@@ -143,6 +151,12 @@ interface IPerpEngine {
     function revokeRole(bytes32 role, address account) external;
 
     function renounceRole(bytes32 role, address caller_confirmation) external;
+
+    function pauseTrading() external;
+
+    function unpauseTrading() external;
+
+    function tradingPaused() external view returns (bool);
 
     function setTrustedForwarder(address forwarder) external;
 

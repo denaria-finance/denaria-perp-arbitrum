@@ -1,8 +1,10 @@
 name: CI
 
-# NOTE (supply-chain hardening): pinning third-party actions to immutable commit SHAs is
-# recommended (actions/checkout, foundry-rs/foundry-toolchain). They are left on version tags
-# here for readability; pin to SHAs when tightening the release process.
+# NOTE (supply-chain hardening): Foundry is pinned to the `stable` channel (below), not the
+# moving `nightly`, for reproducible CI — matches the locally-validated forge 1.5.0-stable that
+# runs the suite green. Remaining: pin third-party actions (actions/checkout,
+# foundry-rs/foundry-toolchain, actions/upload-artifact) to immutable commit SHAs — left on
+# version tags here for readability; resolve + pin the SHAs when tightening the release process.
 
 on:
   push:
@@ -27,7 +29,7 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: nightly
+          version: stable
 
       - name: Show Forge version
         run: |
@@ -96,6 +98,14 @@ jobs:
           cargo clippy --locked -p denaria-curve-math-stylus -- -D warnings
           cargo clippy --locked -p denaria-perp-engine-stylus --features stub_boundary -- -D warnings
         id: clippy
+
+      # Candidate-ABI assurance: regenerate the macro-authoritative engine interface via
+      # `cargo … --features export-abi` and diff it against abis/PerpEngine.candidate.abi.sol
+      # — the source-of-truth ABI lane, distinct from the deployed-pinned abis/PerpEngine.json.
+      - name: Candidate ABI (generated-interface drift check)
+        run: |
+          ./script/candidate_abi.sh
+        id: candidate_abi
 
   supply-chain:
     name: Supply-chain (advisories + SBOM)
@@ -168,7 +178,7 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: nightly
+          version: stable
       - name: Run the Nitro E2E money-path
         run: |
           rustup component add rust-src

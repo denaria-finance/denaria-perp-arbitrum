@@ -36,8 +36,8 @@ set -euo pipefail
 # which activates. Because cargo-stylus does not wasm-opt, `cargo stylus verify`
 # rebuilds to this ~307 KB tree and cannot reproduce the deployed ~243 KB artifact;
 # re-derive the deployed bytes deterministically via the documented wasm-opt step.
-EXPECT_SIZE=307479
-EXPECT_SHA256=91fe9892fa8754506f279da6452bf1f1d9b798c6588f12d33ec5c1d8c1687c88
+EXPECT_SIZE=314597
+EXPECT_SHA256=37d6e54ff53bac9ebb24a290747c7c7f7e5be357d737e565537ebff70b7065c3
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

@@ -1,6 +1,11 @@
 //! Liquidation orchestration + per-side helpers + collateral transfers. Internal `pub(crate)` methods on `PerpEngine`; the public ABI lives in lib.rs.
 use super::*;
 
+/// Protocol-level cap on a single `batchLiquidateFor` call — bounds worst-case resource
+/// consumption (WASM steps, storage touches, per-user liquidation work) to a predictable
+/// maximum. A keeper batches far fewer in practice; this is a safety ceiling, not a target.
+pub(crate) const MAX_LIQUIDATION_BATCH: usize = 100;
+
 #[allow(dead_code)]
 impl PerpEngine {
     /// Shared `liquidate` body (EOA + forwarded) parameterized by the `liquidator`.
@@ -208,6 +213,20 @@ impl PerpEngine {
     ) -> Result<(), Vec<u8>> {
         if users.len() != liquidated_position_sizes.len() {
             return Err(err(b"BL1"));
+        }
+        // Protocol-level batch bound: cap resource consumption to a predictable maximum.
+        if users.len() > MAX_LIQUIDATION_BATCH {
+            return Err(err(b"BL2"));
+        }
+        // Reject duplicate targets: a repeated user in one batch has ambiguous double-liquidation
+        // semantics (the second pass would hit an already-liquidated position). O(n^2), bounded by
+        // the cap above (<= MAX_LIQUIDATION_BATCH^2 comparisons).
+        for i in 0..users.len() {
+            for j in (i + 1)..users.len() {
+                if users[i] == users[j] {
+                    return Err(err(b"BL3"));
+                }
+            }
         }
         if self.entered.get() {
             return Err(err(b"R"));

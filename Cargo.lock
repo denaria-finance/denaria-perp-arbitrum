@@ -1275,6 +1275,7 @@ dependencies = [
 name = "denaria-curve-math-stylus"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "serde_json",
  "stylus-sdk",
 ]
