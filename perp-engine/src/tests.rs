@@ -1711,6 +1711,126 @@
         );
     }
 
+    // LP-victim liquidation coverage (parity item 2E). During liquidation the engine settles the
+    // victim's funding while ALSO refreshing their LP snapshot; these two regression tests cover the
+    // composition properties the Solidity reference asserts in
+    // `testLpLiquidationDoesNotDoubleSettleTraderFunding` and
+    // `testOversizedNetLongLiquidationRevertsLQ1` (PerpPair.t.sol), which had no Rust-engine
+    // coverage. Under `stub_boundary` (liquidate reads the oracle) collateral is pinned to 1000e18
+    // and the price to 3000e8, so — unlike the Solidity setup, which drains collateral and drops the
+    // price to make the victim liquidatable — the LP-backed liquidatable state is seeded directly,
+    // the way `batch_liquidate_matches_loop` / `update_lp_snapshot_migrates` do.
+    #[cfg(feature = "stub_boundary")]
+    fn seed_lp_backed_liquidatable_long(vm: &TestVM, bob: Address, liquidator: Address) -> PerpEngine {
+        let wad = U256::from(WAD_U64);
+        let ts = 1_700_000_000u64;
+        vm.set_block_timestamp(ts);
+        let mut e = PerpEngine::from(vm);
+        seed_trade_engine(&mut e);
+        let liq_m_dec = cm::u(e.liquidity_m_decimals.get());
+        // Epoch 0 (the current epoch) carries a single LP: bob.
+        e.liquidity_epochs.setter(U256::ZERO).active_lp_count.set(U256::from(1u64));
+        // bob is BOTH a live LP (identity snapshot in the current epoch) and a net-long trader that
+        // is deeply underwater on stable debt (margin ratio 0 -> liquidatable at the pinned 1000e18
+        // collateral, exactly like batch_liquidate_matches_loop's victims).
+        {
+            let mut lp = e.liquidity_position.setter(bob);
+            lp.snapshot_m00.set(cm::i(liq_m_dec));
+            lp.snapshot_m11.set(cm::i(liq_m_dec));
+            lp.initial_stable_balance.set(U256::from(100u64) * wad);
+            lp.initial_asset_balance.set(wad);
+        }
+        {
+            let mut up = e.user_virtual_trader_position.setter(bob);
+            up.balance_asset.set(wad); // net-long 1e18
+            up.debt_stable.set(U256::from(100_000u64) * wad); // deep underwater -> MR 0
+            up.initial_funding_rate.set(U256::ZERO); // stale trader funding snapshot
+        }
+        // A non-zero current funding rate (with last_operation_timestamp == block ts, so update_fg
+        // early-returns and leaves it untouched) is the accrued trader funding that both liquidation
+        // paths must settle EXACTLY once.
+        e.funding_rate.set(U256::from(1_000_000_000_000_000u64)); // 1e15
+        e.funding_rate_sign.set(true);
+        e.last_operation_timestamp.set(U64::from(ts));
+        // Well-capitalized liquidator so the post-liquidation LQ2 health check passes.
+        e.user_virtual_trader_position.setter(liquidator).balance_stable.set(U256::from(1_000_000_000u64) * wad);
+        e
+    }
+
+    // (A) A direct liquidation of an LP-backed victim must settle the trader's funding EXACTLY ONCE
+    // — producing a position bit-identical to pre-settling via `updateLpSnapshot` and THEN
+    // liquidating. Reference: `testLpLiquidationDoesNotDoubleSettleTraderFunding`.
+    #[cfg(feature = "stub_boundary")]
+    #[test]
+    fn lp_victim_liquidation_does_not_double_settle_trader_funding() {
+        let wad = U256::from(WAD_U64);
+        let bob = addr(0x91);
+        let charlie = addr(0x92);
+        // 0.4e18 < bob's 1e18 asset balance -> a partial liquidation that does NOT take the
+        // oversized net-long branch (that is exercised by test (B) below).
+        let size = U256::from(4u64) * wad / U256::from(10u64);
+        let price = U256::from(300_000_000_000u64);
+
+        // Non-vacuity: the seeded state genuinely has unsettled trader funding to (mis)settle.
+        let probe_vm = TestVM::new();
+        let probe = seed_lp_backed_liquidatable_long(&probe_vm, bob, charlie);
+        assert!(
+            probe.compute_funding_fee(bob).expect("probe funding").0 != U256::ZERO,
+            "test is vacuous: no trader funding accrued to settle",
+        );
+
+        // Path 1: liquidate directly.
+        let vm1 = TestVM::new();
+        let mut e1 = seed_lp_backed_liquidatable_long(&vm1, bob, charlie);
+        e1.liquidate_impl(charlie, bob, size, Bytes::new()).expect("direct liquidate");
+
+        // Path 2: updateLpSnapshot(bob) first (pre-settles funding + refreshes the LP snapshot), then
+        // liquidate.
+        let vm2 = TestVM::new();
+        let mut e2 = seed_lp_backed_liquidatable_long(&vm2, bob, charlie);
+        e2.update_lp_snapshot(bob, Bytes::new()).expect("pre-settle via updateLpSnapshot");
+        e2.liquidate_impl(charlie, bob, size, Bytes::new()).expect("liquidate after pre-settle");
+
+        // The victim's post-liquidation position must be bit-identical between the two paths; a
+        // double-settle would diverge the funding_fee, the balances, or the pnl.
+        let p1 = e1.user_virtual_trader_position.getter(bob);
+        let p2 = e2.user_virtual_trader_position.getter(bob);
+        assert_eq!(p1.balance_stable.get(), p2.balance_stable.get(), "balance_stable diverged");
+        assert_eq!(p1.balance_asset.get(), p2.balance_asset.get(), "balance_asset diverged");
+        assert_eq!(p1.debt_stable.get(), p2.debt_stable.get(), "debt_stable diverged");
+        assert_eq!(p1.debt_asset.get(), p2.debt_asset.get(), "debt_asset diverged");
+        assert_eq!(
+            cm::signed_sum_to_int(p1.funding_fee.get(), p1.funding_fee_sign.get(), U256::ZERO, true),
+            cm::signed_sum_to_int(p2.funding_fee.get(), p2.funding_fee_sign.get(), U256::ZERO, true),
+            "direct liquidation double-settled the victim's trader funding vs the pre-settled control",
+        );
+        assert_eq!(
+            e1.calc_pnl_user(bob, price).expect("pnl path1"),
+            e2.calc_pnl_user(bob, price).expect("pnl path2"),
+            "victim pnl diverged between direct and pre-settled liquidation",
+        );
+    }
+
+    // (B) An oversized net-long liquidation — one demanding more asset liquidity than the victim's
+    // own balance plus the LP leg can supply — must revert LQ1 (the net-long branch in
+    // liquidation.rs, reachable only for an LP-backed victim). Reference:
+    // `testOversizedNetLongLiquidationRevertsLQ1`.
+    #[cfg(feature = "stub_boundary")]
+    #[test]
+    fn oversized_net_long_lp_victim_liquidation_reverts_lq1() {
+        let wad = U256::from(WAD_U64);
+        let bob = addr(0x91);
+        let charlie = addr(0x92);
+        let vm = TestVM::new();
+        let mut e = seed_lp_backed_liquidatable_long(&vm, bob, charlie);
+        let oversized = U256::from(10_000_000u64) * wad; // >> bob's 1e18 asset + the LP leg
+        assert_eq!(
+            e.liquidate_impl(charlie, bob, oversized, Bytes::new()),
+            Err(err(b"LQ1")),
+            "oversized net-long LP-victim liquidation must revert LQ1",
+        );
+    }
+
     // enableAutoClose stores the config (require profitTh>0||lossTh>0); disableAutoClose
     // deletes it. Neither makes external calls, so they run in the default build.
     #[test]
@@ -2037,7 +2157,7 @@
         assert_eq!(e.global_liquidity_asset.get(), U256::from(6_000u64) * wad, "asset reserves seeded");
     }
 
-    // initializeProduction matches the PerpPair constructor — full param set + SET*
+    // The production `#[constructor]` matches the PerpPair constructor — full param set + SET*
     // validation, and the fixed protocol constants identical to the benchmark initializer.
     #[test]
     fn initialize_production_parity_and_validation() {
@@ -2167,7 +2287,7 @@
     // Storage-narrowing boundary tests. Fields the packed layout narrows
     // below Solidity's uint256 must REVERT on an un-storable value, never silently truncate.
     // funding_c (u32) and param_time_lock (u64) pass prepare's validation (which doesn't bound
-    // them) and so reach the `set` narrowing guard; ema (u64) is narrowed in initializeProduction.
+    // them) and so reach the `set` narrowing guard; ema (u64) is narrowed in the `#[constructor]`.
     #[test]
     fn narrowing_boundaries() {
         let wad = U256::from(WAD_U64);

@@ -7,7 +7,7 @@ impl PerpEngine {
     /// (the `Decimals` struct, `CurveParameters`, `ClampParameters`, the identity liquidity
     /// matrix ×`liquidityMDecimals`) plus the `PerpStorage` defaults the engine relies on
     /// (signs, leverage caps, oracle decimals, `minimumTradeSize`, funding/liquidation
-    /// config). Shared by `initializeBenchmark` + `initializeProduction`; sets nothing that
+    /// config). Shared by `initializeBenchmark` + the production `#[constructor]`; sets nothing that
     /// either initializer configures (oracle/vault/forwarder/MMR/ticker/fees/ema).
     pub(crate) fn init_protocol_constants(&mut self) {
         let wad = U256::from(WAD_U64);

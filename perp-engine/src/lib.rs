@@ -1107,7 +1107,7 @@ impl PerpEngine {
 #[cfg(any(test, feature = "benchmark"))]
 impl PerpEngine {
     /// Benchmark/test initializer (no Stylus `#[constructor]`; called post-deploy). Sets the
-    /// fixed benchmark configuration; for a production deploy use `initializeProduction`.
+    /// fixed benchmark configuration; for a production deploy use the Stylus `#[constructor]`.
     pub fn initialize_benchmark(
         &mut self,
         oracle: Address,
