@@ -2378,19 +2378,18 @@
         assert_eq!(e.global_liquidity_asset.get(), U256::from(6_000u64) * wad, "asset reserves seeded");
     }
 
-    // The production `#[constructor]` matches the PerpPair constructor — full param set + SET*
+    // initializeProduction matches the PerpPair constructor — full param set + SET*
     // validation, and the fixed protocol constants identical to the benchmark initializer.
     #[test]
     fn initialize_production_parity_and_validation() {
         let wad = U256::from(WAD_U64);
         let ticker = B256::from(U256::from(0x455448u64)); // "ETH"
-        // Build a fresh engine + run the production constructor with the given params.
-        let admin = addr(0xAD);
+        // Build a fresh engine + run the production initializer with the given params.
         let go = |oracle, vault, fwd, mmr, ff: u64, fl: u64, fp, tf, flat| {
             let vm = TestVM::new();
             let mut e = PerpEngine::from(&vm);
-            let r = e.constructor(
-                admin, oracle, vault, fwd, mmr, ticker, U32::from(ff as u32), U32::from(fl as u32), fp, tf, flat,
+            let r = e.initialize_production(
+                oracle, vault, fwd, mmr, ticker, U32::from(ff as u32), U32::from(fl as u32), fp, tf, flat,
                 U256::from(90_000_000u64),
             );
             (e, r)
@@ -2415,10 +2414,21 @@
         assert_eq!(e.mmr_decimals.get(), U256::from(1_000_000u64), "mmrDecimals const");
         assert_eq!(e.liquidity_epochs.getter(U256::ZERO).liquidity_m00.get(), cm::i(U256::from_limbs([0u64, 65_536u64, 0, 0])), "identity M const (2^80)");
         assert_eq!(e.funding_c.get(), U32::from(1_000_000u32), "fundingC const");
-        // Roles go to the EXPLICIT admin, not msg_sender (the StylusDeployer in production).
-        assert!(e.has_role(keccak256("MOD_ROLE"), addr(0xAD)), "admin granted MOD_ROLE");
-        assert!(e.has_role(B256::ZERO, addr(0xAD)), "admin granted DEFAULT_ADMIN_ROLE");
+        // Roles go to the CALLER (the deployer runs initializeProduction post-deploy).
+        let caller = e.vm().msg_sender();
+        assert!(e.has_role(keccak256("MOD_ROLE"), caller), "caller granted MOD_ROLE");
+        assert!(e.has_role(B256::ZERO, caller), "caller granted DEFAULT_ADMIN_ROLE");
         assert!(e.initialized.get(), "initialized");
+        // One-shot guard: re-initializing a live engine reverts INIT.
+        {
+            let v = valid();
+            let (mut e2, _) = go(v.0, v.1, v.2, v.3, v.4, v.5, v.6, v.7, v.8);
+            assert_eq!(
+                e2.initialize_production(v.0, v.1, v.2, v.3, ticker, U32::from(v.4 as u32), U32::from(v.5 as u32), v.6, v.7, v.8, U256::from(90_000_000u64)),
+                Err(err(b"INIT")),
+                "second init -> INIT",
+            );
+        }
 
         // SET branches (each on a fresh engine)
         let v = valid();
@@ -2435,16 +2445,7 @@
         // revert MOV instead of wrapping under the bound (the audited U256-wrap parity gap).
         let huge = U256::from(1u64) << 238;
         assert_eq!(go(v.0, v.1, v.2, v.3, v.4, v.5, v.6, U256::ZERO, huge).1, Err(err(b"MOV")), "flat*wad overflow -> MOV");
-        // SET9: the explicit admin must be non-zero (fresh engine, admin=0).
-        {
-            let vm = TestVM::new();
-            let mut e = PerpEngine::from(&vm);
-            let r = e.constructor(
-                Address::ZERO, v.0, v.1, v.2, v.3, ticker, U32::from(v.4 as u32), U32::from(v.5 as u32), v.6, v.7, v.8,
-                U256::from(90_000_000u64),
-            );
-            assert_eq!(r, Err(err(b"SET9")), "admin=0 -> SET9");
-        }
+        // (No admin arg / SET9 in the post-deploy initializer — roles go to the caller/msg_sender.)
     }
 
     // setUnguardedParameters: MOD_ROLE-gated (revert "AC" without it), then applies the
@@ -2508,7 +2509,7 @@
     // Storage-narrowing boundary tests. Fields the packed layout narrows
     // below Solidity's uint256 must REVERT on an un-storable value, never silently truncate.
     // funding_c (u32) and param_time_lock (u64) pass prepare's validation (which doesn't bound
-    // them) and so reach the `set` narrowing guard; ema (u64) is narrowed in the `#[constructor]`.
+    // them) and so reach the `set` narrowing guard; ema (u64) is narrowed in initializeProduction.
     #[test]
     fn narrowing_boundaries() {
         let wad = U256::from(WAD_U64);
@@ -2540,11 +2541,11 @@
         ok.expect("funding_c == u32::MAX accepted");
         assert_eq!(e.funding_c.get(), U32::from(u32::MAX), "funding_c stored at boundary");
 
-        // production constructor: ema (u64) over-range reverts C
+        // production initializer: ema (u64) over-range reverts C
         let vm = TestVM::new();
         let mut e2 = PerpEngine::from(&vm);
-        let r = e2.constructor(
-            addr(0xAD), addr(0x01), addr(0x02), addr(0x03), U256::from(40_000u64), B256::ZERO, U32::from(300_000u32), U32::from(500_000u32),
+        let r = e2.initialize_production(
+            addr(0x01), addr(0x02), addr(0x03), U256::from(40_000u64), B256::ZERO, U32::from(300_000u32), U32::from(500_000u32),
             addr(0x04), U256::ZERO, U256::from(120_000_000_000_000_000u64), over_u64,
         );
         assert_eq!(r, Err(err(b"C")), "ema > u64::MAX -> C");

@@ -7,6 +7,8 @@
 pragma solidity ^0.8.23;
 
 interface IPerpEngine {
+    function initializeProduction(address oracle, address vault, address multi_call_manager, uint256 mmr, bytes32 ticker_asset_currency, uint32 fee_frontend, uint32 fee_lp, address fee_protocol_addr, uint256 trading_fee, uint256 flat_trading_fee, uint256 ema_param) external;
+
     function trade(bool direction, uint256 size, uint256 min_trade_return, uint256 initial_guess, address frontend_address, uint8 leverage, bytes calldata unverified_report) external returns (uint256);
 
     function tradeFor(address user, bool direction, uint256 size, uint256 min_trade_return, uint256 initial_guess, address frontend_address, uint8 leverage, bytes calldata unverified_report) external returns (uint256);

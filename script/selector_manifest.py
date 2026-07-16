@@ -184,6 +184,9 @@ ADDITIONS = {
     "autoCloseUserPositionFor(address,address,address,bytes)",
     "enableAutoCloseFor(address,uint256,uint256,uint256,uint256)",
     "disableAutoCloseFor(address)",
+    # Post-deploy production initializer (Stylus stand-in for the Solidity constructor — the
+    # wasm-opt'd multi-fragment artifact cannot route through the StylusDeployer #[constructor]).
+    "initializeProduction(address,address,address,uint256,bytes32,uint32,uint32,address,uint256,uint256,uint256)",
     # Settable trusted forwarder (OZ's is immutable).
     "setTrustedForwarder(address)",
     # Batch liquidation (keeper convenience; no Solidity counterpart). The initializer is a

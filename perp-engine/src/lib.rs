@@ -253,11 +253,16 @@ impl PerpEngine {
     /// as the constructor hardcodes them. `multi_call_manager` is the ERC2771 trusted forwarder.
     /// `admin` receives DEFAULT_ADMIN_ROLE + MOD_ROLE and is passed explicitly: in a Stylus
     /// constructor `msg_sender()` is the StylusDeployer, not the intended administrator.
-    #[constructor]
+    /// Production initializer (post-deploy, one-shot): sets the configurable protocol parameters and
+    /// grants the CALLER (the deployer) DEFAULT_ADMIN_ROLE + MOD_ROLE. Called via `cast` right after
+    /// the engine is deployed + activated. NOTE: a Stylus `#[constructor]` would make this atomic +
+    /// front-run-proof, but it routes through the StylusDeployer, which cannot deploy this contract's
+    /// wasm-opt'd multi-fragment artifact (the only one that fits the activation cap) — so init is a
+    /// separate call; run it immediately after deploy (same operator, next tx) to minimise the window.
+    #[selector(name = "initializeProduction")]
     #[allow(clippy::too_many_arguments)]
-    pub fn constructor(
+    pub fn initialize_production(
         &mut self,
-        admin: Address,
         oracle: Address,
         vault: Address,
         multi_call_manager: Address,
@@ -270,8 +275,10 @@ impl PerpEngine {
         flat_trading_fee: U256,
         ema_param: U256,
     ) -> Result<(), Vec<u8>> {
-        // The SDK constructor wrapper guarantees single execution via its own storage slot;
-        // `finalize_init` still sets the `initialized` flag for op-gating reads.
+        // One-shot guard: a direct-call initializer has no SDK constructor once-guard.
+        if self.initialized.get() {
+            return Err(err(b"INIT"));
+        }
         // Fixed protocol constants first, so the SET checks read the same
         // `feeFractionsDecimals`/`tradingFeeDecimals`/`minimumTradeSize` storage the
         // Solidity constructor reads.
@@ -280,10 +287,6 @@ impl PerpEngine {
         let fee_frac_dec = self.fee_fractions_decimals.get(); // 1e6
         let trading_fee_dec = self.trading_fee_decimals.get(); // 1e18
         let min_trade = self.minimum_trade_size.get(); // 48e18
-        // SET9: the explicit administrator must be non-zero (roles are granted to it below).
-        if admin == Address::ZERO {
-            return Err(err(b"SET9"));
-        }
         if oracle == Address::ZERO {
             return Err(err(b"SET2"));
         }
@@ -328,6 +331,7 @@ impl PerpEngine {
         self.flat_trading_fee.set(flat_trading_fee);
         // emaParam is uint256 in Solidity but stored narrowed to u64 here → range-revert `C`.
         self.ema_param.set(U64::from(u64::try_from(ema_param).map_err(|_| err(b"C"))?));
+        let admin = self.vm().msg_sender(); // roles go to the deployer (the initializer caller)
         self.finalize_init(admin);
         Ok(())
     }
@@ -1159,7 +1163,7 @@ impl PerpEngine {
 #[cfg(any(test, feature = "benchmark"))]
 impl PerpEngine {
     /// Benchmark/test initializer (no Stylus `#[constructor]`; called post-deploy). Sets the
-    /// fixed benchmark configuration; for a production deploy use the Stylus `#[constructor]`.
+    /// fixed benchmark configuration; for a production deploy use `initializeProduction`.
     pub fn initialize_benchmark(
         &mut self,
         oracle: Address,
