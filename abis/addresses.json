@@ -1,11 +1,11 @@
 {
   "network": "arbitrum-sepolia",
   "chainId": 421614,
-  "deploy": "2026-07-16 redeploy carrying the full Solidity->Stylus security realignment + H9/item20 (role events, batch bounds, granular trading breaker, batch auto-close) on stylus-sdk 0.10.8. Engine deployed via wasm-opt'd --wasm-file (opt sha256 1f2e01bc..., raw 314205 B sha256 f3f9d9c5...), activated, then initializeProduction (post-deploy init; roles -> deployer). Trading/curve params verified bit-identical to the prior public engine 0xC46E on-chain. Solidity contracts NOT yet Arbiscan-verified (deployed without --verify); oracle redeployed fresh.",
+  "deploy": "2026-07-16 redeploy carrying the full Solidity->Stylus security realignment + H9/item20 (role events, batch bounds, granular trading breaker, batch auto-close) on stylus-sdk 0.10.8. Engine deployed via wasm-opt'd --wasm-file (opt sha256 1f2e01bc..., raw 314205 B sha256 f3f9d9c5...), activated, then initializeProduction (post-deploy init; roles -> deployer). Trading/curve params verified bit-identical to the prior public engine 0xC46E…A600 on-chain. Solidity contracts NOT yet Arbiscan-verified (deployed without --verify); oracle redeployed fresh.",
   "report": "docs/DEPLOYMENT.md",
   "contracts": {
     "PerpEngine":           { "address": "0x656a276db415d3ac5ecc7926c183795f65ea1352", "type": "stylus-wasm", "abi": "PerpEngine.json",           "deployed": true, "note": "initialized (MMR=40000, admin=deployer holds DEFAULT_ADMIN+MOD); cached. wasm-opt'd artifact opt sha256 1f2e01bc... — NOT Arbiscan managed-verifiable (wasm-opt); Path-C reproducible re-derivation only (see docs/VERIFICATION.md)" },
-    "CallBatcher":          { "address": "0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c", "type": "solidity",    "abi": "CallBatcher.json",          "deployed": false, "note": "STALE — still points at the old engine 0xC46E; redeploy/repoint at the new engine before use" },
+    "CallBatcher":          { "address": "0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c", "type": "solidity",    "abi": "CallBatcher.json",          "deployed": false, "note": "STALE — still points at the old engine 0xC46E…A600; redeploy/repoint at the new engine before use" },
     "StylusPerpMultiCalls": { "address": "0x59052fC631d925f8083435434f7fAE5D9937ae93", "type": "solidity",    "abi": "StylusPerpMultiCalls.json", "deployed": true, "verified": false },
     "Vault":                { "address": "0x8B7110857980De47996ADe2A85ce389D43dC8532", "type": "solidity",    "abi": "Vault.json",                "deployed": true, "verified": false },
     "LostAndFound":         { "address": "0xfBb1AAc8949e9748b4498457871aCBA26D256735", "type": "solidity",    "abi": "LostAndFound.json",         "deployed": true, "verified": false },

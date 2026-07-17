@@ -13,14 +13,14 @@ deployment artifacts.
 
 | Component | Address | Notes |
 | --- | --- | --- |
-| `PerpEngine` | `0xC46E6F46B24177Cc0B3A0D14f005b8AB24B9A600` | Stylus WASM, reproducible nightly artifact |
-| `CallBatcher` | `0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c` | Solidity read batcher, source-verified; redeployed 2026-06-19 for Stylus collateral-read compatibility |
-| `StylusPerpMultiCalls` | `0xF52Ea4c86501a9428ddC5CbD1637831C997f3986` | Solidity manager / trusted forwarder |
-| `Vault` | `0xCBcb733D0c6D550026F50e9d7F7F0470105eC2Ac` | Solidity collateral custody |
-| `LostAndFound` | `0x1988D0974f180A6847679c9C8E83d41D1E25128c` | Solidity recovery contract |
-| `CurveMath` | `0xd2Ed1798BC3a1FED685c3DB2eb5846F8A13Cf510` | Solidity library |
-| `UtilMath` | `0x1A32b61A29B07251D01Df5BA84E7d88b6c19beC3` | Solidity library |
-| `TWAPOracleMiddleware` | `0x539937f3A18604E89f3AaafB13F6e417342c4b90` | Solidity oracle middleware |
+| `PerpEngine` | `0x656a276db415d3ac5ecc7926c183795f65ea1352` | Stylus WASM, reproducible nightly artifact |
+| `CallBatcher` | `0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c` | Solidity read batcher, source-verified; redeployed 2026-06-19 for Stylus collateral-read compatibility. STALE for this stack — still bound to the old engine 0xC46E…A600; redeploy/repoint before use |
+| `StylusPerpMultiCalls` | `0x59052fC631d925f8083435434f7fAE5D9937ae93` | Solidity manager / trusted forwarder |
+| `Vault` | `0x8B7110857980De47996ADe2A85ce389D43dC8532` | Solidity collateral custody |
+| `LostAndFound` | `0xfBb1AAc8949e9748b4498457871aCBA26D256735` | Solidity recovery contract |
+| `CurveMath` | `0x7be5f452fd90b6b708134e086b42a82fd1f6d80c` | Solidity library |
+| `UtilMath` | `0xb5b086a0d3da94e5e9f83e02c8f93104e7ce47cd` | Solidity library |
+| `TWAPOracleMiddleware` | `0x17aB8Ada1A2EA89A7E28fb4Ba8E5D0A65A6c5D8a` | Solidity oracle middleware |
 | Stablecoin | `0xad78f7E737288e4a8CdF27d8e9c59B15399936EA` | Reused USDC.e test token |
 
 The ABI map is maintained in [../abis/addresses.json](../abis/addresses.json).

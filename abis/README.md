@@ -9,14 +9,14 @@ Network: Arbitrum Sepolia (`421614`).
 
 | Contract | ABI file | Address | Notes |
 | --- | --- | --- | --- |
-| `PerpEngine` | `PerpEngine.json` | `0xC46E6F46B24177Cc0B3A0D14f005b8AB24B9A600` | Stylus WASM engine ABI of the **deployed** engine at this address (reproducible artifact hash `957e7cd6...`), **not** the current `perp-engine` source — it is intentionally pinned to the live contract and is regenerated only on redeploy; not fully Arbiscan source-verified via managed Stylus flow |
-| `CallBatcher` | `CallBatcher.json` | `0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c` | Solidity read batcher; source-verified; redeployed 2026-06-19 to read collateral from the Vault instead of `PerpEngine.getCollateral` |
-| `StylusPerpMultiCalls` | `StylusPerpMultiCalls.json` | `0xF52Ea4c86501a9428ddC5CbD1637831C997f3986` | Solidity manager / trusted forwarder; source-verified |
-| `Vault` | `Vault.json` | `0xCBcb733D0c6D550026F50e9d7F7F0470105eC2Ac` | Solidity collateral custody; source-verified |
-| `LostAndFound` | `LostAndFound.json` | `0x1988D0974f180A6847679c9C8E83d41D1E25128c` | Solidity recovery contract; source-verified |
-| `CurveMath` | `CurveMath.json` | `0xd2Ed1798BC3a1FED685c3DB2eb5846F8A13Cf510` | Solidity library used by front-end quote paths; source-verified |
-| `UtilMath` | `UtilMath.json` | `0x1A32b61A29B07251D01Df5BA84E7d88b6c19beC3` | Solidity library used by front-end quotes and Vault margin checks; source-verified |
-| `Oracle` | `Oracle.json` | `0x539937f3A18604E89f3AaafB13F6e417342c4b90` | `TWAPOracleMiddleware`; source-verified; carries the empty-report short-circuit fix |
+| `PerpEngine` | `PerpEngine.json` | `0x656a276db415d3ac5ecc7926c183795f65ea1352` | Stylus WASM engine ABI of the **deployed** engine at this address (reproducible artifact hash `1f2e01bc...`), **not** the current `perp-engine` source — it is intentionally pinned to the live contract and is regenerated only on redeploy; not fully Arbiscan source-verified via managed Stylus flow |
+| `CallBatcher` | `CallBatcher.json` | `0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c` | Solidity read batcher; verification pending (2026-07-16 redeploy); redeployed 2026-06-19 to read collateral from the Vault instead of `PerpEngine.getCollateral` |
+| `StylusPerpMultiCalls` | `StylusPerpMultiCalls.json` | `0x59052fC631d925f8083435434f7fAE5D9937ae93` | Solidity manager / trusted forwarder; verification pending (2026-07-16 redeploy) |
+| `Vault` | `Vault.json` | `0x8B7110857980De47996ADe2A85ce389D43dC8532` | Solidity collateral custody; verification pending (2026-07-16 redeploy) |
+| `LostAndFound` | `LostAndFound.json` | `0xfBb1AAc8949e9748b4498457871aCBA26D256735` | Solidity recovery contract; verification pending (2026-07-16 redeploy) |
+| `CurveMath` | `CurveMath.json` | `0x7be5f452fd90b6b708134e086b42a82fd1f6d80c` | Solidity library used by front-end quote paths; verification pending (2026-07-16 redeploy) |
+| `UtilMath` | `UtilMath.json` | `0xb5b086a0d3da94e5e9f83e02c8f93104e7ce47cd` | Solidity library used by front-end quotes and Vault margin checks; verification pending (2026-07-16 redeploy) |
+| `Oracle` | `Oracle.json` | `0x17aB8Ada1A2EA89A7E28fb4Ba8E5D0A65A6c5D8a` | `TWAPOracleMiddleware`; verification pending (2026-07-16 redeploy); carries the empty-report short-circuit fix |
 | `Stablecoin` | `ERC20.json` | `0xad78f7E737288e4a8CdF27d8e9c59B15399936EA` | Reused USDC.e-style test token, 6 decimals |
 
 ## ABI lanes: deployed vs candidate
@@ -24,7 +24,7 @@ Network: Arbitrum Sepolia (`421614`).
 Two explicit lanes are kept (per the tooling audit):
 
 - **Deployed ABI** — [`PerpEngine.json`](PerpEngine.json): pinned to the LIVE engine
-  (`0xC46E…`, reproducible hash `957e7cd6…`), regenerated only on redeploy. Off-chain
+  (`0x656a…1352`, reproducible opt hash `1f2e01bc…`), regenerated only on redeploy. Off-chain
   consumers decoding calls to the *current on-chain* engine use this.
 - **Candidate ABI** — [`PerpEngine.candidate.abi.sol`](PerpEngine.candidate.abi.sol): the
   macro-authoritative interface generated from the *current* `perp-engine` source
@@ -51,7 +51,7 @@ converge.
   reads; the engine does not own ERC20 collateral.
 - Batched collateral reads should use `CallBatcher.batchCollateral`; the batcher resolves
   the Vault through `PerpEngine.ReadParameters()[0]` and does not call the removed
-  `PerpEngine.getCollateral(address)` selector.
+  `PerpEngine.getCollateral(address)` selector. STALE for this stack (bound to the old engine 0xC46E…A600) — redeploy/repoint before use.
 - Every price-dependent write should attach a fresh signed Chainlink Data Streams v3
   report so `TWAPOracleMiddleware.getPrice()` remains fresh.
 

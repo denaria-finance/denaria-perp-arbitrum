@@ -4,7 +4,7 @@
 # export, not regex text-parsing) and diff it against the committed candidate
 # snapshot. Two explicit lanes, per the tooling audit:
 #
-#   - DEPLOYED ABI  : abis/PerpEngine.json — pinned to the LIVE engine (0xC46E…),
+#   - DEPLOYED ABI  : abis/PerpEngine.json — pinned to the LIVE engine (0x656a…1352),
 #                     regenerated only on redeploy. NOT the current source.
 #   - CANDIDATE ABI : abis/PerpEngine.candidate.abi.sol — generated from the
 #                     current source tree; THIS script keeps it in sync in CI.
