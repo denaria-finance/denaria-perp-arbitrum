@@ -11,7 +11,7 @@
     "LostAndFound":         { "address": "0xfBb1AAc8949e9748b4498457871aCBA26D256735", "type": "solidity",    "abi": "LostAndFound.json",         "deployed": true, "verified": false },
     "CurveMath":            { "address": "0x7be5f452fd90b6b708134e086b42a82fd1f6d80c", "type": "solidity-library", "abi": "CurveMath.json",       "deployed": true, "verified": false },
     "UtilMath":             { "address": "0xb5b086a0d3da94e5e9f83e02c8f93104e7ce47cd", "type": "solidity-library", "abi": "UtilMath.json",        "deployed": true, "verified": false },
-    "Oracle":               { "address": "0x17aB8Ada1A2EA89A7E28fb4Ba8E5D0A65A6c5D8a", "type": "solidity",    "abi": "Oracle.json",               "deployed": true, "verified": false, "note": "fresh TWAPOracleMiddleware (BTC), maxTimeDelta=20s, funded with 3 LINK; getPrice reverts OM2 until a signed Chainlink Data Streams v3 report is submitted" },
+    "Oracle":               { "address": "0x17aB8Ada1A2EA89A7E28fb4Ba8E5D0A65A6c5D8a", "type": "solidity",    "abi": "Oracle.json",               "deployed": true, "verified": false, "note": "fresh TWAPOracleMiddleware (BTC), maxTimeDelta=20s, funded with 3 LINK; getPrice reverts OM2 until a signed Chainlink Data Streams v3 report is submitted. Configured for the Arbitrum Sepolia TESTNET BTC/USD stream (feedId 0x00037da0…5b439) verified via the Sepolia VerifierProxy; a MAINNET Data Streams report (e.g. feedId 0x00039d9e…75b8) will NOT verify on Sepolia (VerifierNotFound)" },
     "Stablecoin":           { "address": "0xad78f7E737288e4a8CdF27d8e9c59B15399936EA", "type": "solidity",    "abi": "ERC20.json",                "deployed": false, "note": "reused USDC.e, 6 decimals (unchanged from the prior deploy)" }
   }
 }

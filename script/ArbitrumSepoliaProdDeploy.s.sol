@@ -13,14 +13,14 @@ import { StylusPerpMultiCalls } from "../src/manager/StylusPerpMultiCalls.sol";
 ///         `perp-engine` WASM program supplied via `PERP_ENGINE`.
 ///
 ///         IMPORTANT: Foundry's EVM cannot EXECUTE Stylus (WASM) contracts — a call to the
-///         engine reverts `OpcodeNotFound` in `forge script` simulation. The engine initializes
-///         atomically via its Stylus `#[constructor]` (deploy+activate+init through StylusDeployer,
-///         which closes the old public-initializer front-run window) — there is NO separate
-///         `initializeProduction` call. So this script deploys the Solidity periphery FIRST, and
-///         the engine is deployed AFTERWARDS with the periphery addresses as constructor args; the
-///         Solidity-side wiring (`manager.initializeAddresses` / `vault.initializeParameters`, which
-///         merely store the engine address) is then done via `cast` per the runbook. All engine
-///         reads and role handoff also go via `cast`.
+///         engine reverts `OpcodeNotFound` in `forge script` simulation. So this script deploys
+///         the Solidity periphery FIRST; the engine (the wasm-opt'd artifact) is deployed and
+///         activated AFTERWARDS via `cargo stylus deploy --wasm-file`, which does a raw create and
+///         does NOT run a Stylus `#[constructor]`, so the engine is initialized post-activation
+///         with a one-shot admin-guarded `initializeProduction(...)` call. The Solidity-side wiring
+///         (`manager.initializeAddresses` / `vault.initializeParameters`, which merely store the
+///         engine address) is then done via `cast` per the runbook. All engine reads and role
+///         handoff also go via `cast`.
 ///
 ///         All parameters are read from the environment unchanged; see docs/DEPLOYMENT.md.
 contract ArbitrumSepoliaProdDeploy is Script {
@@ -28,11 +28,11 @@ contract ArbitrumSepoliaProdDeploy is Script {
         uint256 deployerPk = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPk);
 
-        // PERP_ENGINE is OPTIONAL now: the engine initializes atomically via its Stylus
-        // `#[constructor]` (StylusDeployer), so the periphery is deployed FIRST and the engine
-        // afterwards with these addresses as constructor args. Leave PERP_ENGINE unset for that
-        // periphery-first flow (this script then logs the next steps). If PERP_ENGINE IS set
-        // (a pre-existing engine), the Solidity-side wiring is done inline as before.
+        // PERP_ENGINE is OPTIONAL: the engine is deployed AFTER the periphery and initialized
+        // post-activation via `initializeProduction` (the `--wasm-file` deploy path does not run a
+        // Stylus `#[constructor]`). Leave PERP_ENGINE unset for that periphery-first flow (this
+        // script then logs the next steps). If PERP_ENGINE IS set (a pre-existing engine), the
+        // Solidity-side wiring is done inline as before.
         address engine = vm.envOr("PERP_ENGINE", address(0));
         address oracle = vm.envAddress("EXISTING_ORACLE");
         require(oracle != address(0), "EXISTING_ORACLE not set");
@@ -105,13 +105,15 @@ contract ArbitrumSepoliaProdDeploy is Script {
             console2.log("PerpEngine (pre-existing, wired)", engine);
         } else {
             // Periphery-first flow: deploy the engine next, then wire it (cast).
-            console2.log("NEXT (1/2): deploy the engine via constructor with these args:");
-            console2.log("  admin=<governance/Safe>  oracle=", oracle);
+            console2.log("NEXT (1/3): deploy + activate the engine (wasm-opt'd artifact):");
+            console2.log("  cargo stylus deploy --wasm-file engine.Oz.wasm --private-key $PK --endpoint $RPC");
+            console2.log("NEXT (2/3): initialize the engine (selector 0xa0d9afc0; caller receives admin+mod roles):");
+            console2.log("  oracle=", oracle);
             console2.log("  vault=", address(vault));
             console2.log("  multiCallManager=", address(manager));
             console2.log("  (+ mmr, ticker, feeFrontend, feeLP, feeProtocolAddr, tradingFee, flatTradingFee, emaParam)");
-            console2.log("  cargo stylus deploy --wasm-file engine.Oz.wasm --constructor-signature 'constructor(address,address,address,address,uint256,bytes32,uint32,uint32,address,uint256,uint256,uint256)' --constructor-args <admin> <oracle> <vault> <manager> ...");
-            console2.log("NEXT (2/2, cast, after the engine is up):");
+            console2.log("  cast send <engine> 'initializeProduction(address,address,address,uint256,bytes32,uint32,uint32,address,uint256,uint256,uint256)' <oracle> <vault> <manager> ...");
+            console2.log("NEXT (3/3, cast, after the engine is up):");
             console2.log("  manager.initializeAddresses(<engine>, vault); vault.initializeParameters(<engine>, lostAndFound); then cargo stylus cache bid <engine> <BID>");
         }
     }

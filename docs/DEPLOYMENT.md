@@ -13,15 +13,15 @@ deployment artifacts.
 
 | Component | Address | Notes |
 | --- | --- | --- |
-| `PerpEngine` | `0x656a276db415d3ac5ecc7926c183795f65ea1352` | Stylus WASM, reproducible nightly artifact |
-| `CallBatcher` | `0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c` | Solidity read batcher, source-verified; redeployed 2026-06-19 for Stylus collateral-read compatibility. STALE for this stack — still bound to the old engine 0xC46E…A600; redeploy/repoint before use |
-| `StylusPerpMultiCalls` | `0x59052fC631d925f8083435434f7fAE5D9937ae93` | Solidity manager / trusted forwarder |
-| `Vault` | `0x8B7110857980De47996ADe2A85ce389D43dC8532` | Solidity collateral custody |
-| `LostAndFound` | `0xfBb1AAc8949e9748b4498457871aCBA26D256735` | Solidity recovery contract |
-| `CurveMath` | `0x7be5f452fd90b6b708134e086b42a82fd1f6d80c` | Solidity library |
-| `UtilMath` | `0xb5b086a0d3da94e5e9f83e02c8f93104e7ce47cd` | Solidity library |
-| `TWAPOracleMiddleware` | `0x17aB8Ada1A2EA89A7E28fb4Ba8E5D0A65A6c5D8a` | Solidity oracle middleware |
-| Stablecoin | `0xad78f7E737288e4a8CdF27d8e9c59B15399936EA` | Reused USDC.e test token |
+| `PerpEngine` | [`0x656a276db415d3ac5ecc7926c183795f65ea1352`](https://sepolia.arbiscan.io/address/0x656a276db415d3ac5ecc7926c183795f65ea1352) | Stylus WASM, reproducible nightly artifact |
+| `CallBatcher` | [`0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c`](https://sepolia.arbiscan.io/address/0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c) | Solidity read batcher, source-verified; redeployed 2026-06-19 for Stylus collateral-read compatibility. STALE for this stack — still bound to the old engine 0xC46E…A600; redeploy/repoint before use |
+| `StylusPerpMultiCalls` | [`0x59052fC631d925f8083435434f7fAE5D9937ae93`](https://sepolia.arbiscan.io/address/0x59052fC631d925f8083435434f7fAE5D9937ae93) | Solidity manager / trusted forwarder |
+| `Vault` | [`0x8B7110857980De47996ADe2A85ce389D43dC8532`](https://sepolia.arbiscan.io/address/0x8B7110857980De47996ADe2A85ce389D43dC8532) | Solidity collateral custody |
+| `LostAndFound` | [`0xfBb1AAc8949e9748b4498457871aCBA26D256735`](https://sepolia.arbiscan.io/address/0xfBb1AAc8949e9748b4498457871aCBA26D256735) | Solidity recovery contract |
+| `CurveMath` | [`0x7be5f452fd90b6b708134e086b42a82fd1f6d80c`](https://sepolia.arbiscan.io/address/0x7be5f452fd90b6b708134e086b42a82fd1f6d80c) | Solidity library |
+| `UtilMath` | [`0xb5b086a0d3da94e5e9f83e02c8f93104e7ce47cd`](https://sepolia.arbiscan.io/address/0xb5b086a0d3da94e5e9f83e02c8f93104e7ce47cd) | Solidity library |
+| `TWAPOracleMiddleware` | [`0x17aB8Ada1A2EA89A7E28fb4Ba8E5D0A65A6c5D8a`](https://sepolia.arbiscan.io/address/0x17aB8Ada1A2EA89A7E28fb4Ba8E5D0A65A6c5D8a) | Solidity oracle middleware |
+| Stablecoin | [`0xad78f7E737288e4a8CdF27d8e9c59B15399936EA`](https://sepolia.arbiscan.io/address/0xad78f7E737288e4a8CdF27d8e9c59B15399936EA) | Reused USDC.e test token |
 
 The ABI map is maintained in [../abis/addresses.json](../abis/addresses.json).
 
@@ -71,11 +71,25 @@ PERP_ENGINE=<address> RPC="$ARBITRUM_SEPOLIA_RPC_URL" ./script/cache_keeper.sh
 Run it on a schedule (e.g. cron); a non-zero exit means the engine is not cached or is at
 eviction risk.
 
-## Solidity Periphery + engine constructor
+## Solidity Periphery + engine initialization
 
-The engine initializes atomically through its Stylus `#[constructor]` (deploy + activate +
-initialize via StylusDeployer), so it is deployed AFTER the periphery and there is no separate
-`initializeProduction` call. Order:
+Foundry's EVM cannot execute Stylus (WASM) contracts, so the Solidity periphery is deployed
+FIRST and the engine is deployed and initialized separately, in that order.
+
+The deployed engine is the `wasm-opt -Oz` artifact — the only build that fits the Stylus
+activation size cap. cargo-stylus deploys a pre-built artifact through its `--wasm-file` path,
+which performs a raw contract creation + activation and does **not** run a Stylus
+`#[constructor]` (the `--constructor-signature` flag is currently ignored on that path). The
+engine is therefore initialized with a one-shot, admin-guarded `initializeProduction(...)` call
+after activation.
+
+> Target flow: an atomic deploy + activate + initialize via a real `#[constructor]`
+> (StylusDeployer) once cargo-stylus routes a constructor through `--wasm-file`, or once the
+> un-optimized build fits under the activation cap and the native `cargo stylus deploy` path can
+> be used. Until then `initializeProduction` is the supported path; a hardcoded-admin caller
+> check makes the two-step deploy front-run-proof.
+
+Order:
 
 **1. Deploy the periphery first** (leave `PERP_ENGINE` unset so the script skips engine wiring):
 
@@ -95,19 +109,21 @@ forge script script/ArbitrumSepoliaProdDeploy.s.sol:ArbitrumSepoliaProdDeploy \
 
 Record the printed `manager`, `Vault`, and `LostAndFound` addresses.
 
-**2. Deploy the engine via its constructor**, passing the periphery addresses (`admin` is the
-governance/Safe address that receives DEFAULT_ADMIN + MOD roles):
+**2. Deploy + activate the engine**, then initialize it with `initializeProduction` (the caller
+receives DEFAULT_ADMIN + MOD roles, so run it from the governance/admin key):
 
 ```bash
-cargo stylus deploy \
-  --wasm-file engine.Oz.wasm \
-  --private-key "$PRIVATE_KEY" --endpoint "$ARBITRUM_SEPOLIA_RPC_URL" \
-  --constructor-signature "constructor(address,address,address,address,uint256,bytes32,uint32,uint32,address,uint256,uint256,uint256)" \
-  --constructor-args "$ADMIN" "$EXISTING_ORACLE" "$VAULT" "$STYLUS_PERP_MULTICALLS" \
-    "$MMR" "$TICKER_ASSET_CURRENCY" "$FEE_FRONTEND" "$FEE_LP" "$FEE_PROTOCOL_ADDR" \
-    "$TRADING_FEE" "$FLAT_TRADING_FEE" "$EMA_PARAM"
-# --constructor-args is variadic — keep it LAST. Confirm the engine is initialized afterwards
-# (e.g. `cast call $ENGINE 'MMR()(uint256)'` returns the configured value; $ADMIN holds the roles).
+# deploy + activate the wasm-opt'd artifact (raw create; no constructor on this path)
+cargo stylus deploy --wasm-file engine.Oz.wasm \
+  --private-key "$PRIVATE_KEY" --endpoint "$ARBITRUM_SEPOLIA_RPC_URL"
+
+# one-shot init — set PERP_ENGINE to the address printed above (selector 0xa0d9afc0)
+cast send "$PERP_ENGINE" \
+  "initializeProduction(address,address,address,uint256,bytes32,uint32,uint32,address,uint256,uint256,uint256)" \
+  "$EXISTING_ORACLE" "$VAULT" "$STYLUS_PERP_MULTICALLS" "$MMR" "$TICKER_ASSET_CURRENCY" \
+  "$FEE_FRONTEND" "$FEE_LP" "$FEE_PROTOCOL_ADDR" "$TRADING_FEE" "$FLAT_TRADING_FEE" "$EMA_PARAM" \
+  --rpc-url "$ARBITRUM_SEPOLIA_RPC_URL" --private-key "$PRIVATE_KEY"
+# Confirm: `cast call $PERP_ENGINE 'MMR()(uint256)'` returns the configured value; the caller holds the roles.
 ```
 
 **3. Wire the periphery to the engine** with `cast` (stores the engine address), then cache it:
