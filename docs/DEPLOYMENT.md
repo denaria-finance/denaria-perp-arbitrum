@@ -14,7 +14,7 @@ deployment artifacts.
 | Component | Address | Notes |
 | --- | --- | --- |
 | `PerpEngine` | [`0x656a276db415d3ac5ecc7926c183795f65ea1352`](https://sepolia.arbiscan.io/address/0x656a276db415d3ac5ecc7926c183795f65ea1352) | Stylus WASM, reproducible nightly artifact |
-| `CallBatcher` | [`0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c`](https://sepolia.arbiscan.io/address/0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c) | Solidity read batcher, source-verified; redeployed 2026-06-19 for Stylus collateral-read compatibility. STALE for this stack — still bound to the old engine 0xC46E…A600; redeploy/repoint before use |
+| `CallBatcher` | [`0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c`](https://sepolia.arbiscan.io/address/0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c) | Solidity read batcher, source-verified; redeployed 2026-06-19 for Stylus collateral-read compatibility. Stateless — reusable as-is with the current engine (pass it as `perpPairAddress`); not bound to any engine |
 | `StylusPerpMultiCalls` | [`0x59052fC631d925f8083435434f7fAE5D9937ae93`](https://sepolia.arbiscan.io/address/0x59052fC631d925f8083435434f7fAE5D9937ae93) | Solidity manager / trusted forwarder |
 | `Vault` | [`0x8B7110857980De47996ADe2A85ce389D43dC8532`](https://sepolia.arbiscan.io/address/0x8B7110857980De47996ADe2A85ce389D43dC8532) | Solidity collateral custody |
 | `LostAndFound` | [`0xfBb1AAc8949e9748b4498457871aCBA26D256735`](https://sepolia.arbiscan.io/address/0xfBb1AAc8949e9748b4498457871aCBA26D256735) | Solidity recovery contract |

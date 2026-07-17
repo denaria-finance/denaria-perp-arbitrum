@@ -10,13 +10,13 @@ Network: Arbitrum Sepolia (`421614`).
 | Contract | ABI file | Address | Notes |
 | --- | --- | --- | --- |
 | `PerpEngine` | `PerpEngine.json` | [`0x656a276db415d3ac5ecc7926c183795f65ea1352`](https://sepolia.arbiscan.io/address/0x656a276db415d3ac5ecc7926c183795f65ea1352) | Stylus WASM engine ABI of the **deployed** engine at this address (reproducible artifact hash `1f2e01bc...`), **not** the current `perp-engine` source — it is intentionally pinned to the live contract and is regenerated only on redeploy; not fully Arbiscan source-verified via managed Stylus flow |
-| `CallBatcher` | `CallBatcher.json` | [`0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c`](https://sepolia.arbiscan.io/address/0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c) | Solidity read batcher; verification pending (2026-07-16 redeploy); redeployed 2026-06-19 to read collateral from the Vault instead of `PerpEngine.getCollateral` |
-| `StylusPerpMultiCalls` | `StylusPerpMultiCalls.json` | [`0x59052fC631d925f8083435434f7fAE5D9937ae93`](https://sepolia.arbiscan.io/address/0x59052fC631d925f8083435434f7fAE5D9937ae93) | Solidity manager / trusted forwarder; verification pending (2026-07-16 redeploy) |
-| `Vault` | `Vault.json` | [`0x8B7110857980De47996ADe2A85ce389D43dC8532`](https://sepolia.arbiscan.io/address/0x8B7110857980De47996ADe2A85ce389D43dC8532) | Solidity collateral custody; verification pending (2026-07-16 redeploy) |
-| `LostAndFound` | `LostAndFound.json` | [`0xfBb1AAc8949e9748b4498457871aCBA26D256735`](https://sepolia.arbiscan.io/address/0xfBb1AAc8949e9748b4498457871aCBA26D256735) | Solidity recovery contract; verification pending (2026-07-16 redeploy) |
-| `CurveMath` | `CurveMath.json` | [`0x7be5f452fd90b6b708134e086b42a82fd1f6d80c`](https://sepolia.arbiscan.io/address/0x7be5f452fd90b6b708134e086b42a82fd1f6d80c) | Solidity library used by front-end quote paths; verification pending (2026-07-16 redeploy) |
-| `UtilMath` | `UtilMath.json` | [`0xb5b086a0d3da94e5e9f83e02c8f93104e7ce47cd`](https://sepolia.arbiscan.io/address/0xb5b086a0d3da94e5e9f83e02c8f93104e7ce47cd) | Solidity library used by front-end quotes and Vault margin checks; verification pending (2026-07-16 redeploy) |
-| `Oracle` | `Oracle.json` | [`0x17aB8Ada1A2EA89A7E28fb4Ba8E5D0A65A6c5D8a`](https://sepolia.arbiscan.io/address/0x17aB8Ada1A2EA89A7E28fb4Ba8E5D0A65A6c5D8a) | `TWAPOracleMiddleware`; verification pending (2026-07-16 redeploy); carries the empty-report short-circuit fix; expects the Arbitrum Sepolia **testnet** BTC/USD Data Streams feed — a mainnet report will not verify on Sepolia |
+| `CallBatcher` | `CallBatcher.json` | [`0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c`](https://sepolia.arbiscan.io/address/0x2c74f281E1324EAcDd9583e13d8BdA1b7680B38c) | Solidity read batcher, Arbiscan-verified; **stateless** — reusable as-is with the current engine (pass it as the `perpPairAddress` argument); reads collateral from the Vault, not the removed `PerpEngine.getCollateral` |
+| `StylusPerpMultiCalls` | `StylusPerpMultiCalls.json` | [`0x59052fC631d925f8083435434f7fAE5D9937ae93`](https://sepolia.arbiscan.io/address/0x59052fC631d925f8083435434f7fAE5D9937ae93) | Solidity manager / trusted forwarder; source-verified |
+| `Vault` | `Vault.json` | [`0x8B7110857980De47996ADe2A85ce389D43dC8532`](https://sepolia.arbiscan.io/address/0x8B7110857980De47996ADe2A85ce389D43dC8532) | Solidity collateral custody; source-verified |
+| `LostAndFound` | `LostAndFound.json` | [`0xfBb1AAc8949e9748b4498457871aCBA26D256735`](https://sepolia.arbiscan.io/address/0xfBb1AAc8949e9748b4498457871aCBA26D256735) | Solidity recovery contract; source-verified |
+| `CurveMath` | `CurveMath.json` | [`0x7be5f452fd90b6b708134e086b42a82fd1f6d80c`](https://sepolia.arbiscan.io/address/0x7be5f452fd90b6b708134e086b42a82fd1f6d80c) | Solidity library used by front-end quote paths; source-verified |
+| `UtilMath` | `UtilMath.json` | [`0xb5b086a0d3da94e5e9f83e02c8f93104e7ce47cd`](https://sepolia.arbiscan.io/address/0xb5b086a0d3da94e5e9f83e02c8f93104e7ce47cd) | Solidity library used by front-end quotes and Vault margin checks; source-verified |
+| `Oracle` | `Oracle.json` | [`0x17aB8Ada1A2EA89A7E28fb4Ba8E5D0A65A6c5D8a`](https://sepolia.arbiscan.io/address/0x17aB8Ada1A2EA89A7E28fb4Ba8E5D0A65A6c5D8a) | `TWAPOracleMiddleware`; source-verified; carries the empty-report short-circuit fix; expects the Arbitrum Sepolia **testnet** BTC/USD Data Streams feed — a mainnet report will not verify on Sepolia |
 | `Stablecoin` | `ERC20.json` | [`0xad78f7E737288e4a8CdF27d8e9c59B15399936EA`](https://sepolia.arbiscan.io/address/0xad78f7E737288e4a8CdF27d8e9c59B15399936EA) | Reused USDC.e-style test token, 6 decimals |
 
 ## ABI lanes: deployed vs candidate
@@ -51,7 +51,7 @@ converge.
   reads; the engine does not own ERC20 collateral.
 - Batched collateral reads should use `CallBatcher.batchCollateral`; the batcher resolves
   the Vault through `PerpEngine.ReadParameters()[0]` and does not call the removed
-  `PerpEngine.getCollateral(address)` selector. STALE for this stack (bound to the old engine 0xC46E…A600) — redeploy/repoint before use.
+  `PerpEngine.getCollateral(address)` selector. Stateless and reusable as-is — pass the live engine (`0x656a…1352`) as `perpPairAddress`; the batcher is not bound to any engine (verified on-chain 2026-07-17).
 - Every price-dependent write should attach a fresh signed Chainlink Data Streams v3
   report so `TWAPOracleMiddleware.getPrice()` remains fresh.
 
