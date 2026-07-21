@@ -27,6 +27,9 @@ deploy_commands.txt
 # Internal engineering/ops notes — never publish (findings, runbooks).
 *_INTERNAL.md
 
+# Local working documents — the tracked sources of record are the .md files, not binary exports.
+*.docx
+
 # Local ad-hoc outputs
 abi/
 plotData/
