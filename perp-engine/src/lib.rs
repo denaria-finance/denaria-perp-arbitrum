@@ -245,10 +245,13 @@ impl PerpEngine {
     /// **Production constructor** — atomic deploy + activate + initialize via StylusDeployer,
     /// so the engine cannot be seized by front-running a separate initializer transaction.
     /// Parity with the Solidity `PerpPair` constructor: takes the full configurable parameter
-    /// set and applies the `SET*` validation (SET9 admin≠0, SET2 oracle≠0, SET3 vault≠0, SET8
-    /// forwarder≠0, SET1 fee-sum < feeFractionsDecimals, SET5 tradingFee range, SET6 flat-fee
-    /// bound, SET7 feeProtocol≠0; SET4 `_MMR ≥ 0` is vacuous → replaced by the engine's u32
-    /// range narrowing, reverting `C`). The non-configurable protocol constants (decimals,
+    /// set and applies the `SET*` validation, in reference order: SET2 oracle≠0, SET3 vault≠0,
+    /// SET4 MMR ≥ 2 (keeps `MMR/2` non-zero), SET1 fee-sum < feeFractionsDecimals, SET5
+    /// tradingFee range, SET6 flat-fee bound, SET7 feeProtocol≠0, SET9 emaParam ≤ oracleDecimals,
+    /// plus the Stylus-only SET8 forwarder≠0. The reference spells the emaParam condition SET8;
+    /// SET8 is taken here by the forwarder guard, so the engine reports SET9 for it.
+    /// An MMR that clears SET4 but exceeds the engine's u32 storage still reverts `C` (the
+    /// engine's narrowing convention). The non-configurable protocol constants (decimals,
     /// curve, clamp, identity liquidity matrix, funding/liquidation defaults) are fixed exactly
     /// as the constructor hardcodes them. `multi_call_manager` is the ERC2771 trusted forwarder.
     /// `admin` receives DEFAULT_ADMIN_ROLE + MOD_ROLE and is passed explicitly: in a Stylus
@@ -293,6 +296,13 @@ impl PerpEngine {
         if vault == Address::ZERO {
             return Err(err(b"SET3"));
         }
+        // SET4: MMR must be >= 2 so MMR/2 != 0 (avoids division-by-zero in the
+        // liquidation-discount math and a collapsed liquidation band). Kept in reference
+        // position — ahead of SET1/SET5/SET6/SET7 — so a call violating several bounds at once
+        // reports the same code on both sides.
+        if !(mmr >= U256::from(2u64)) {
+            return Err(err(b"SET4"));
+        }
         // SET8: the trusted forwarder (multiCallManager) must be non-zero.
         if multi_call_manager == Address::ZERO {
             return Err(err(b"SET8"));
@@ -317,8 +327,8 @@ impl PerpEngine {
         if fee_protocol_addr == Address::ZERO {
             return Err(err(b"SET7"));
         }
-        // SET4 (`_MMR >= 0`) is vacuous for an unsigned value; the engine narrows MMR to
-        // u32, so an out-of-range MMR reverts `C` (the engine's narrowing convention).
+        // The engine narrows MMR to u32, so an MMR that clears SET4 but exceeds u32 reverts `C`
+        // (the engine's narrowing convention).
         self.mmr.set(U32::from(u32::try_from(mmr).map_err(|_| err(b"C"))?));
         self.oracle.set(oracle);
         self.vault.set(vault);
@@ -329,6 +339,13 @@ impl PerpEngine {
         self.fee_protocol_addr.set(fee_protocol_addr);
         self.trading_fee.set(trading_fee);
         self.flat_trading_fee.set(flat_trading_fee);
+        // emaParam must be <= oracleDecimals, else calcEMA underflows on
+        // (slipDecimals - emaParam) and bricks the first trade of a block. The reference
+        // spells this SET8; SET8 is already taken here by the trusted-forwarder guard above,
+        // so the engine reports SET9 for the same condition.
+        if !(ema_param <= U256::from(self.oracle_decimals.get())) {
+            return Err(err(b"SET9"));
+        }
         // emaParam is uint256 in Solidity but stored narrowed to u64 here → range-revert `C`.
         self.ema_param.set(U64::from(u64::try_from(ema_param).map_err(|_| err(b"C"))?));
         let admin = self.vm().msg_sender(); // roles go to the deployer (the initializer caller)
@@ -783,17 +800,15 @@ impl PerpEngine {
         minimum_trade_size: U256,
     ) -> Result<(), Vec<u8>> {
         self.only_role(self.mod_role.get())?;
-        let fee_frac_dec = self.fee_fractions_decimals.get();
         let trading_fee_dec = self.trading_fee_decimals.get();
         let one_e6 = U256::from(1_000_000u64);
         let one_e10 = U256::from(10_000_000_000u64);
         let wad = U256::from(WAD_U64);
         // Check the ordering-sensitive bounds first (keeps `trading_fee_dec - trading_fee` from
-        // underflowing, exactly like the original `&&` short-circuit did).
-        if !(mmr < one_e6
-            && fee_lp <= fee_frac_dec - U256::from(self.fee_frontend.get())
-            && trading_fee < trading_fee_dec)
-        {
+        // underflowing, exactly like the original `&&` short-circuit did). The `feeLP` bound
+        // moved to `setTimeLockedParameters`: `feeFrontend` is not part of the param hash, so a
+        // prepare-time check reads a value that may be stale by the time the change finalizes.
+        if !(mmr < one_e6 && trading_fee < trading_fee_dec) {
             return Err(err(b"C"));
         }
         // SET6 bound with checked multiplication: alloy U256 `*` wraps in release, but the
@@ -805,6 +820,13 @@ impl PerpEngine {
             && liquidity_min_fee <= liquidity_max_fee
             && liquidity_max_fee <= one_e10)
         {
+            return Err(err(b"C"));
+        }
+        // MMR>=2 keeps MMR/2 != 0 in the liquidation discount. fundingC is a divisor of the
+        // funding-rate formula; liquidityFeeK is the leading denominator term of the
+        // liquidity-fee formula, which vanishes at K=0 when the post-move price ratio equals
+        // spot. Both must stay nonzero.
+        if mmr < U256::from(2u64) || funding_c.is_zero() || liquidity_fee_k.is_zero() {
             return Err(err(b"C"));
         }
         // Solidity uses the CURRENT storage paramTimeLock for the lock duration; the
@@ -859,6 +881,12 @@ impl PerpEngine {
         {
             return Err(err(b"C"));
         }
+        // feeFrontend may have changed via setUnguardedParameters since prepare (it is not in
+        // the hash), so re-check feeLP + feeFrontend < 1e6 here with the CURRENT frontend fee to
+        // stop the protocol-fee split from underflowing.
+        if !(fee_lp + U256::from(self.fee_frontend.get()) < U256::from(1_000_000u64)) {
+            return Err(err(b"C"));
+        }
         // Narrowing to the engine's packed storage REVERTS ("C") on out-of-range rather
         // than silently saturating (the require bounds mmr/feeLP; funding_c/paramTimeLock
         // are otherwise unbounded — Solidity stores uint256, the engine narrows, so an
@@ -893,11 +921,19 @@ impl PerpEngine {
     ) -> Result<(), Vec<u8>> {
         self.only_role(self.mod_role.get())?;
         let fee_frac_dec = self.fee_fractions_decimals.get();
+        // The discount bound tracks the CURRENT MMR (not a fixed 1e6/2), and the protocol-fee
+        // address validated is the PROPOSED one — checking the stored value let a zero address
+        // through whenever the stored one happened to be set.
         if !(oracle != Address::ZERO
             && U256::from(fee_frontend) <= fee_frac_dec - U256::from(self.fee_lp.get())
-            && U256::from(liquidation_discount) < U256::from(500_000u64) // 1e6/2
-            && self.fee_protocol_addr.get() != Address::ZERO)
+            && U256::from(liquidation_discount) < U256::from(self.mmr.get()) / U256::from(2u64)
+            && fee_protocol_addr != Address::ZERO)
         {
+            return Err(err(b"C"));
+        }
+        // slipLiquidationTh scales the liquidation slippage fallback; 0 collapses it and forces
+        // spot pricing on every liquidation.
+        if slip_liquidation_th.is_zero() {
             return Err(err(b"C"));
         }
         self.oracle.set(oracle);

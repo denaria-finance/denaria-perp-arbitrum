@@ -11,10 +11,11 @@ import "./util/UtilMath.sol";
  *     | SET1 | `PerpPair.sol` | Fee fractions (`feeFrontend + feeLP`) not less than `feeFractionsDecimals`. |
  *     | SET2 | `PerpPair.sol` | Oracle address is zero. |
  *     | SET3 | `PerpPair.sol` | Vault address is zero. |
- *     | SET4 | `PerpPair.sol` | MMR is negative. |
+ *     | SET4 | `PerpPair.sol` | MMR below the minimum of 2 (`MMR / 2` must stay non-zero). |
  *     | SET5 | `PerpPair.sol` | Trading fee out of valid range `[0, tradingFeeDecimals)`. |
  *     | SET6 | `PerpPair.sol` | Flat trading fee too large relative to `minimumTradeSize` and proportional fee. |
  *     | SET7 | `PerpPair.sol` | Fee protocol address is zero. |
+ *     | SET9 | `PerpPair.sol` | `emaParam` above `oracleDecimals`. The Solidity reference spells this condition SET8; SET8 is taken here by the engine's trusted-forwarder guard. |
  *     | T0  | `perpTrade.sol` | Leverage exceeds `maxLeverage`. |
  *     | T1  | `perpTrade.sol` | User margin ratio after opening trade not above `MMR`. |
  *     | T2  | `perpTrade.sol` | Trade size below `minimumTradeSize` (value-adjusted for direction). |
@@ -62,7 +63,8 @@ contract PerpPair is PerpLiquidation {
         oracle = _oracle;
         require(_vault != address(0), "SET3");
         vault = _vault;
-        require(_MMR >= 0, "SET4");
+        // MMR must be >= 2 so MMR/2 != 0 (avoids division-by-zero in the liquidation-discount math and a collapsed liquidation band).
+        require(_MMR >= 2, "SET4");
         MMR = _MMR;
         tickerAssetCurrency = _tickerAssetCurrency;
         require((_feeFrontend + _feeLP) < decimals.feeFractionsDecimals, "SET1"); //Error on setup: fee fractions do not sum to 1
@@ -74,6 +76,9 @@ contract PerpPair is PerpLiquidation {
         flatTradingFee = _flatTradingFee;
         require(_feeProtocolAddr != address(0), "SET7");
         feeProtocolAddr = _feeProtocolAddr;
+        // emaParam must be <= oracleDecimals, else calcEMA underflows on (slipDecimals - emaParam) and bricks the first trade of a block.
+        // Code note: SET8 is already taken here by the engine's trusted-forwarder guard, so this condition is SET9.
+        require(_emaParam <= oracleDecimals, "SET9");
         emaParam = _emaParam;
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
         _grantRole(MOD_ROLE, _msgSender());

@@ -2541,14 +2541,16 @@
         ok.expect("funding_c == u32::MAX accepted");
         assert_eq!(e.funding_c.get(), U32::from(u32::MAX), "funding_c stored at boundary");
 
-        // production initializer: ema (u64) over-range reverts C
+        // production initializer: an over-range ema is now rejected by the SET9 bound
+        // (emaParam <= oracleDecimals = 1e8) before it can reach the u64 narrowing, so the
+        // narrowing revert is unreachable for this field by construction.
         let vm = TestVM::new();
         let mut e2 = PerpEngine::from(&vm);
         let r = e2.initialize_production(
             addr(0x01), addr(0x02), addr(0x03), U256::from(40_000u64), B256::ZERO, U32::from(300_000u32), U32::from(500_000u32),
             addr(0x04), U256::ZERO, U256::from(120_000_000_000_000_000u64), over_u64,
         );
-        assert_eq!(r, Err(err(b"C")), "ema > u64::MAX -> C");
+        assert_eq!(r, Err(err(b"SET9")), "ema > u64::MAX -> SET9 (bound precedes narrowing)");
     }
 
     // setTrustedForwarder is MOD_ROLE-gated; isTrustedForwarder reflects it.
@@ -3353,4 +3355,237 @@
             Err(err(b"F")),
             "non-forwarder caller reverts F"
         );
+    }
+
+    // Configuration invariants: the constructor bounds (MMR floor, emaParam ceiling), the
+    // prepare/finalize split for the fee pair, and the unguarded setter's divisor/address
+    // guards. Each is checked immediately below, at, and immediately above its boundary.
+    #[test]
+    fn configuration_invariant_bounds() {
+        let wad = U256::from(WAD_U64);
+        let ticker = B256::ZERO;
+        // Runs initialize_production on a fresh engine with one field varied.
+        let init = |mmr: U256, ema: U256| {
+            let vm = TestVM::new();
+            let mut e = PerpEngine::from(&vm);
+            let r = e.initialize_production(
+                addr(0x01), addr(0x02), addr(0x03), mmr, ticker,
+                U32::from(300_000u32), U32::from(500_000u32), addr(0x04),
+                U256::ZERO, U256::from(120_000_000_000_000_000u64), ema,
+            );
+            (e, r)
+        };
+        let ok_ema = U256::from(90_000_000u64); // < oracleDecimals (1e8)
+        let oracle_dec = U256::from(100_000_000u64);
+
+        // SET4: MMR floor is 2, strictly enforced below it.
+        assert_eq!(init(U256::ZERO, ok_ema).1, Err(err(b"SET4")), "MMR 0 -> SET4");
+        assert_eq!(init(U256::from(1u64), ok_ema).1, Err(err(b"SET4")), "MMR 1 -> SET4");
+        init(U256::from(2u64), ok_ema).1.expect("MMR 2 accepted");
+        init(U256::from(3u64), ok_ema).1.expect("MMR 3 accepted");
+
+        // SET9 (the reference calls the same condition SET8, a code taken here by the
+        // trusted-forwarder guard): emaParam may equal oracleDecimals but not exceed it.
+        init(U256::from(40_000u64), oracle_dec - U256::from(1u64)).1.expect("ema below oracleDecimals");
+        init(U256::from(40_000u64), oracle_dec).1.expect("ema == oracleDecimals accepted");
+        assert_eq!(
+            init(U256::from(40_000u64), oracle_dec + U256::from(1u64)).1,
+            Err(err(b"SET9")),
+            "ema above oracleDecimals -> SET9",
+        );
+
+        // --- time-locked prepare/finalize -------------------------------------------------
+        let (mmr, tf, flat, flp) = (U256::from(30_000u64), U256::ZERO, U256::from(120_000_000_000_000_000u64), U256::from(500_000u64));
+        let (lmin, lmax, lk, fc) = (U256::ZERO, U256::from(500_000_000u64), U256::from(10_000_000_000u64), U256::from(1_000_000u64));
+        let (ptl, mts) = (U256::from(20u64), U256::from(48u64) * wad);
+        let armed = || {
+            let vm = TestVM::new();
+            vm.set_block_timestamp(1_000);
+            let mut e = PerpEngine::from(&vm);
+            e.initialize_benchmark(addr(0x01), addr(0x02), addr(0x03)).expect("init");
+            (vm, e)
+        };
+
+        // prepare rejects a zero divisor and an MMR below the floor.
+        let (_vm, mut e) = armed();
+        assert_eq!(
+            e.prepare_time_locked_parameters(mmr, tf, flat, flp, lmin, lmax, lk, U256::ZERO, ptl, mts),
+            Err(err(b"C")),
+            "fundingC 0 -> C",
+        );
+        assert_eq!(
+            e.prepare_time_locked_parameters(mmr, tf, flat, flp, lmin, lmax, U256::ZERO, fc, ptl, mts),
+            Err(err(b"C")),
+            "liquidityFeeK 0 -> C",
+        );
+        assert_eq!(
+            e.prepare_time_locked_parameters(U256::from(1u64), tf, flat, flp, lmin, lmax, lk, fc, ptl, mts),
+            Err(err(b"C")),
+            "prepare MMR 1 -> C",
+        );
+        e.prepare_time_locked_parameters(U256::from(2u64), tf, flat, flp, lmin, lmax, lk, fc, ptl, mts)
+            .expect("prepare MMR 2 accepted");
+
+        // prepare no longer validates the fee pair: feeFrontend is not in the hash, so the
+        // pair is only meaningful at finalize time. A feeLP that is invalid against the
+        // CURRENT frontend fee still arms...
+        let (vm, mut e) = armed();
+        let fee_frontend_now = U256::from(e.fee_frontend.get());
+        let clashing_lp = U256::from(1_000_000u64) - fee_frontend_now; // sum == 1e6 exactly
+        e.prepare_time_locked_parameters(mmr, tf, flat, clashing_lp, lmin, lmax, lk, fc, ptl, mts)
+            .expect("prepare does not judge the fee pair");
+        // ...and is rejected at finalize, where the effective frontend fee is known.
+        vm.set_block_timestamp(1_010);
+        assert_eq!(
+            e.set_time_locked_parameters(mmr, tf, flat, clashing_lp, lmin, lmax, lk, fc, ptl, mts),
+            Err(err(b"C")),
+            "feeLP + current feeFrontend == 1e6 -> C",
+        );
+
+        // Prepare must ARM a feeLP that the removed prepare-time clause would have rejected
+        // (it allowed equality, so this value is strictly above the old bound); the pair only
+        // becomes valid once the frontend fee is lowered, and finalize is what judges it.
+        let (vm, mut e) = armed();
+        let over_old_bound = clashing_lp + U256::from(1u64);
+        e.prepare_time_locked_parameters(mmr, tf, flat, over_old_bound, lmin, lmax, lk, fc, ptl, mts)
+            .expect("prepare arms a pair the old prepare-time clause would have rejected");
+        e.set_unguarded_parameters(
+            addr(0x11), U32::from(fee_frontend_now.to::<u32>() - 2), addr(0x12),
+            U256::from(999u64), U8::from(20u8), U32::from(7_000u32), U8::from(10u8), U8::from(5u8),
+        )
+        .expect("lower the frontend fee so the pair fits");
+        vm.set_block_timestamp(1_010);
+        e.set_time_locked_parameters(mmr, tf, flat, over_old_bound, lmin, lmax, lk, fc, ptl, mts)
+            .expect("pair valid against the CURRENT frontend fee finalizes");
+        assert_eq!(e.fee_lp.get(), U32::from(u32::try_from(over_old_bound).unwrap()), "feeLP applied");
+
+        // One unit lower the original pair finalizes against the unchanged frontend fee.
+        let (vm, mut e) = armed();
+        let fitting_lp = clashing_lp - U256::from(1u64);
+        e.prepare_time_locked_parameters(mmr, tf, flat, fitting_lp, lmin, lmax, lk, fc, ptl, mts)
+            .expect("prepare");
+        vm.set_block_timestamp(1_010);
+        e.set_time_locked_parameters(mmr, tf, flat, fitting_lp, lmin, lmax, lk, fc, ptl, mts)
+            .expect("feeLP + current feeFrontend == 1e6 - 1 accepted");
+        assert_eq!(e.fee_lp.get(), U32::from(u32::try_from(fitting_lp).unwrap()), "feeLP applied");
+
+        // An unrelated frontend-fee change between prepare and finalize is caught at finalize.
+        let (vm, mut e) = armed();
+        e.prepare_time_locked_parameters(mmr, tf, flat, fitting_lp, lmin, lmax, lk, fc, ptl, mts)
+            .expect("prepare");
+        e.set_unguarded_parameters(
+            addr(0x11), U32::from(fee_frontend_now.to::<u32>() + 1), addr(0x12),
+            U256::from(999u64), U8::from(20u8), U32::from(7_000u32), U8::from(10u8), U8::from(5u8),
+        )
+        .expect("raise the frontend fee by one");
+        vm.set_block_timestamp(1_010);
+        assert_eq!(
+            e.set_time_locked_parameters(mmr, tf, flat, fitting_lp, lmin, lmax, lk, fc, ptl, mts),
+            Err(err(b"C")),
+            "frontend fee raised after prepare -> C at finalize",
+        );
+
+        // --- unguarded setter --------------------------------------------------------------
+        let unguarded = |discount: u32, protocol: Address, slip: u8| {
+            let vm = TestVM::new();
+            let mut e = PerpEngine::from(&vm);
+            seed_trade_engine(&mut e); // mmr = 40_000 -> discount bound is 20_000
+            e.mod_role.set(keccak256("MOD_ROLE"));
+            let caller = e.vm().msg_sender();
+            e.grant_role_internal(keccak256("MOD_ROLE"), caller);
+            let r = e.set_unguarded_parameters(
+                addr(0x11), U32::from(100u32), protocol, U256::from(999u64),
+                U8::from(20u8), U32::from(discount), U8::from(10u8), U8::from(slip),
+            );
+            (e, r)
+        };
+        // The discount bound tracks MMR/2, not a fixed 1e6/2.
+        unguarded(19_999, addr(0x12), 5).1.expect("discount just below MMR/2");
+        assert_eq!(unguarded(20_000, addr(0x12), 5).1, Err(err(b"C")), "discount == MMR/2 -> C");
+        assert_eq!(unguarded(20_001, addr(0x12), 5).1, Err(err(b"C")), "discount above MMR/2 -> C");
+        // A discount that the old fixed 1e6/2 bound would have accepted is now rejected.
+        assert_eq!(unguarded(499_999, addr(0x12), 5).1, Err(err(b"C")), "old 1e6/2 bound no longer applies");
+        // The PROPOSED protocol-fee address is validated, not the stored one.
+        assert_eq!(unguarded(7_000, Address::ZERO, 5).1, Err(err(b"C")), "proposed feeProtocol 0 -> C");
+        // slipLiquidationTh is a divisor-shaped scale and must stay nonzero.
+        assert_eq!(unguarded(7_000, addr(0x12), 0).1, Err(err(b"C")), "slipLiquidationTh 0 -> C");
+        let (e, r) = unguarded(7_000, addr(0x12), 1);
+        r.expect("slipLiquidationTh 1 accepted");
+        assert_eq!(e.slip_liquidation_th.get(), U8::from(1u8), "slipLiquidationTh applied");
+        assert_eq!(e.fee_protocol_addr.get(), addr(0x12), "proposed feeProtocol applied");
+
+        // The unguarded frontend-fee bound allows equality with `feeFractionsDecimals - feeLP`
+        // and rejects one unit above it (seed_trade_engine sets feeLP = 500_000).
+        let frontend = |ff: u32| {
+            let vm = TestVM::new();
+            let mut e = PerpEngine::from(&vm);
+            seed_trade_engine(&mut e);
+            e.mod_role.set(keccak256("MOD_ROLE"));
+            let caller = e.vm().msg_sender();
+            e.grant_role_internal(keccak256("MOD_ROLE"), caller);
+            let r = e.set_unguarded_parameters(
+                addr(0x11), U32::from(ff), addr(0x12), U256::from(999u64),
+                U8::from(20u8), U32::from(7_000u32), U8::from(10u8), U8::from(5u8),
+            );
+            (e, r)
+        };
+        let (e, r) = frontend(500_000);
+        r.expect("feeFrontend == feeFractionsDecimals - feeLP accepted");
+        assert_eq!(e.fee_frontend.get(), U32::from(500_000u32), "equality boundary stored");
+        assert_eq!(frontend(500_001).1, Err(err(b"C")), "feeFrontend one unit above the bound -> C");
+    }
+
+    // Two configuration states that are reachable BY DESIGN under strict parity with the
+    // Solidity reference. Neither is fixed here: closing them would make this implementation
+    // stricter than the source of truth and give the same governance transaction different
+    // outcomes across the two, so both are recorded pending an owner decision. These tests
+    // characterise the states so a future fix has an anchor that must fail.
+    #[test]
+    fn accepted_configuration_residuals() {
+        let wad = U256::from(WAD_U64);
+        let (tf, flat, flp) = (U256::ZERO, U256::from(120_000_000_000_000_000u64), U256::from(400_000u64));
+        let (lmin, lmax, lk, fc) = (U256::ZERO, U256::from(500_000_000u64), U256::from(10_000_000_000u64), U256::from(1_000_000u64));
+        let (ptl, mts) = (U256::from(20u64), U256::from(48u64) * wad);
+
+        // (1) The discount bound is validated only when the discount is set, so a later MMR
+        // decrease leaves an out-of-bound discount standing.
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_000);
+        let mut e = PerpEngine::from(&vm);
+        e.initialize_benchmark(addr(0x01), addr(0x02), addr(0x03)).expect("init");
+        e.mmr.set(U32::from(40_000u32));
+        e.set_unguarded_parameters(
+            addr(0x11), U32::from(100u32), addr(0x12), U256::from(999u64),
+            U8::from(20u8), U32::from(19_999u32), U8::from(10u8), U8::from(5u8),
+        )
+        .expect("discount just below MMR/2");
+
+        let lower_mmr = U256::from(100u64); // MMR/2 = 50, far below the accepted discount
+        e.prepare_time_locked_parameters(lower_mmr, tf, flat, flp, lmin, lmax, lk, fc, ptl, mts)
+            .expect("prepare lower MMR");
+        vm.set_block_timestamp(1_010);
+        e.set_time_locked_parameters(lower_mmr, tf, flat, flp, lmin, lmax, lk, fc, ptl, mts)
+            .expect("finalize lower MMR");
+        assert_eq!(e.mmr.get(), U32::from(100u32), "MMR lowered");
+        assert!(
+            U256::from(e.liquidation_discount.get()) >= U256::from(e.mmr.get()) / U256::from(2u64),
+            "residual: the discount outlives the bound that admitted it",
+        );
+
+        // (2) Finalize validates the timelock, the hash and the fee pair, but not the bounds
+        // prepare enforces. A proposal armed out-of-band (an upgrade landing over a pending
+        // pre-fix hash) therefore still applies a zero divisor.
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_000);
+        let mut e = PerpEngine::from(&vm);
+        e.initialize_benchmark(addr(0x01), addr(0x02), addr(0x03)).expect("init");
+        let bad = e.time_locked_param_hash(
+            U256::from(1u64), tf, flat, flp, lmin, lmax, U256::ZERO, U256::ZERO, ptl, mts,
+        );
+        e.param_hash.set(bad);
+        e.param_locked_until.set(U64::from(1_000u64));
+        e.set_time_locked_parameters(U256::from(1u64), tf, flat, flp, lmin, lmax, U256::ZERO, U256::ZERO, ptl, mts)
+            .expect("residual: a pre-armed proposal bypasses the prepare-time bounds");
+        assert_eq!(e.funding_c.get(), U32::ZERO, "residual: zero divisor applied");
+        assert_eq!(e.mmr.get(), U32::from(1u32), "residual: MMR below the floor applied");
     }

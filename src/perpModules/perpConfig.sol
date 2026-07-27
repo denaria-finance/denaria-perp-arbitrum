@@ -62,12 +62,16 @@ abstract contract PerpConfig is PerpStorage, AccessControl, ERC2771Context {
         onlyRole(MOD_ROLE)
     {
         require(
-            _MMR < 1e6 && _feeLP <= decimals.feeFractionsDecimals - feeFrontend
-                && _tradingFee < decimals.tradingFeeDecimals
+            _MMR < 1e6 && _tradingFee < decimals.tradingFeeDecimals
                 && _flatTradingFee * 1e18 < (decimals.tradingFeeDecimals - _tradingFee) * _minimumTradeSize
                 && _liquidityMinFee <= _liquidityMaxFee && _liquidityMaxFee <= 1e10,
             "C"
         );
+        // MMR>=2 keeps MMR/2 != 0 in the liquidation discount. fundingC is a divisor of the funding-rate formula;
+        // liquidityFeeK is the leading denominator term of the liquidity-fee formula, which vanishes at K=0 when the
+        // post-move price ratio equals spot. Both must stay nonzero.
+        // (feeLP + feeFrontend is enforced in setTimeLockedParameters, where feeFrontend is the current value rather than the possibly-stale prepare-time one.)
+        require(!(_MMR < 2 || _fundingC == 0 || _liquidityFeeK == 0), "C");
         paramLockedUntil = block.timestamp + paramTimeLock;
         paramHash = keccak256(
             abi.encode(
@@ -133,6 +137,9 @@ abstract contract PerpConfig is PerpStorage, AccessControl, ERC2771Context {
             )
         );
         require(block.timestamp >= paramLockedUntil && newParamHash == paramHash, "C");
+        // feeFrontend may have changed via setUnguardedParameters since prepare (it is not in the hash),
+        // so re-check feeLP + feeFrontend < 1e6 here to stop the protocol-fee split from underflowing.
+        require(_feeLP + feeFrontend < 1e6, "C");
 
         MMR = _MMR;
         feeLP = _feeLP;
@@ -169,9 +176,11 @@ abstract contract PerpConfig is PerpStorage, AccessControl, ERC2771Context {
     {
         require(
             _oracle != address(0) && _feeFrontend <= decimals.feeFractionsDecimals - feeLP
-                && _liquidationDiscount < 1e6 / 2 && feeProtocolAddr != address(0),
+                && _liquidationDiscount < MMR / 2 && _feeProtocolAddr != address(0),
             "C"
         );
+        // slipLiquidationTh scales the liquidation slippage fallback; 0 collapses it and forces spot pricing on every liquidation.
+        require(_slipLiquidationTh != 0, "C");
         oracle = _oracle;
         insuranceFundCap = _insuranceFundCap;
         feeFrontend = _feeFrontend;
