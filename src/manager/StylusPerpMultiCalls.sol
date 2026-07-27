@@ -4,6 +4,7 @@ pragma solidity ^0.8.25;
 import "../interfaces/IVault.sol";
 import "../CL_oracle_middleware/interfaces/IOracleMiddleware.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
@@ -562,9 +563,28 @@ contract StylusPerpMultiCalls is Initializable, EIP712, AccessControl, Reentranc
         for (uint256 i; i < collateral.length; i++) {
             if (collateral[i] != 0) {
                 (stablecoinAddress,,,) = IVault(vault).stableCoins(i);
-                IERC20Permit(stablecoinAddress).permit(owner, vault, collateral[i], deadline[i], v[i], r[i], s[i]);
+                _permitCollateralIfNecessary(stablecoinAddress, owner, collateral[i], deadline[i], v[i], r[i], s[i]);
             }
         }
+    }
+
+    /// @dev A permit already consumed by a front-runner would revert the whole bundle, so skip it when the
+    ///      allowance already covers the amount; otherwise permit and require the allowance it was meant to set.
+    function _permitCollateralIfNecessary(
+        address stablecoin,
+        address owner,
+        uint256 amount,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    )
+        private
+    {
+        if (IERC20(stablecoin).allowance(owner, vault) >= amount) return;
+
+        IERC20Permit(stablecoin).permit(owner, vault, amount, deadline, v, r, s);
+        require(IERC20(stablecoin).allowance(owner, vault) >= amount, "Insufficient allowance");
     }
 
     /// @dev ERC2771 forwarding for the (still-Solidity) vault: appends `originalSender`.

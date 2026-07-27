@@ -18,6 +18,7 @@ using SafeERC20 for IERC20;
  *     | OM5        | Error on verifyReport: IncorrectFeedId                                   |
  *     | OM6        | Error on verifyReport: UnacceptablePriceParameters                       |
  *     | OM7        | Error on withdrawToken: NothingToWithdraw                                |
+ *     | OM8        | Invalid parameters: maxTimeDelta == 0, or updateIndex moved backward      |
  */
 
 /**
@@ -75,6 +76,8 @@ contract TWAPOracleMiddleware {
      */
     constructor(uint256 _maxTimeDelta, string memory _description, int192 _oracleDecimalsStepdownFactor) {
         s_owner = msg.sender;
+        // maxTimeDelta is the freshness half-window; 0 would require validFrom == block.timestamp exactly and reject nearly all reports.
+        require(_maxTimeDelta != 0, "OM8");
         maxTimeDelta = _maxTimeDelta;
         description = _description;
         oracleDecimalsStepdownFactor = _oracleDecimalsStepdownFactor;
@@ -96,6 +99,8 @@ contract TWAPOracleMiddleware {
         external
         onlyOwner
     {
+        // maxTimeDelta==0 rejects nearly all reports; updateIndex must only move forward: going back (or to 0) underflows the history reads and replays already-consumed reports.
+        require(_maxTimeDelta != 0 && _updateIndex >= updateIndex, "OM8");
         maxTimeDelta = _maxTimeDelta;
         updateIndex = _updateIndex;
         lookbackPeriod = _lookbackPeriod;

@@ -20,10 +20,13 @@ contract LocalNitroDeploy is Script {
 
         uint256 oraclePrice = vm.envOr("ORACLE_PRICE", uint256(100000) * 1e8);
         uint256 minCollateralMovement = vm.envOr("MIN_COLLATERAL_MOVEMENT", uint256(1e17));
-        uint256 stableDecimalsFactor = vm.envOr("STABLE_DECIMALS", uint256(1e6));
         uint256 depositThreshold = vm.envOr("DEPOSIT_THRESHOLD", uint256(1e11));
         uint256 withdrawalThreshold = vm.envOr("WITHDRAWAL_THRESHOLD", uint256(1e11));
         uint8 tokenDecimals = uint8(vm.envOr("TOKEN_DECIMALS", uint256(6)));
+        // Derived, not configured: the Vault requires the registered scale to equal
+        // 10 ** token.decimals() exactly, so an independent STABLE_DECIMALS override would
+        // brick the deploy at Vault construction (AS2).
+        uint256 stableDecimalsFactor = 10 ** uint256(tokenDecimals);
         uint256 mintAmount = vm.envOr("MINT_AMOUNT", uint256(1_000_000) * (10 ** tokenDecimals));
 
         vm.startBroadcast(deployerPk);

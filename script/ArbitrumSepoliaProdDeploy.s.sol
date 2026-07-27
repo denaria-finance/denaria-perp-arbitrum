@@ -5,6 +5,7 @@ import { Script, console2 } from "forge-std/Script.sol";
 import { Vault } from "../src/Vault.sol";
 import { LostAndFound } from "../src/LostAndFound.sol";
 import { StylusPerpMultiCalls } from "../src/manager/StylusPerpMultiCalls.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @title Arbitrum Sepolia production-topology deployer — SOLIDITY side.
 /// @notice Deploys + wires the Solidity side of the manager→engine WASM topology:
@@ -44,6 +45,13 @@ contract ArbitrumSepoliaProdDeploy is Script {
         uint256 stableDecimals = vm.envUint("STABLE_DECIMALS");
         uint256 depositThreshold = vm.envUint("DEPOSIT_THRESHOLD");
         uint256 withdrawalThreshold = vm.envUint("WITHDRAWAL_THRESHOLD");
+        // Fail before broadcasting anything: the Vault rejects a scale that is not exactly
+        // 10 ** token.decimals() (AS2), and reaching that revert mid-deploy would leave the
+        // already-broadcast manager stranded.
+        require(
+            stableDecimals == 10 ** uint256(ERC20(stableCoin).decimals()),
+            "STABLE_DECIMALS != 10**stablecoin.decimals()"
+        );
 
         vm.startBroadcast(deployerPk);
 

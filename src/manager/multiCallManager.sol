@@ -172,8 +172,9 @@ contract PerpMultiCalls is Initializable, EIP712, AccessControl, ReentrancyGuard
     {
         address stablecoinAddress;
         for (uint256 i; i < collateral.length; i++) {
+            if (collateral[i] == 0) continue;
             (stablecoinAddress,,,) = IVault(vault).stableCoins(i);
-            IERC20Permit(stablecoinAddress).permit(_msgSender(), vault, collateral[i], deadline[i], v[i], r[i], s[i]);
+            _permitCollateralIfNecessary(stablecoinAddress, _msgSender(), collateral[i], deadline[i], v[i], r[i], s[i]);
         }
         bytes memory dataForCall;
         dataForCall = abi.encodeWithSelector(IVault(vault).addCollateral.selector, collateral);
@@ -238,8 +239,9 @@ contract PerpMultiCalls is Initializable, EIP712, AccessControl, ReentrancyGuard
 
         address stablecoinAddress;
         for (uint256 i; i < collateral.length; i++) {
+            if (collateral[i] == 0) continue;
             (stablecoinAddress,,,) = IVault(vault).stableCoins(i);
-            IERC20Permit(stablecoinAddress).permit(from, vault, collateral[i], permitDeadline[i], v[i], r[i], s[i]);
+            _permitCollateralIfNecessary(stablecoinAddress, from, collateral[i], permitDeadline[i], v[i], r[i], s[i]);
         }
         bytes memory dataForCall;
         dataForCall = abi.encodeWithSelector(IVault(vault).addCollateral.selector, collateral);
@@ -284,8 +286,9 @@ contract PerpMultiCalls is Initializable, EIP712, AccessControl, ReentrancyGuard
         for (uint256 i; i < collateral.length; i++) {
             if (collateral[i] != 0) {
                 (stablecoinAddress,,,) = IVault(vault).stableCoins(i);
-                IERC20Permit(stablecoinAddress)
-                    .permit(_msgSender(), vault, collateral[i], deadline[i], v[i], r[i], s[i]);
+                _permitCollateralIfNecessary(
+                    stablecoinAddress, _msgSender(), collateral[i], deadline[i], v[i], r[i], s[i]
+                );
             }
         }
         bytes memory dataForCall;
@@ -355,7 +358,9 @@ contract PerpMultiCalls is Initializable, EIP712, AccessControl, ReentrancyGuard
         for (uint256 i; i < collateral.length; i++) {
             if (collateral[i] != 0) {
                 (stablecoinAddress,,,) = IVault(vault).stableCoins(i);
-                IERC20Permit(stablecoinAddress).permit(from, vault, collateral[i], permitDeadline[i], v[i], r[i], s[i]);
+                _permitCollateralIfNecessary(
+                    stablecoinAddress, from, collateral[i], permitDeadline[i], v[i], r[i], s[i]
+                );
             }
         }
         bytes memory dataForCall;
@@ -609,6 +614,25 @@ contract PerpMultiCalls is Initializable, EIP712, AccessControl, ReentrancyGuard
 
         dataForCall = abi.encodeWithSelector(IVault(vault).removeCollateral.selector, pnl, unverifiedReport);
         _callContract(vault, dataForCall, from);
+    }
+
+    /// @dev A permit already consumed by a front-runner would revert the whole bundle, so skip it when the
+    ///      allowance already covers the amount; otherwise permit and require the allowance it was meant to set.
+    function _permitCollateralIfNecessary(
+        address stablecoin,
+        address owner,
+        uint256 amount,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    )
+        private
+    {
+        if (IERC20(stablecoin).allowance(owner, vault) >= amount) return;
+
+        IERC20Permit(stablecoin).permit(owner, vault, amount, deadline, v, r, s);
+        require(IERC20(stablecoin).allowance(owner, vault) >= amount, "Insufficient allowance");
     }
 
     ///@dev function to call contractAddress with callData coming from originalSender

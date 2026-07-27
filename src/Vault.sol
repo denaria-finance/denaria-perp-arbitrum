@@ -30,6 +30,8 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
  *     | RC4        | User margin ratio would fall below `MMR` after withdrawal.                   |
  *     | RC5        | Withdrawal amount plus unrealised loss exceeds user's collateral.            |
  *     | AS1        | Add-stablecoin timelock not expired or param hash mismatch.                  |
+ *     | AS2        | `stableDecimals` does not equal `10 ** token.decimals()` (or is 0).          |
+ *     | AS3        | Duplicate stablecoin registration.                                          |
  *     | CONV1      | Amounts array length does not match number of stablecoins.                   |
  *     | UNINIT1    | Contract already initialized.                                               |
  *     | OnlyPerp   | Caller is not the PerpPair contract.                                         |
@@ -116,9 +118,15 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context, Pausa
         oracleDecimals = 1e8;
         minCollateralMovement = _minCollateralMovement;
         for (uint256 i; i < stableCoinAddresses.length; i++) {
-            StableCoin memory newStable = StableCoin(
-                ERC20(stableCoinAddresses[i]), depositThresholds[i], withdrowalThresholds[i], stableDecimals[i]
-            );
+            address coin = stableCoinAddresses[i];
+            // stableDecimals must be exactly 10**token.decimals(); a wrong value (or 0) would misvalue collateral or brick conversions.
+            require(coin != address(0) && stableDecimals[i] == 10 ** uint256(ERC20(coin).decimals()), "AS2");
+            // Reject a duplicate token: ratio state is keyed by token address, so a repeat would alias another coin's state.
+            for (uint256 j; j < i; j++) {
+                require(stableCoinAddresses[j] != coin, "AS3");
+            }
+            StableCoin memory newStable =
+                StableCoin(ERC20(coin), depositThresholds[i], withdrowalThresholds[i], stableDecimals[i]);
             stableCoins.push(newStable);
             ratiosSnapshot.push(ratioDecimals / stableCoinAddresses.length);
         }
@@ -150,14 +158,28 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context, Pausa
         uint256 ratioDec = ratioDecimals;
         uint256[] memory oldCollateral = new uint256[](len);
         uint256[] memory oldTotalCollateral = new uint256[](len);
+        bool hasUserRatios;
         uint256 addedCollateral;
         for (uint256 i; i < len; ++i) {
+            uint256 userRatio = userCollateralRatio[user][stableCoins[i].stableCoin];
+            if (userRatio != 0) {
+                hasUserRatios = true;
+            }
             // Retrieve user’s previous collateral
-            oldCollateral[i] = userCollateralRatio[user][stableCoins[i].stableCoin] * userColl / ratioDec;
+            oldCollateral[i] = userRatio * userColl / ratioDec;
             // Compute old global collateral values
             oldTotalCollateral[i] = totalCollateralRatio[stableCoins[i].stableCoin] * totalColl / ratioDec;
             //Total added collateral
             addedCollateral += collateral[i];
+        }
+
+        // Non-deposit credits (for example realized fees) can create a positive
+        // user balance without initializing a stablecoin mix. Use the same vault
+        // mix that a direct withdrawal would use before blending in this deposit.
+        if (userColl != 0 && !hasUserRatios) {
+            for (uint256 i; i < len; ++i) {
+                oldCollateral[i] = totalCollateralRatio[stableCoins[i].stableCoin] * userColl / ratioDec;
+            }
         }
 
         require(addedCollateral >= minCollateralMovement, "AC2"); //deposit lower than minimum
@@ -254,13 +276,16 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context, Pausa
 
         //Edge case where all collateral is removed
         if (amount == totalCollateral) {
+            uint256 remainingUserCollateral = userCollateral[user] - amount;
             for (uint256 i = 0; i < stableCoins.length; i++) {
                 removedCollateral[i] = totalCollateralRatio[stableCoins[i].stableCoin] * amount / ratioDecimals;
                 totalCollateralRatio[stableCoins[i].stableCoin] = 0;
-                userCollateralRatio[user][stableCoins[i].stableCoin] = 0;
+                if (remainingUserCollateral == 0) {
+                    userCollateralRatio[user][stableCoins[i].stableCoin] = 0;
+                }
             }
             totalCollateral = 0;
-            userCollateral[user] = 0;
+            userCollateral[user] = remainingUserCollateral;
             return removedCollateral;
         }
 
@@ -434,6 +459,12 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context, Pausa
         );
         require(addStableTimeLock <= block.timestamp && paramHash == addStableHash, "AS1");
         if (stableCoin != address(0)) {
+            // stableDecimals must be exactly 10**token.decimals(); a wrong value (or 0) would misvalue collateral or brick conversions.
+            require(stableDecimals == 10 ** uint256(ERC20(stableCoin).decimals()), "AS2");
+            // Reject a duplicate token: ratio state is keyed by token address, so a repeat would alias another coin's state.
+            for (uint256 i; i < stableCoins.length; i++) {
+                require(address(stableCoins[i].stableCoin) != stableCoin, "AS3");
+            }
             StableCoin memory newStable =
                 StableCoin(ERC20(stableCoin), depositRatioThreshold, withdrawalRatioThreshold, stableDecimals);
             stableCoins.push(newStable);
