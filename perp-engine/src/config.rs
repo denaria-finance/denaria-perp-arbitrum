@@ -40,7 +40,6 @@ impl PerpEngine {
         self.auto_close_fee.set(U256::from(200_000_000_000_000_000u64)); // 2e17
         self.minimum_liquidity_movement.set(wad / U256::from(100u64)); // 1e16
         // Q80 fixed-point matrix scale: 2^80 (LIQUIDITY_M_Q80), replacing the old decimal 1e22.
-        // The adjugate snapshot recovery keys its fast path off `liquidityMDecimals <= 2^80`.
         let liq_m_dec = U256::from_limbs([0u64, 65_536u64, 0, 0]); // 2^80 = 2^16 << 64
         self.liquidity_m_decimals.set(cm::i(liq_m_dec));
         // Bootstrap LP accounting epoch 0 to the Q80 identity matrix; the current/oldest epoch

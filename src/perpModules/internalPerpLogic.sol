@@ -91,16 +91,15 @@ abstract contract InternalPerpLogic is PerpFunding, ReentrancyGuardTransient {
             return;
         }
 
-        // Roll BEFORE choosing the target epoch, then attach the snapshot to the current epoch.
+        // Release the old epoch's refcount BEFORE the roll, so the census the roll performs sees
+        // the slot this LP is about to vacate as free. Then attach to whichever epoch the roll
+        // selected, UNCONDITIONALLY — re-adding an `oldEpochId != newEpochId` guard here
+        // reinstates the bug and, with the decrement already hoisted, becomes a double release.
+        if (hadActiveSnapshot) liquidityEpochs[oldEpochId].activeLpCount -= 1;
         _rollLiquidityEpochIfNeeded();
 
         uint256 newEpochId = currentLiquidityEpoch;
-        if (!hadActiveSnapshot) {
-            liquidityEpochs[newEpochId].activeLpCount += 1;
-        } else if (oldEpochId != newEpochId) {
-            liquidityEpochs[oldEpochId].activeLpCount -= 1;
-            liquidityEpochs[newEpochId].activeLpCount += 1;
-        }
+        liquidityEpochs[newEpochId].activeLpCount += 1;
 
         position.snapshotG = liquidityEpochs[newEpochId].matrixRowG;
         position.snapshotM = liquidityEpochs[newEpochId].liquidityM;

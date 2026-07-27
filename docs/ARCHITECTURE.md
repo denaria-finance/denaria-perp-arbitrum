@@ -70,17 +70,22 @@ only traps under `debug-assertions`. Toggling the `overflow-checks` or `debug-as
 profile flags does **not** restore the reverting behaviour for both types, so it is not a
 substitute for explicit checks.
 
-Because of this, the fund-critical fixed-point primitives in the Rust math crate use
-explicit checked arithmetic instead of the raw operators. The Q80 adjugate
-snapshot-recovery routines (`recover_lp_balance_from_snapshot`,
-`recover_funding_star_from_snapshot`) and the overflow-safe signed division
-(`sum_mul_div_signed`, `positive_determinant_fixed`) route every multiply/add/subtract/
-negate through checked helpers that return an `Error("MOV")` revert on overflow. This
-matches the Solidity reference's revert-on-overflow: an intermediate in the recovery fast
-path can grow large for a deep pool, and a silent wrap there would hand back a corrupted
-LP or funding balance instead of reverting. In the normal (non-overflow) operating range
-the checked helpers are value-identical to the raw operators, so the golden-vector
+Because of this, the fund-critical fixed-point primitives in the Rust math crate never
+materialize a raw product. The snapshot-recovery routines
+(`recover_lp_balance_from_snapshot`, `recover_funding_star_from_snapshot`) reduce through
+the 512-bit quotient/remainder primitives (`sum_mul_div_signed`,
+`sum_mul_div_signed_floor`) at every matrix scale, so a deep-pool intermediate cannot
+grow past the domain in the first place. The arithmetic that remains outside those
+primitives — negations and the quotient/remainder carries — goes through checked helpers
+(`cneg`, `uadd`) that return an `Error("MOV")` revert on overflow, matching the Solidity
+reference's revert-on-overflow rather than wrapping silently. In the normal operating
+range every form is value-identical to the raw operators, so the golden-vector
 differential against the Solidity reference remains bit-exact.
+
+The two recovery routines round in deliberately OPPOSITE directions and must not be
+unified: LP-balance recovery floors its numerator coefficients and takes the ceiling of
+the determinant, so a recovered balance rounds against the LP and cannot exceed the exact
+value; funding-star recovery keeps truncation toward zero and a floored determinant.
 
 ## Configuration Events
 

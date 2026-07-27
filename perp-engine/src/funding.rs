@@ -94,10 +94,17 @@ impl PerpEngine {
         }
 
         let previous = current;
-        let oldest = self.oldest_active_liquidity_epoch.get();
-        let mut active_window = previous + U256::from(1u64) - oldest;
-        if self.liquidity_epochs.getter(previous).active_lp_count.get() == U256::ZERO {
-            active_window -= U256::from(1u64);
+        // Census the epochs that are actually OCCUPIED. The old arithmetic measured the span
+        // `previous + 1 - oldest`, which counts drained middle epochs against the cap and can
+        // freeze migrations (and with them liquidation) while slots are in fact free. The bound
+        // is inclusive of `previous`: an exclusive one would silently raise the cap by one.
+        let mut active_window = U256::ZERO;
+        let mut epoch_id = self.oldest_active_liquidity_epoch.get();
+        while epoch_id <= previous {
+            if self.liquidity_epochs.getter(epoch_id).active_lp_count.get() != U256::ZERO {
+                active_window += U256::from(1u64);
+            }
+            epoch_id += U256::from(1u64);
         }
         if !(active_window < U256::from(MAX_ACTIVE_LIQUIDITY_EPOCHS)) {
             return Err(err(b"LECAP"));

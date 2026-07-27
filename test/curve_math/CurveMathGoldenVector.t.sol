@@ -1413,6 +1413,45 @@ contract CurveMathGoldenVectorTest is Test {
             ),
             count
         );
+        // Every recovery vector above uses matrices that are exact integer multiples of the
+        // scale, so det/lmDec divides evenly and BOTH the determinant ceiling and the four
+        // numerator floors round to the same value truncation would give — the conservative
+        // rounding is invisible to them. These three carry entries that are deliberately NOT
+        // multiples of the scale, so a wrong rounding direction moves the result.
+        (vectors, count) = append(
+            vectors,
+            recoverLpVector(
+                "recover-lp-inexact-q80",
+                mk(s + 13, -s / 3 + 5, s / 7 - 2, 2 * s + 9),
+                mk(s + 7, 3, 5, s + 11),
+                2_000_000_000e18,
+                1_500_000_000e18,
+                s
+            ),
+            count
+        );
+        // The LP equality short circuit on a NON-trivial matrix: it must return the stored
+        // vector exactly, not a recomputed approximation of it.
+        (vectors, count) = append(
+            vectors,
+            recoverLpVector(
+                "recover-lp-equal-nontrivial",
+                mk(s + 7, 3, 5, s + 11),
+                mk(s + 7, 3, 5, s + 11),
+                2_000_000_000e18,
+                1_500_000_000e18,
+                s
+            ),
+            count
+        );
+        // A funding star driven NEGATIVE and non-integral: this is where the funding path's
+        // truncation toward zero visibly differs from the LP path's floor, so it pins the
+        // requirement that the two rounding regimes stay separate.
+        (vectors, count) = append(
+            vectors,
+            recoverStarVector("recover-star-negative-q80", -1e20, 3e17, mk(s + 7, 3, 5, s + 11), 1e24, 1e21, s, 1e24),
+            count
+        );
         (vectors, count) = append(vectors, signedSumVector("util-signedsum-same", 100, true, 50, true), count);
         (vectors, count) = append(vectors, signedSumVector("util-signedsum-diff-xgty", 100, true, 50, false), count);
         (vectors, count) = append(vectors, signedSumVector("util-signedsum-diff-xlty", 50, true, 100, false), count);

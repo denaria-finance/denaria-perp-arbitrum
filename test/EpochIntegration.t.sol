@@ -36,7 +36,7 @@ contract EpochHarness is PerpPair {
 
 /// @dev End-to-end epoch tests driven entirely through the real public entrypoints. Reuses the full
 ///      PerpPairTest deployment stack (Vault, token, oracle, manager, collateral) and only swaps the
-///      deployed PerpPair for the exposed harness. The SMAR1-3 determinant-collapse condition is
+///      deployed PerpPair for the exposed harness. The determinant-collapse condition is
 ///      reproduced by REAL trade churn (poking the matrix would break snapshot/matrix consistency),
 ///      so the epoch roll and the LP-snapshot migration are exercised through addLiquidity /
 ///      updateLpSnapshot / realizePnL exactly as in production.
@@ -142,7 +142,7 @@ contract EpochIntegrationTest is PerpPairTest {
         assertLe(_harness().exposedLiquidityEpochDeterminant(0), minHealthyDeterminant, "pool did not ill-condition");
     }
 
-    ///@dev SMAR1-3 core property: once the current epoch's matrix is ill-conditioned, the next LP
+    ///@dev Core property: once the current epoch's matrix is ill-conditioned, the next LP
     ///     snapshot rolls a FRESH identity epoch and reconstructs instantly against it, while the
     ///     incumbent LP stays pinned to (and keeps reconstructing against) its own decayed epoch.
     function testEpochRollsNewLpSnapshotToFreshBasisAfterIllConditioning() public {

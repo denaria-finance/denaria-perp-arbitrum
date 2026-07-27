@@ -31,7 +31,6 @@ abstract contract PerpStorage {
     uint8 internal slipLiquidationTh = 10;
 
     /// @dev Q80 fixed-point scale for the liquidity matrix M (2^80), replacing the old decimal 1e22.
-    /// The adjugate snapshot recovery keys its fast path off `liquidityMDecimals <= 2^80`.
     int256 internal constant LIQUIDITY_M_Q80 = int256(1) << 80;
 
     /// @dev Roll a fresh LP accounting epoch once the current epoch's matrix determinant decays to

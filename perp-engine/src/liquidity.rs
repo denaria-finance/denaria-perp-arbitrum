@@ -45,16 +45,19 @@ impl PerpEngine {
             return Ok(());
         }
 
-        // Roll BEFORE choosing the target epoch, then attach the snapshot to the current epoch.
+        // Release the old epoch's refcount BEFORE the roll, so the census the roll performs sees
+        // the slot this LP is about to vacate as free. Then attach to whichever epoch the roll
+        // selected, UNCONDITIONALLY — re-adding an `old != new` guard here reinstates the bug and,
+        // with the decrement already hoisted, turns it into a double release.
+        if had_active {
+            self.decrement_active_lp_count(old_epoch_id);
+        }
         self.roll_liquidity_epoch_if_needed()?;
 
+        // Must be re-read AFTER the roll: hoisting it would pin the LP to the stale, decayed
+        // epoch the roll exists to escape.
         let new_epoch_id = self.current_liquidity_epoch.get();
-        if !had_active {
-            self.increment_active_lp_count(new_epoch_id);
-        } else if old_epoch_id != new_epoch_id {
-            self.decrement_active_lp_count(old_epoch_id);
-            self.increment_active_lp_count(new_epoch_id);
-        }
+        self.increment_active_lp_count(new_epoch_id);
 
         let (em00, em01, em10, em11, eg0, eg1) = {
             let e = self.liquidity_epochs.getter(new_epoch_id);

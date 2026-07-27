@@ -3589,3 +3589,175 @@
         assert_eq!(e.funding_c.get(), U32::ZERO, "residual: zero divisor applied");
         assert_eq!(e.mmr.get(), U32::from(1u32), "residual: MMR below the floor applied");
     }
+
+    // Epoch-cap accounting on the DEPLOYED artifact. The Solidity reference carries the same
+    // three scenarios, but the engine is what ships, so each is anchored here too. Every case
+    // below fails against the pre-fix engine (span arithmetic + decrement-after-roll), which is
+    // what makes them regressions rather than descriptions.
+    #[test]
+    fn epoch_cap_counts_occupancy_not_span() {
+        // Seeds a window [0..=current] where `occupied` lists the epochs holding an LP, and the
+        // current epoch's matrix is decayed so the next roll is attempted.
+        let seed = |occupied: &[u64], current: u64| {
+            let vm = TestVM::new();
+            let mut e = PerpEngine::from(&vm);
+            e.init_protocol_constants();
+            let d = e.liquidity_m_decimals.get();
+            for id in 0..=current {
+                let mut ep = e.liquidity_epochs.setter(U256::from(id));
+                ep.liquidity_m00.set(d);
+                ep.liquidity_m11.set(d);
+                ep.active_lp_count.set(if occupied.contains(&id) { U256::from(1u64) } else { U256::ZERO });
+            }
+            e.oldest_active_liquidity_epoch.set(U256::ZERO);
+            e.current_liquidity_epoch.set(U256::from(current));
+            {
+                let mut ep = e.liquidity_epochs.setter(U256::from(current));
+                ep.liquidity_m00.set(I256::ONE);
+                ep.liquidity_m11.set(I256::ONE);
+            }
+            e
+        };
+
+        // Drained middle epochs sit inside the window. Span arithmetic counts them and reverts;
+        // an occupancy census sees two occupied slots and rolls.
+        let mut e = seed(&[0, 7], 7);
+        e.roll_liquidity_epoch_if_needed().expect("empty middle epochs must not consume the cap");
+        assert_eq!(e.current_liquidity_epoch.get(), U256::from(8u64), "rolled past the decayed epoch");
+
+        // Eight genuinely occupied epochs: the cap must still bind.
+        let mut full = seed(&[0, 1, 2, 3, 4, 5, 6, 7], 7);
+        assert_eq!(
+            full.roll_liquidity_epoch_if_needed().unwrap_err(),
+            err(b"LECAP"),
+            "a fully occupied window must still revert"
+        );
+
+        // The census bound is INCLUSIVE of the current epoch: seven older occupants plus the
+        // current one is already eight. An exclusive bound would let this through and silently
+        // raise the cap to nine.
+        let mut boundary = seed(&[0, 1, 2, 3, 4, 5, 6, 7], 7);
+        assert_eq!(boundary.roll_liquidity_epoch_if_needed().unwrap_err(), err(b"LECAP"));
+        let mut just_under = seed(&[1, 2, 3, 4, 5, 6, 7], 7);
+        just_under.roll_liquidity_epoch_if_needed().expect("seven occupied slots leave room");
+    }
+
+    // The migrating LP must release its old slot BEFORE the roll censuses the window, and the
+    // finally-selected epoch must be incremented unconditionally after it. Restoring the
+    // `old != new` guard, or moving the decrement back after the roll, breaks one of these.
+    #[test]
+    fn migrating_lp_frees_its_slot_before_the_roll() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        let d = e.liquidity_m_decimals.get();
+        let user = addr(0x77);
+
+        // Window [0..=7] fully occupied; our LP is the sole occupant of epoch 0.
+        for id in 0u64..8 {
+            let mut ep = e.liquidity_epochs.setter(U256::from(id));
+            ep.liquidity_m00.set(d);
+            ep.liquidity_m11.set(d);
+            ep.active_lp_count.set(U256::from(1u64));
+        }
+        e.oldest_active_liquidity_epoch.set(U256::ZERO);
+        e.current_liquidity_epoch.set(U256::from(7u64));
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::from(7u64));
+            ep.liquidity_m00.set(I256::ONE);
+            ep.liquidity_m11.set(I256::ONE);
+        }
+        {
+            let mut lp = e.liquidity_position.setter(user);
+            lp.initial_stable_balance.set(U256::from(1_000u64));
+            lp.initial_asset_balance.set(U256::from(1_000u64));
+            lp.snapshot_m00.set(d);
+            lp.snapshot_m11.set(d);
+        }
+        e.liquidity_position_epoch.setter(user).set(U256::ZERO);
+
+        e.update_snapshots(user, U256::from(1_000u64), U256::from(1_000u64))
+            .expect("the vacated slot must be visible to the census");
+
+        assert_eq!(e.current_liquidity_epoch.get(), U256::from(8u64), "roll used the freed slot");
+        assert_eq!(e.liquidity_position_epoch.getter(user).get(), U256::from(8u64), "LP moved to the new epoch");
+        assert_eq!(e.liquidity_epochs.getter(U256::from(8u64)).active_lp_count.get(), U256::from(1u64));
+    }
+
+    // A refresh that does NOT migrate must leave the refcount exactly where it was: the
+    // decrement and the unconditional re-increment have to cancel, not drift.
+    #[test]
+    fn same_epoch_refresh_leaves_refcount_unchanged() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        let d = e.liquidity_m_decimals.get();
+        let user = addr(0x78);
+
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::from(3u64));
+            ep.liquidity_m00.set(d);
+            ep.liquidity_m11.set(d);
+            ep.active_lp_count.set(U256::from(1u64));
+        }
+        e.oldest_active_liquidity_epoch.set(U256::from(3u64));
+        e.current_liquidity_epoch.set(U256::from(3u64));
+        {
+            let mut lp = e.liquidity_position.setter(user);
+            lp.initial_stable_balance.set(U256::from(1_000u64));
+            lp.initial_asset_balance.set(U256::from(1_000u64));
+            lp.snapshot_m00.set(d);
+            lp.snapshot_m11.set(d);
+        }
+        e.liquidity_position_epoch.setter(user).set(U256::from(3u64));
+
+        for _ in 0..3 {
+            e.update_snapshots(user, U256::from(2_000u64), U256::from(2_000u64)).expect("refresh");
+            assert_eq!(e.current_liquidity_epoch.get(), U256::from(3u64), "no roll was due");
+            assert_eq!(
+                e.liquidity_epochs.getter(U256::from(3u64)).active_lp_count.get(),
+                U256::from(1u64),
+                "refcount must not drift across same-epoch refreshes",
+            );
+        }
+    }
+
+    // The decrement must remove exactly one occupant, not clear the slot: with two LPs in the
+    // oldest epoch, one migrating leaves the epoch still occupied and the window still full.
+    #[test]
+    fn decrement_releases_one_occupant_not_the_whole_epoch() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        let d = e.liquidity_m_decimals.get();
+        let user = addr(0x79);
+
+        for id in 0u64..8 {
+            let mut ep = e.liquidity_epochs.setter(U256::from(id));
+            ep.liquidity_m00.set(d);
+            ep.liquidity_m11.set(d);
+            ep.active_lp_count.set(if id == 0 { U256::from(2u64) } else { U256::from(1u64) });
+        }
+        e.oldest_active_liquidity_epoch.set(U256::ZERO);
+        e.current_liquidity_epoch.set(U256::from(7u64));
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::from(7u64));
+            ep.liquidity_m00.set(I256::ONE);
+            ep.liquidity_m11.set(I256::ONE);
+        }
+        {
+            let mut lp = e.liquidity_position.setter(user);
+            lp.initial_stable_balance.set(U256::from(1_000u64));
+            lp.initial_asset_balance.set(U256::from(1_000u64));
+            lp.snapshot_m00.set(d);
+            lp.snapshot_m11.set(d);
+        }
+        e.liquidity_position_epoch.setter(user).set(U256::ZERO);
+
+        // Epoch 0 keeps its second occupant, so all eight remain occupied and the roll fails.
+        assert_eq!(
+            e.update_snapshots(user, U256::from(1_000u64), U256::from(1_000u64)).unwrap_err(),
+            err(b"LECAP"),
+            "releasing one of two occupants must not free the slot",
+        );
+    }

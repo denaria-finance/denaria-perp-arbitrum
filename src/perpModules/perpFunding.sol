@@ -50,8 +50,12 @@ abstract contract PerpFunding is PerpConfig {
         if (determinant > decimals.liquidityMDecimals / int256(LIQUIDITY_EPOCH_DET_DENOMINATOR)) return;
 
         uint256 previousEpoch = currentLiquidityEpoch;
-        uint256 activeWindow = previousEpoch + 1 - oldestActiveLiquidityEpoch;
-        if (liquidityEpochs[previousEpoch].activeLpCount == 0) activeWindow -= 1;
+        // Census the epochs that are actually OCCUPIED: the previous span arithmetic counted
+        // drained middle epochs against the cap and could freeze migrations while slots are free.
+        uint256 activeWindow;
+        for (uint256 epochId = oldestActiveLiquidityEpoch; epochId <= previousEpoch; epochId++) {
+            if (liquidityEpochs[epochId].activeLpCount != 0) activeWindow += 1;
+        }
         if (!(activeWindow < MAX_ACTIVE_LIQUIDITY_EPOCHS)) revert("LECAP");
 
         currentLiquidityEpoch = previousEpoch + 1;
