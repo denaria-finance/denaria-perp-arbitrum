@@ -3761,3 +3761,274 @@
             "releasing one of two occupants must not free the slot",
         );
     }
+
+    // One-sided fee distribution: a pool whose asset leg is empty must still receive the
+    // stable-denominated fee through the leg it has. Pre-fix the empty leg suppressed the whole
+    // distribution and the fee was silently confiscated from the remaining LPs.
+    #[test]
+    fn distribute_liquidity_fee_credits_a_stable_only_pool() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.global_liquidity_stable.set(U256::from(2_000u64) * wad);
+        e.global_liquidity_asset.set(U256::ZERO);
+        let m00_before = e.liquidity_epochs.getter(U256::ZERO).liquidity_m00.get();
+        let fee = U256::from(50u64) * wad;
+
+        e.distribute_liquidity_fee(fee, U256::from(300_000_000_000u64));
+
+        assert_eq!(e.global_liquidity_stable.get(), U256::from(2_050u64) * wad, "fee credited to the pool");
+        assert!(
+            e.liquidity_epochs.getter(U256::ZERO).liquidity_m00.get() > m00_before,
+            "the surviving stable leg must carry the whole matrix credit",
+        );
+    }
+
+    // The mirror case: with no stable liquidity the stable-denominated fee is allocated entirely
+    // through the asset leg, so `fee_stable` is zero and the credit lands on matrix entry m01.
+    #[test]
+    fn distribute_liquidity_fee_credits_an_asset_only_pool() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.global_liquidity_stable.set(U256::ZERO);
+        e.global_liquidity_asset.set(U256::from(10u64) * wad);
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).liquidity_m01.get(), I256::ZERO, "m01 starts empty");
+        let fee = U256::from(50u64) * wad;
+
+        e.distribute_liquidity_fee(fee, U256::from(300_000_000_000u64));
+
+        assert_eq!(e.global_liquidity_stable.get(), fee, "fee recreates the stable claim side");
+        assert!(
+            e.liquidity_epochs.getter(U256::ZERO).liquidity_m01.get() > I256::ZERO,
+            "the surviving asset leg must carry the whole matrix credit",
+        );
+    }
+
+    // A zero total pool value still has nothing to distribute to, so the fee is left alone.
+    #[test]
+    fn distribute_liquidity_fee_skips_an_empty_pool() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.global_liquidity_stable.set(U256::ZERO);
+        e.global_liquidity_asset.set(U256::ZERO);
+
+        e.distribute_liquidity_fee(U256::from(50u64) * wad, U256::from(300_000_000_000u64));
+
+        assert_eq!(e.global_liquidity_stable.get(), U256::ZERO, "an empty pool must not absorb a fee");
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).liquidity_m01.get(), I256::ZERO, "no matrix credit");
+    }
+
+    // Builds a stub-boundary engine holding `user` as a pure short whose FLOORED margin ratio is
+    // exactly `target_mr`, plus a liquidator funded to absorb the short. calc_mr decreases
+    // monotonically in the asset debt, so the debt is bisected against the engine's own margin read
+    // instead of re-deriving the ratio formula in the test. Returns (engine, user, asset debt).
+    #[cfg(feature = "stub_boundary")]
+    fn seed_pure_short_at_mr(vm: &TestVM, target_mr: U256) -> (PerpEngine, Address, U256) {
+        let wad = U256::from(WAD_U64);
+        let mut e = PerpEngine::from(vm);
+        seed_trade_engine(&mut e);
+        e.vault.set(addr(0x99));
+        // No funding accrues over a zero-length interval, so the ratio measured here is the ratio
+        // liquidate() re-reads after update_fg.
+        e.last_operation_timestamp.set(U64::from(1_700_000_000u64));
+
+        let user = addr(0x71);
+        let price = U256::from(300_000_000_000u64);
+        let collateral = U256::from(1_000u64) * wad; // the stub vault's fixed balance
+        let ts = U256::from(e.last_operation_timestamp.get());
+
+        fn mr_at(e: &mut PerpEngine, user: Address, price: U256, collateral: U256, ts: U256, d: U256) -> U256 {
+            e.user_virtual_trader_position.setter(user).debt_asset.set(d);
+            e.calc_mr(user, price, collateral, ts).expect("calc_mr")
+        }
+
+        let mut lo = U256::from(1u64); // tiny debt -> very high ratio
+        let mut hi = U256::from(10u64) * wad; // deeply underwater -> ratio below any target
+        assert!(mr_at(&mut e, user, price, collateral, ts, lo) > target_mr, "lower bound must sit above the target");
+        assert!(mr_at(&mut e, user, price, collateral, ts, hi) < target_mr, "upper bound must sit below the target");
+        while hi - lo > U256::from(1u64) {
+            let mid = (lo + hi) / U256::from(2u64);
+            if mr_at(&mut e, user, price, collateral, ts, mid) > target_mr {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        let debt = hi; // smallest debt whose ratio has fallen to the target
+        assert_eq!(mr_at(&mut e, user, price, collateral, ts, debt), target_mr, "bisection missed the target ratio");
+
+        // The liquidator absorbs the short, so it must hold the asset it hands over.
+        let liquidator = e.vm().msg_sender();
+        e.user_virtual_trader_position.setter(liquidator).balance_asset.set(U256::from(100u64) * wad);
+        (e, user, debt)
+    }
+
+    // An account whose floored ratio is exactly MMR is healthy: no fraction may be taken. The old
+    // inclusive comparison accepted it as a partial liquidation.
+    #[test]
+    #[cfg(feature = "stub_boundary")]
+    fn liquidation_band_rejects_a_ratio_at_mmr() {
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let (mut e, user, debt) = seed_pure_short_at_mr(&vm, U256::from(40_000u64));
+        assert_eq!(
+            e.liquidate(user, debt * U256::from(2u64) / U256::from(5u64), Bytes::new()).unwrap_err(),
+            err(b"LQ1"),
+            "a ratio at MMR must not be liquidatable",
+        );
+    }
+
+    // One unit below MMR is the soft band: half is accepted, more than half is not.
+    #[test]
+    #[cfg(feature = "stub_boundary")]
+    fn liquidation_band_caps_a_ratio_just_below_mmr_at_half() {
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let (mut e, user, debt) = seed_pure_short_at_mr(&vm, U256::from(39_999u64));
+        assert_eq!(
+            e.liquidate(user, debt * U256::from(3u64) / U256::from(4u64), Bytes::new()).unwrap_err(),
+            err(b"LQ1"),
+            "the soft band must reject more than half",
+        );
+
+        // A reverted call leaves the native reentrancy guard set, so the accepted half runs on its
+        // own VM rather than on the one the rejection above already touched.
+        let vm_half = TestVM::new();
+        vm_half.set_block_timestamp(1_700_000_000);
+        let (mut fresh, user, debt) = seed_pure_short_at_mr(&vm_half, U256::from(39_999u64));
+        fresh.liquidate(user, debt / U256::from(2u64), Bytes::new()).expect("half liquidation in the soft band");
+    }
+
+    // Exactly MMR/2 belongs to the SOFT band too, so it is capped at half. Pre-fix it fell into the
+    // hard band and the whole position could be taken.
+    #[test]
+    #[cfg(feature = "stub_boundary")]
+    fn liquidation_band_treats_exact_half_mmr_as_soft() {
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let (mut e, user, debt) = seed_pure_short_at_mr(&vm, U256::from(20_000u64));
+        assert_eq!(
+            e.liquidate(user, debt * U256::from(3u64) / U256::from(4u64), Bytes::new()).unwrap_err(),
+            err(b"LQ1"),
+            "an exact half-MMR ratio must not allow more than half",
+        );
+
+        // A reverted call leaves the native reentrancy guard set, so the accepted half runs on its
+        // own VM rather than on the one the rejection above already touched.
+        let vm_half = TestVM::new();
+        vm_half.set_block_timestamp(1_700_000_000);
+        let (mut fresh, user, debt) = seed_pure_short_at_mr(&vm_half, U256::from(20_000u64));
+        fresh.liquidate(user, debt / U256::from(2u64), Bytes::new()).expect("half liquidation at exact half MMR");
+    }
+
+    // One unit below MMR/2 is the hard band, where the whole position may be taken. This pins the
+    // other side of the same threshold.
+    #[test]
+    #[cfg(feature = "stub_boundary")]
+    fn liquidation_band_allows_a_full_take_below_half_mmr() {
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let (mut e, user, debt) = seed_pure_short_at_mr(&vm, U256::from(19_999u64));
+        e.liquidate(user, debt, Bytes::new()).expect("full liquidation in the hard band");
+        assert_eq!(
+            e.user_virtual_trader_position.getter(user).debt_asset.get(),
+            U256::ZERO,
+            "the hard band must clear the whole short",
+        );
+    }
+
+    // An LP whose recovered legs have decayed to zero can still hold an ACTIVE snapshot carrying
+    // unsettled funding. Close eligibility keyed only on the visible balances and debts skipped the
+    // removal path for it, leaving the funding unsettled and the snapshot alive. Seeded directly:
+    // a negated epoch matrix drives the recovery negative so both legs clamp to zero, while the
+    // epoch's row G has advanced past the position's own G snapshot.
+    #[test]
+    #[cfg(feature = "stub_boundary")]
+    fn close_settles_funding_on_a_zero_visible_active_snapshot() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.vault.set(addr(0x99));
+        e.last_operation_timestamp.set(U64::from(1_700_000_000u64));
+
+        let user = e.vm().msg_sender();
+        let liq_m_dec = e.liquidity_m_decimals.get();
+        let g_scale = cm::i(e.liquidity_g_decimals.get());
+        let pending_funding = wad;
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::ZERO);
+            ep.liquidity_m00.set(-liq_m_dec);
+            ep.liquidity_m11.set(-liq_m_dec);
+            ep.matrix_row_g0.set(g_scale);
+            ep.active_lp_count.set(U256::from(1u64));
+        }
+        {
+            let mut p = e.liquidity_position.setter(user);
+            p.snapshot_m00.set(liq_m_dec);
+            p.snapshot_m11.set(liq_m_dec);
+            p.initial_stable_balance.set(pending_funding);
+        }
+
+        let (stable_leg, asset_leg) = e.get_lp_liquidity_balance(user).expect("lp balance");
+        assert_eq!(stable_leg, U256::ZERO, "seeded stable leg must clamp to zero");
+        assert_eq!(asset_leg, U256::ZERO, "seeded asset leg must clamp to zero");
+        let (funding_before, funding_before_sign) = e.compute_funding_fee(user).expect("funding before");
+        assert_eq!(funding_before, pending_funding, "pending LP funding not seeded");
+        assert!(funding_before_sign, "pending LP funding should be payable");
+
+        // The realized PnL is the discriminating observable: the close clears the snapshot either
+        // way, so the question is whether the pending funding is CHARGED to the closing LP or simply
+        // discarded with it. Settled, it surfaces as a loss of exactly the pending amount.
+        let (pnl, pnl_sign) = e
+            .close_and_withdraw_inner(
+                U256::from(100_000u64),
+                U256::ZERO,
+                addr(0x77),
+                user,
+                U256::from(300_000_000_000u64),
+                U256::from(1_000u64) * wad,
+                false,
+            )
+            .expect("close on a zero-visible active snapshot");
+
+        assert!(!pnl_sign, "the settled LP funding must be realized as a loss");
+        assert_eq!(pnl, pending_funding, "close did not charge the pending LP funding");
+        let (funding_after, _) = e.compute_funding_fee(user).expect("funding after");
+        assert_eq!(funding_after, U256::ZERO, "close left pending LP funding unsettled");
+        let p = e.liquidity_position.getter(user);
+        assert_eq!(p.initial_stable_balance.get(), U256::ZERO, "close left the LP snapshot active");
+        assert_eq!(p.initial_asset_balance.get(), U256::ZERO, "close left the LP snapshot active");
+    }
+
+    // The widened condition must not drag a plain trader with no LP snapshot into the removal path:
+    // a zero position still closes as a no-op and creates no LP state.
+    #[test]
+    #[cfg(feature = "stub_boundary")]
+    fn close_on_a_zero_position_without_a_snapshot_stays_a_no_op() {
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.vault.set(addr(0x99));
+        e.last_operation_timestamp.set(U64::from(1_700_000_000u64));
+
+        let user = e.vm().msg_sender();
+        assert!(!e.has_active_liquidity_snapshot(user), "precondition: no snapshot");
+
+        e.close_and_withdraw(U256::from(100_000u64), U256::ZERO, addr(0x77), Bytes::new())
+            .expect("close on an empty position");
+
+        let p = e.liquidity_position.getter(user);
+        assert_eq!(p.initial_stable_balance.get(), U256::ZERO, "no-snapshot close must not create LP state");
+        assert_eq!(e.liquidity_epochs.getter(U256::ZERO).active_lp_count.get(), U256::ZERO, "no epoch refcount churn");
+    }

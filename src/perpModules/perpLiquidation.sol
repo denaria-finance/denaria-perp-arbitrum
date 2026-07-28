@@ -81,13 +81,14 @@ abstract contract PerpLiquidation is PerpAutoClose {
             }
         }
 
-        if (marginRatio <= MMR / 2) {
-            require(fraction <= decimals.liquidationDecimals, "LQ1"); //error on liquidate: fraction must be smaller than 1
-        } else if (marginRatio <= MMR) {
-            require(fraction <= decimals.liquidationDecimals / 2, "LQ1"); //error on liquidate: fraction higher than 1/2 during partial liquidation
-        } else {
-            revert("LQ1");
-        }
+        // calcMR floors, so a ratio sitting exactly on a threshold belongs to the healthier band:
+        // an account at MMR is not liquidatable at all, and one at MMR/2 only up to half.
+        require(
+            marginRatio < MMR
+                && fraction
+                    <= (marginRatio < MMR / 2 ? decimals.liquidationDecimals : decimals.liquidationDecimals / 2),
+            "LQ1"
+        );
 
         //compute d if it is dynamic
         uint256 discount = _computeLiquidationDiscount(marginRatio);

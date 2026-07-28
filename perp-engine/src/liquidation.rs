@@ -118,16 +118,12 @@ impl PerpEngine {
             }
         }
 
+        // calc_mr floors, so a ratio sitting exactly on a threshold belongs to the healthier band:
+        // an account at MMR is not liquidatable at all, and one at MMR/2 only up to half.
         let mmr = U256::from(self.mmr.get());
-        if margin_ratio <= mmr / U256::from(2u64) {
-            if !(fraction <= liq_dec) {
-                return Err(err(b"LQ1"));
-            }
-        } else if margin_ratio <= mmr {
-            if !(fraction <= liq_dec / U256::from(2u64)) {
-                return Err(err(b"LQ1"));
-            }
-        } else {
+        let two = U256::from(2u64);
+        let fraction_cap = if margin_ratio < mmr / two { liq_dec } else { liq_dec / two };
+        if margin_ratio >= mmr || fraction > fraction_cap {
             return Err(err(b"LQ1"));
         }
 

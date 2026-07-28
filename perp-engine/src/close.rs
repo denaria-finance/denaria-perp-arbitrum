@@ -28,7 +28,12 @@ impl PerpEngine {
 
         let lp_debt_asset_init = self.liquidity_position.getter(user).debt_asset.get();
         let lp_debt_stable_init = self.liquidity_position.getter(user).debt_stable.get();
-        if (lp_stable_balance | lp_asset_balance | lp_debt_asset_init | lp_debt_stable_init) != U256::ZERO {
+        // An LP whose visible balances and debts have all decayed to zero can still hold an active
+        // snapshot carrying unsettled funding; closing must run the removal path for it too, so the
+        // pending funding is settled before the position state is dropped.
+        if (lp_stable_balance | lp_asset_balance | lp_debt_asset_init | lp_debt_stable_init) != U256::ZERO
+            || self.has_active_liquidity_snapshot(user)
+        {
             self.remove_liquidity(lp_stable_balance, lp_asset_balance, user, price, max_liq_fee)?;
             let asset_debt_lp = self.liquidity_position.getter(user).debt_asset.get();
             let stable_debt_lp = self.liquidity_position.getter(user).debt_stable.get();

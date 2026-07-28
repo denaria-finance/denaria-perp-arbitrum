@@ -292,22 +292,30 @@ abstract contract PerpLiquidity is InternalPerpLogic {
         emit LiquidityMoved(user, liquidityStableToRemove, liquidityAssetToRemove, feeValue, false);
     }
 
-    ///@dev Shared logic for fee distribution between stable and asset LPs
+    ///@dev Distributes stable-denominated removal fees to the remaining LPs, including one-sided pools.
     function _distributeLiquidityFee(uint256 feeValue, uint256 spotPrice) internal {
         uint256 totalLiquidityValue = globalLiquidityStable + (globalLiquidityAsset * spotPrice) / oracleDecimals;
 
-        //NOTE: the fee is 0 if these conditions are not satisfied, so skipping this is irrelevant
-        if (feeValue > 0 && globalLiquidityAsset != 0 && globalLiquidityStable != 0 && totalLiquidityValue > 0) {
+        if (feeValue > 0 && totalLiquidityValue > 0) {
             unchecked {
                 uint256 feeStable = (feeValue * globalLiquidityStable) / totalLiquidityValue;
 
-                // Update asset holders shares and add fee to global liquidity
-                int256 aX = SafeCast.toInt256(
-                    feeStable * SafeCast.toUint256(decimals.liquidityMDecimals) / globalLiquidityStable
-                );
-                int256 aY = SafeCast.toInt256(
-                    (feeValue - feeStable) * SafeCast.toUint256(decimals.liquidityMDecimals) / globalLiquidityAsset
-                );
+                // Each allocation divides by its own leg, so it is computed only when that leg
+                // is nonzero; an empty leg contributes no matrix update.
+                int256 aX;
+                int256 aY;
+
+                if (globalLiquidityStable != 0) {
+                    aX = SafeCast.toInt256(
+                        feeStable * SafeCast.toUint256(decimals.liquidityMDecimals) / globalLiquidityStable
+                    );
+                }
+                if (globalLiquidityAsset != 0) {
+                    aY = SafeCast.toInt256(
+                        (feeValue - feeStable) * SafeCast.toUint256(decimals.liquidityMDecimals) / globalLiquidityAsset
+                    );
+                }
+
                 _applyLiquidityMatrixUpdate(aX, aY, 2);
                 globalLiquidityStable += feeValue;
             }

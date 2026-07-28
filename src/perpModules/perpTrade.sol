@@ -382,16 +382,19 @@ abstract contract PerpTrade is PerpLiquidity {
         uint256 price = getPrice();
         (uint256 lpStableBalance, uint256 lpAssetBalance) = getLpLiquidityBalance(user);
         VirtualTraderPosition storage pos = userVirtualTraderPosition[user];
+        LiquidityPosition storage lpPos = liquidityPosition[user];
 
-        // Close liquidity positions if needed
+        // Close liquidity positions if needed. An LP whose visible balances and debts have all
+        // decayed to zero can still hold an active snapshot carrying unsettled funding, so the
+        // removal path runs for it too and settles that funding before the state is dropped.
         if (
-            (lpStableBalance | lpAssetBalance | liquidityPosition[user].debtAsset | liquidityPosition[user].debtStable)
-                != 0
+            (lpStableBalance | lpAssetBalance | lpPos.debtAsset | lpPos.debtStable) != 0
+                || _hasActiveLiquiditySnapshot(lpPos)
         ) {
             _removeLiquidity(lpStableBalance, lpAssetBalance, user, price, maxLiqFee);
-            uint256 assetDebtLP = liquidityPosition[user].debtAsset;
+            uint256 assetDebtLP = lpPos.debtAsset;
             pos.debtAsset += assetDebtLP;
-            pos.debtStable += liquidityPosition[user].debtStable;
+            pos.debtStable += lpPos.debtStable;
             if (assetDebtLP > 0) {
                 if (!totalTraderExposureSign) {
                     totalTraderExposure += assetDebtLP;

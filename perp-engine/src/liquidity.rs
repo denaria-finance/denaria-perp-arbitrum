@@ -86,20 +86,30 @@ impl PerpEngine {
         Ok(())
     }
 
-    /// Solidity `perpLiquidity._distributeLiquidityFee`: split the removal fee
-    /// between stable/asset LPs by updating the liquidity matrix row 0 and
-    /// crediting the fee to global stable liquidity.
+    /// Solidity `perpLiquidity._distributeLiquidityFee`: credit the stable-denominated
+    /// fee to the LPs that remain in the pool by updating the liquidity matrix row 0,
+    /// then add it to global stable liquidity. A one-sided pool is served too: the
+    /// share belonging to an empty leg is routed through the leg that still exists,
+    /// instead of the whole fee being dropped.
     pub(crate) fn distribute_liquidity_fee(&mut self, fee_value: U256, spot_price: U256) {
         let gs = self.global_liquidity_stable.get();
         let ga = self.global_liquidity_asset.get();
         let oracle_dec = U256::from(self.oracle_decimals.get());
         let total_liq_value = gs + cm::md(ga, spot_price, oracle_dec);
-        if fee_value > U256::ZERO && ga != U256::ZERO && gs != U256::ZERO && total_liq_value > U256::ZERO {
+        if fee_value > U256::ZERO && total_liq_value > U256::ZERO {
             let liq_m_dec = self.liquidity_m_decimals.get();
             let liq_m_dec_u = cm::u(liq_m_dec);
             let fee_stable = cm::md(fee_value, gs, total_liq_value);
-            let a_x = cm::i(cm::md(fee_stable, liq_m_dec_u, gs));
-            let a_y = cm::i(cm::md(fee_value - fee_stable, liq_m_dec_u, ga));
+            // Each allocation divides by its own leg, so it is computed only when that leg
+            // is nonzero; an empty leg contributes no matrix update.
+            let mut a_x = I256::ZERO;
+            let mut a_y = I256::ZERO;
+            if gs != U256::ZERO {
+                a_x = cm::i(cm::md(fee_stable, liq_m_dec_u, gs));
+            }
+            if ga != U256::ZERO {
+                a_y = cm::i(cm::md(fee_value - fee_stable, liq_m_dec_u, ga));
+            }
             self.apply_liquidity_matrix_update(a_x, a_y, 2);
             self.global_liquidity_stable.set(gs + fee_value);
         }
