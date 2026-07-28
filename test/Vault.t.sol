@@ -874,6 +874,31 @@ contract VaultTest is Test, PerpPairTestDeploymentHelper {
         assertEq(vault.totalCollateral(), 5000 * collateralDecimals, "total collateral after removal");
     }
 
+    /// @dev Pins the withdrawal seam: ONE consolidated engine DATA read, and — the assertions that
+    ///      actually matter — ZERO of the two reads it replaced. Two separate reads could return
+    ///      values taken from different snapshots; one cannot.
+    /// @dev The `oracle()` address getter is deliberately EXCLUDED from the count: it is a fourth
+    ///      engine entry and nobody caches it, because the engine's oracle is rotatable and the
+    ///      vault must follow it. The target is "one consolidated DATA read", not "one engine call".
+    /// @dev This test has no engine-side twin. In production the callee is a single Rust contract
+    ///      with no internal boundary, so the count is unobservable from inside it; what this
+    ///      protects is the vault's call budget, not engine correctness.
+    function test_seam_removeCollateral_singleConsolidatedEngineRead() public {
+        uint256[] memory a = new uint256[](numStableCoins);
+        a[0] = 4000 * 1e6;
+        a[1] = 6000 * 1e18;
+        vm.prank(alice);
+        vault.addCollateral(a);
+
+        vm.expectCall(address(perpPair), abi.encodeWithSelector(IPerpPair.calcPnL.selector), 0);
+        vm.expectCall(address(perpPair), abi.encodeWithSelector(IPerpPair.marginCheckData.selector), 0);
+        vm.expectCall(address(perpPair), abi.encodeWithSelector(IPerpPair.withdrawalCheckData.selector), 1);
+        vm.prank(alice);
+        vault.removeCollateral(5000 * 1e18, fakeReportData);
+
+        assertEq(vault.userCollateral(alice), 5000 * collateralDecimals, "alice collateral after removal");
+    }
+
     //support functions
     //returns if value is inside confidence interval of target
     function inConfidenceInterval(uint256 value, uint256 target, uint256 tolerance) public pure returns (bool) {

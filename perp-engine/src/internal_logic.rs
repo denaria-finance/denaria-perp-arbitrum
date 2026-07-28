@@ -146,6 +146,227 @@ impl PerpEngine {
         Ok(cm::md(tot_coll, mmr_decimals, position_value))
     }
 
+    /// `withdrawalCheckData(user, price, hypotheticalCollateral)` — the Vault's whole
+    /// collateral-withdrawal safety read in ONE cross-contract call: the FEE-INCLUSIVE exit PnL and
+    /// whether the position stays margin-safe once `hypotheticalCollateral` is all that backs it.
+    ///
+    /// The old check valued the position at its mark and ignored what leaving actually costs — the
+    /// trade exit fee, the LP removal fee, and the slippage of the closing curve — so a position
+    /// could pass and still be unable to exit without going into bad debt. Everything is computed
+    /// here rather than in the Vault, which would otherwise pay a boundary call per input.
+    pub(crate) fn withdrawal_check_data(
+        &self,
+        user: Address,
+        price: U256,
+        hypothetical_collateral: U256,
+    ) -> Result<(U256, bool, bool), Vec<u8>> {
+        let oracle_dec = U256::from(self.oracle_decimals.get());
+        let (pnl, pnl_sign, position_value, exit_fee) = self.withdrawal_exit_preview(user, price)?;
+
+        let (total_equity, total_equity_sign) = cm::signed_sum(hypothetical_collateral, true, pnl, pnl_sign);
+        if !total_equity_sign && total_equity != U256::ZERO {
+            return Ok((pnl, pnl_sign, false));
+        }
+        let mmr_dec = self.mmr_decimals.get();
+        let mut calculated_mmr =
+            if position_value == U256::ZERO { mmr_dec } else { cm::md(total_equity, mmr_dec, position_value) };
+
+        let (lp_stable_balance, lp_asset_balance) = self.get_lp_liquidity_balance(user)?;
+        let (bs, ba, ds, da) = {
+            let vp = self.user_virtual_trader_position.getter(user);
+            (vp.balance_stable.get(), vp.balance_asset.get(), vp.debt_stable.get(), vp.debt_asset.get())
+        };
+        let (lp_debt_stable, lp_debt_asset) = {
+            let lp = self.liquidity_position.getter(user);
+            (lp.debt_stable.get(), lp.debt_asset.get())
+        };
+        let debt_stable = if ds > bs { ds - bs } else { U256::ZERO };
+        let debt_asset = if da > ba { da - ba } else { U256::ZERO };
+        if lp_stable_balance + lp_asset_balance != U256::ZERO {
+            // The exit fee is money the LP will not have once it leaves, so the leverage cap has to
+            // be applied to what actually remains.
+            let fee_adjusted =
+                if hypothetical_collateral > exit_fee { hypothetical_collateral - exit_fee } else { U256::ZERO };
+            if fee_adjusted * U256::from(self.max_lp_leverage.get())
+                < debt_stable + lp_debt_stable + cm::md(debt_asset + lp_debt_asset, price, oracle_dec)
+            {
+                calculated_mmr = U256::ZERO;
+            }
+        }
+        Ok((pnl, pnl_sign, calculated_mmr >= U256::from(self.mmr.get())))
+    }
+
+    /// Solidity `_withdrawalExitPreview`: aggregate the trader and LP legs, fold in funding accrued
+    /// to THIS block and the LP removal fee, then price the exit through the closing curve.
+    pub(crate) fn withdrawal_exit_preview(&self, user: Address, price: U256) -> Result<(U256, bool, U256, U256), Vec<u8>> {
+        let (lp_stable_balance, lp_asset_balance) = self.get_lp_liquidity_balance(user)?;
+        let (bs, ba, ds, da, pos_ff, pos_ff_sign) = {
+            let vp = self.user_virtual_trader_position.getter(user);
+            (
+                vp.balance_stable.get(),
+                vp.balance_asset.get(),
+                vp.debt_stable.get(),
+                vp.debt_asset.get(),
+                vp.funding_fee.get(),
+                vp.funding_fee_sign.get(),
+            )
+        };
+        let (lp_debt_stable, lp_debt_asset) = {
+            let lp = self.liquidity_position.getter(user);
+            (lp.debt_stable.get(), lp.debt_asset.get())
+        };
+
+        let (local_ff, local_ff_sign) = self.compute_funding_fee(user)?;
+        let (mut funding_fee, mut funding_fee_sign) = cm::signed_sum(pos_ff, pos_ff_sign, local_ff, local_ff_sign);
+
+        // The removal fee is charged like a funding debit, so it lands on the same side of the fold.
+        let lp_removal_fee = self.lp_removal_fee(price, lp_stable_balance, lp_asset_balance);
+        if lp_removal_fee != U256::ZERO {
+            let (f, fs) = cm::signed_sum(funding_fee, funding_fee_sign, lp_removal_fee, true);
+            funding_fee = f;
+            funding_fee_sign = fs;
+        }
+
+        let (pnl, pnl_sign, position_value, close_fee) = self.fee_inclusive_pnl(
+            bs + lp_stable_balance,
+            ba + lp_asset_balance,
+            ds + lp_debt_stable,
+            da + lp_debt_asset,
+            funding_fee,
+            funding_fee_sign,
+            price,
+        )?;
+        Ok((pnl, pnl_sign, position_value, close_fee + lp_removal_fee))
+    }
+
+    /// Solidity `_lpRemovalFee`: what unwinding this LP position would cost, at the current pool.
+    fn lp_removal_fee(&self, price: U256, lp_stable_balance: U256, lp_asset_balance: U256) -> U256 {
+        if (lp_stable_balance | lp_asset_balance) == U256::ZERO {
+            return U256::ZERO;
+        }
+        let oracle_dec = U256::from(self.oracle_decimals.get());
+        let fee_dec = self.liquidity_fee_decimals.get();
+        let fee = cm::compute_liquidity_removal_fee(
+            lp_stable_balance,
+            lp_asset_balance,
+            self.global_liquidity_stable.get(),
+            self.global_liquidity_asset.get(),
+            price,
+            oracle_dec,
+            self.liquidity_max_fee.get(),
+            self.liquidity_min_fee.get(),
+            self.liquidity_fee_k.get(),
+            fee_dec,
+        );
+        cm::md(lp_stable_balance + cm::md(lp_asset_balance, price, oracle_dec), fee, fee_dec)
+    }
+
+    /// Solidity `_feeInclusivePnl`: PnL that already carries the cost of closing.
+    #[allow(clippy::too_many_arguments)]
+    fn fee_inclusive_pnl(
+        &self,
+        balance_stable: U256,
+        balance_asset: U256,
+        debt_stable: U256,
+        debt_asset: U256,
+        funding_fee: U256,
+        funding_fee_sign: bool,
+        price: U256,
+    ) -> Result<(U256, bool, U256, U256), Vec<u8>> {
+        let oracle_dec = U256::from(self.oracle_decimals.get());
+        let (diff_stable, diff_stable_sign) = cm::signed_sum(balance_stable, true, debt_stable, false);
+        let (diff_stable, diff_stable_sign) =
+            cm::signed_sum(diff_stable, diff_stable_sign, funding_fee, !funding_fee_sign);
+        let (diff_asset, diff_asset_sign) = cm::signed_sum(balance_asset, true, debt_asset, false);
+        let position_value = cm::md(diff_asset, price, oracle_dec);
+
+        let mut stable_trade_value = U256::ZERO;
+        let mut close_fee = U256::ZERO;
+        // Dust cutoff: below this the exit is not worth pricing, and charging the FLAT trading fee
+        // on a dust leg would invent a cost far larger than the leg itself.
+        if diff_asset > cm::md(U256::from(10_000_000_000_000u64), oracle_dec, price) {
+            let (v, f) = if diff_asset_sign {
+                self.long_close_value(diff_asset, price)?
+            } else {
+                self.short_close_cost(diff_asset, price)?
+            };
+            stable_trade_value = v;
+            close_fee = f;
+        }
+
+        let (pnl, pnl_sign) = cm::signed_sum(diff_stable, diff_stable_sign, stable_trade_value, diff_asset_sign);
+        Ok((pnl, pnl_sign, position_value, close_fee))
+    }
+
+    /// Solidity `_longCloseValue`: selling a net-long asset leg is a SHORT trade, quoted against the
+    /// short window's base pool frame so the preview sees the curve a real close would.
+    fn long_close_value(&self, asset_size: U256, price: U256) -> Result<(U256, U256), Vec<u8>> {
+        let oracle_dec = U256::from(self.oracle_decimals.get());
+        let stable_liquidity = self.global_liquidity_stable.get();
+        let asset_liquidity = self.global_liquidity_asset.get();
+        let (curve_dx, curve_dy) = self.read_curve_memory(false, price);
+        let gross_return = cm::compute_incremental_short_return(
+            asset_size,
+            curve_dx,
+            price,
+            oracle_dec,
+            stable_liquidity + curve_dy,
+            stable_liquidity + curve_dy,
+            asset_liquidity - curve_dx,
+            U256::from(100_000_000u64),
+            U256::from(10_000_000u64),
+            U256::from(100_000_000u64),
+        )?;
+        let trading_fee_dec = U256::from(1_000_000_000_000_000_000u64);
+        let close_fee = cm::md(gross_return, self.trading_fee.get(), trading_fee_dec) + self.flat_trading_fee.get();
+        if close_fee < gross_return {
+            return Ok((gross_return - close_fee, close_fee));
+        }
+        Ok((U256::ZERO, gross_return))
+    }
+
+    /// Solidity `_shortCloseCost`: buying back a net-short asset leg is a LONG trade. Same two-term
+    /// ceil gross-up the close path uses, so the preview cannot quote a cheaper exit than the real one.
+    fn short_close_cost(&self, asset_size: U256, price: U256) -> Result<(U256, U256), Vec<u8>> {
+        let oracle_dec = U256::from(self.oracle_decimals.get());
+        let stable_liquidity = self.global_liquidity_stable.get();
+        let asset_liquidity = self.global_liquidity_asset.get();
+        // The quote short-circuits to a plain spot value when the buy-back would empty the asset leg
+        // or leave a sub-unit pool; on those branches the answer bears no relation to dy0, and since
+        // a long window's dy0 exceeds the spot value of its dx0 by the slippage premium, `- dy0`
+        // would go negative — and WRAP, because release builds have overflow-checks off. This is the
+        // close path's own guard (close.rs) in the same positive form: outside it there is no window
+        // to unwind against, so the leg is priced at spot with no memory.
+        let (curve_dx, curve_dy) = if asset_size < asset_liquidity
+            && cm::md(asset_liquidity - asset_size, price, oracle_dec) >= U256::from(1_000_000_000_000_000_000u64)
+        {
+            self.read_curve_memory(true, price)
+        } else {
+            (U256::ZERO, U256::ZERO)
+        };
+        let raw_amount_in = cm::compute_executable_amount_in_long(
+            asset_size + curve_dx,
+            price,
+            oracle_dec,
+            stable_liquidity,
+            stable_liquidity - curve_dy,
+            asset_liquidity + curve_dx,
+            U256::from(100_000_000u64),
+            U256::from(10_000_000u64),
+            U256::from(100_000_000u64),
+        )?;
+        // The guard makes this saturation unreachable; it is belt-and-braces against the wrap, and
+        // it must NOT stand alone — saturating without the guard would understate the buy-back and
+        // let an oversized short withdraw.
+        let exact_amount_in = if raw_amount_in > curve_dy { raw_amount_in - curve_dy } else { U256::ZERO };
+        let trading_fee_dec = U256::from(1_000_000_000_000_000_000u64);
+        let fee_denominator = trading_fee_dec - self.trading_fee.get();
+        let cost = cm::md_ceil(exact_amount_in, trading_fee_dec, fee_denominator)
+            + cm::md_ceil(self.flat_trading_fee.get(), trading_fee_dec, fee_denominator);
+        let close_fee = if cost > exact_amount_in { cost - exact_amount_in } else { U256::ZERO };
+        Ok((cost, close_fee))
+    }
+
     /// Shared body of the margin check: reads the position/LP state ONCE and returns the
     /// margin ratio together with the raw fields a caller's bad-debt override needs
     /// (position balances/debts, LP debts, LP balances). `calc_mr` and the public

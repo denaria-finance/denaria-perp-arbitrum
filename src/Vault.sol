@@ -48,10 +48,8 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context, Pausa
     /// @dev Status of the contract, if false a function to initialize some parameters can be called.
     bool private initialized;
 
-    uint256 private immutable MMRDecimals;
     uint256 private immutable ratioDecimals;
     uint256 private immutable collateralDecimals;
-    uint256 private immutable oracleDecimals;
 
     uint256 public addStableTimeLock;
     uint256 public addStableTimeLockDuration = 604_800;
@@ -112,10 +110,8 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context, Pausa
         ERC2771Context(_multiCallManager)
     {
         initialized = false;
-        MMRDecimals = 1e6;
         ratioDecimals = 1e8;
         collateralDecimals = 1e18;
-        oracleDecimals = 1e8;
         minCollateralMovement = _minCollateralMovement;
         for (uint256 i; i < stableCoinAddresses.length; i++) {
             address coin = stableCoinAddresses[i];
@@ -213,11 +209,16 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context, Pausa
         IPerpPair(perpPair).updateFG(unverifiedReport);
         address user = _msgSender();
         require(amount <= userCollateral[user], "RC1"); //Error on removeCollateral: Amount exceeds user collateral
-        // Read the oracle price once and reuse it for both the PnL check and the margin check
-        // (_checkMR). Nothing between here and the MR check mutates the oracle, so the two former
-        // reads returned the same value; this drops one Vault->oracle read per removeCollateral.
+        // Read the oracle price once and pass it into the engine, so the whole decision is taken
+        // against a single price snapshot.
         uint256 price = SafeCast.toUint256(IOracleMiddleware(IPerpPair(perpPair).oracle()).getPrice());
-        (uint256 pnl, bool pnlSign) = IPerpPair(perpPair).calcPnL(user, price);
+        // ONE engine data read for the whole withdrawal decision. The PnL it returns is
+        // FEE-INCLUSIVE: it already carries the trade exit fee, the LP removal fee and the slippage
+        // of the closing curve, so a position can no longer pass this check and then be unable to
+        // exit without going into bad debt. The margin verdict is computed engine-side from the
+        // same snapshot, which also rules out the two reads disagreeing.
+        (uint256 pnl, bool pnlSign, bool marginSafe) =
+            IPerpPair(perpPair).withdrawalCheckData(user, price, userCollateral[user] - amount);
         if (!pnlSign) {
             require(amount + pnl <= userCollateral[user], "RC5");
         }
@@ -226,7 +227,7 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context, Pausa
         }
         require(amount <= totalCollateral, "RC3"); //Error on removeCollateral: Amount exceeds total collateral
 
-        require(_checkMR(amount, user, price), "RC4"); //Error on removeCollateral: MMR check
+        require(marginSafe, "RC4"); //Error on removeCollateral: MMR check
 
         uint256[] memory removedCollateral = _removeCollateral(amount, user);
 
@@ -624,42 +625,6 @@ contract Vault is AccessControl, ReentrancyGuardTransient, ERC2771Context, Pausa
             }
             lastSnapshotTimestamp = block.timestamp;
         }
-    }
-
-    ///@dev check the margin ratio of the user, used when the user wants to remove some collateral from an active position.
-    ///@param amount Amount of collateral to remove
-    ///@param user User removing the collateral
-    function _checkMR(uint256 amount, address user, uint256 price) private view returns (bool) {
-        // `price` is supplied by removeCollateral (a single oracle read reused for PnL + MR).
-        // One engine call returns the margin ratio plus the raw position/LP fields and
-        // maxLpLeverage/MMR the bad-debt override below needs — replacing the ~12 separate
-        // cross-contract reads the fan-out used to make. The override itself stays here.
-        uint256 hypotheticalCollateral = userCollateral[user] - amount;
-        (
-            uint256 calculatedMMR,
-            uint256 balanceStable,
-            uint256 balanceAsset,
-            uint256 debtStable,
-            uint256 debtAsset,
-            uint256 lpStableDebt,
-            uint256 lpAssetDebt,
-            uint256 lpStableBalance,
-            uint256 lpAssetBalance,
-            uint256 maxLpLev,
-            uint256 mmr
-        ) = IPerpPair(perpPair).marginCheckData(user, price, hypotheticalCollateral);
-
-        debtStable = debtStable > balanceStable ? debtStable - balanceStable : 0;
-        debtAsset = debtAsset > balanceAsset ? debtAsset - balanceAsset : 0;
-        if (lpStableBalance + lpAssetBalance != 0) {
-            if (
-                hypotheticalCollateral * maxLpLev
-                    < debtStable + lpStableDebt + (debtAsset + lpAssetDebt) * price / oracleDecimals
-            ) {
-                calculatedMMR = 0;
-            }
-        }
-        return calculatedMMR >= mmr;
     }
 
     function _msgSender() internal view override(Context, ERC2771Context) returns (address sender) {

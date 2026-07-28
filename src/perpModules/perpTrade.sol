@@ -37,6 +37,226 @@ abstract contract PerpTrade is PerpLiquidity {
             && (direction ? globalLiquidityStable > dy0 : globalLiquidityAsset > dx0);
     }
 
+    ///@notice The curve accumulators, but only while the window is genuinely open for `direction`
+    ///        at `price`; otherwise zero. A withdrawal preview has to quote against the same base
+    ///        pool frame a real close would see, and reading `dx0`/`dy0` raw would apply a stale
+    ///        window's accumulators to a fresh quote.
+    ///@dev Exposed on the reference model so the differential harness can compare a preview against
+    ///     the engine's internal equivalent; the engine does not need a selector for it, since only
+    ///     its own consolidated read consumes it.
+    function readCurveMemory(uint256 direction, uint256 price) external view returns (uint256 dx, uint256 dy) {
+        return _readCurveMemory(direction != 0, price);
+    }
+
+    function _readCurveMemory(bool direction, uint256 price) internal view returns (uint256 dx, uint256 dy) {
+        if (_hasActiveCurveMemory(direction, price)) return (dx0, dy0);
+    }
+
+    ///@notice The Vault's whole collateral-withdrawal safety read in one call: the FEE-INCLUSIVE
+    ///        exit PnL and whether the position stays margin-safe with `hypotheticalCollateral`.
+    ///@dev The old check valued the position at its mark and ignored what leaving actually costs —
+    ///     the trade exit fee, the LP removal fee, and the slippage of the closing curve. A position
+    ///     could therefore pass the check and still be unable to exit without going into bad debt.
+    ///@dev Computed here rather than in the Vault so the whole verdict comes from ONE snapshot: two
+    ///     separate reads could disagree, and each additional read costs a cross-contract call.
+    function withdrawalCheckData(
+        address user,
+        uint256 price,
+        uint256 hypotheticalCollateral
+    )
+        external
+        view
+        returns (uint256 pnl, bool pnlSign, bool marginSafe)
+    {
+        uint256 positionValue;
+        uint256 exitFee;
+        (pnl, pnlSign, positionValue, exitFee) = _withdrawalExitPreview(user, price);
+
+        (uint256 totalEquity, bool totalEquitySign) = UtilMath.signedSum(hypotheticalCollateral, true, pnl, pnlSign);
+        if (!totalEquitySign && totalEquity != 0) return (pnl, pnlSign, false);
+        uint256 calculatedMMR =
+            positionValue == 0 ? decimals.MMRDecimals : totalEquity * decimals.MMRDecimals / positionValue;
+
+        VirtualTraderPosition storage pos = userVirtualTraderPosition[user];
+        LiquidityPosition storage lp = liquidityPosition[user];
+        (uint256 lpStableBalance, uint256 lpAssetBalance) = getLpLiquidityBalance(user);
+        uint256 debtStable = pos.debtStable > pos.balanceStable ? pos.debtStable - pos.balanceStable : 0;
+        uint256 debtAsset = pos.debtAsset > pos.balanceAsset ? pos.debtAsset - pos.balanceAsset : 0;
+        if (lpStableBalance + lpAssetBalance != 0) {
+            // The exit fee is money the LP will not have once it leaves, so the leverage cap has to
+            // be applied to what actually remains.
+            uint256 feeAdjustedCollateral = hypotheticalCollateral > exitFee ? hypotheticalCollateral - exitFee : 0;
+            if (
+                feeAdjustedCollateral * maxLpLeverage
+                    < debtStable + lp.debtStable + (debtAsset + lp.debtAsset) * price / oracleDecimals
+            ) {
+                calculatedMMR = 0;
+            }
+        }
+        marginSafe = calculatedMMR >= MMR;
+    }
+
+    ///@dev Aggregates the trader and LP legs, folds in funding accrued to THIS block and the LP
+    ///     removal fee, then prices the exit through the closing curve.
+    function _withdrawalExitPreview(
+        address user,
+        uint256 price
+    )
+        private
+        view
+        returns (uint256 pnl, bool pnlSign, uint256 positionValue, uint256 exitFee)
+    {
+        VirtualTraderPosition storage pos = userVirtualTraderPosition[user];
+        LiquidityPosition storage lp = liquidityPosition[user];
+        (uint256 lpStableBalance, uint256 lpAssetBalance) = getLpLiquidityBalance(user);
+
+        (uint256 localFundingFee, bool localFundingFeeSign) = computeFundingFee(user);
+        (uint256 fundingFee, bool fundingFeeSign) =
+            UtilMath.signedSum(pos.fundingFee, pos.fundingFeeSign, localFundingFee, localFundingFeeSign);
+
+        // The removal fee is charged like a funding debit, so it lands on the same side of the fold.
+        uint256 lpRemovalFee = _lpRemovalFee(price, lpStableBalance, lpAssetBalance);
+        if (lpRemovalFee != 0) {
+            (fundingFee, fundingFeeSign) = UtilMath.signedSum(fundingFee, fundingFeeSign, lpRemovalFee, true);
+        }
+
+        (pnl, pnlSign, positionValue, exitFee) = _feeInclusivePnl(
+            pos.balanceStable + lpStableBalance,
+            pos.balanceAsset + lpAssetBalance,
+            pos.debtStable + lp.debtStable,
+            pos.debtAsset + lp.debtAsset,
+            fundingFee,
+            fundingFeeSign,
+            price
+        );
+        exitFee += lpRemovalFee;
+    }
+
+    ///@dev What unwinding this LP position would cost in removal fees, at the current pool.
+    function _lpRemovalFee(
+        uint256 price,
+        uint256 lpStableBalance,
+        uint256 lpAssetBalance
+    )
+        private
+        view
+        returns (uint256 feeValue)
+    {
+        if ((lpStableBalance | lpAssetBalance) == 0) return 0;
+        uint256 fee = FeeManager.computeLiquidityRemovalFee(
+            lpStableBalance,
+            lpAssetBalance,
+            globalLiquidityStable,
+            globalLiquidityAsset,
+            price,
+            oracleDecimals,
+            liquidityMaxFee,
+            liquidityMinFee,
+            liquidityFeeK,
+            decimals.liquidityFeeDecimals
+        );
+        feeValue = (lpStableBalance + lpAssetBalance * price / oracleDecimals) * fee / decimals.liquidityFeeDecimals;
+    }
+
+    ///@dev PnL that already carries the cost of closing. The asset leg is priced through the curve
+    ///     the exit would actually trade on, net of the trading fee.
+    function _feeInclusivePnl(
+        uint256 balanceStable,
+        uint256 balanceAsset,
+        uint256 debtStable,
+        uint256 debtAsset,
+        uint256 fundingFee,
+        bool fundingFeeSign,
+        uint256 price
+    )
+        private
+        view
+        returns (uint256 pnl, bool pnlSign, uint256 positionValue, uint256 closeFee)
+    {
+        (uint256 diffStable, bool diffStableSign) = UtilMath.signedSum(balanceStable, true, debtStable, false);
+        (diffStable, diffStableSign) = UtilMath.signedSum(diffStable, diffStableSign, fundingFee, !fundingFeeSign);
+        (uint256 diffAsset, bool diffAssetSign) = UtilMath.signedSum(balanceAsset, true, debtAsset, false);
+        positionValue = diffAsset * price / oracleDecimals;
+
+        uint256 stableTradeValue;
+        // Dust cutoff: below this the exit is not worth pricing, and charging the FLAT trading fee
+        // on a dust leg would invent a cost far larger than the leg itself.
+        if (diffAsset > 1e13 * oracleDecimals / price) {
+            if (diffAssetSign) {
+                (stableTradeValue, closeFee) = _longCloseValue(diffAsset, price);
+            } else {
+                (stableTradeValue, closeFee) = _shortCloseCost(diffAsset, price);
+            }
+        }
+
+        (pnl, pnlSign) = UtilMath.signedSum(diffStable, diffStableSign, stableTradeValue, diffAssetSign);
+    }
+
+    ///@dev Selling a net-long asset leg: a SHORT trade, quoted against the short window's base pool
+    ///     frame so the preview sees the same curve a real close would.
+    function _longCloseValue(
+        uint256 assetSize,
+        uint256 price
+    )
+        private
+        view
+        returns (uint256 netReturn, uint256 closeFee)
+    {
+        uint256 stableLiquidity = globalLiquidityStable;
+        uint256 assetLiquidity = globalLiquidityAsset;
+        (uint256 curveDx, uint256 curveDy) = _readCurveMemory(false, price);
+        uint256 grossReturn = _computeIncrementalShortReturn(
+            assetSize,
+            curveDx,
+            price,
+            oracleDecimals,
+            stableLiquidity + curveDy,
+            stableLiquidity + curveDy,
+            assetLiquidity - curveDx,
+            curveParameters.shortCurveParameterA,
+            curveParameters.shortCurveParameterB,
+            1e8
+        );
+        closeFee = grossReturn * tradingFee / decimals.tradingFeeDecimals + flatTradingFee;
+        if (closeFee < grossReturn) return (grossReturn - closeFee, closeFee);
+        return (0, grossReturn);
+    }
+
+    ///@dev Buying back a net-short asset leg: a LONG trade. Same two-term ceil gross-up the close
+    ///     path uses, so the preview cannot quote an exit cheaper than the one it would get.
+    function _shortCloseCost(uint256 assetSize, uint256 price) private view returns (uint256 cost, uint256 closeFee) {
+        uint256 stableLiquidity = globalLiquidityStable;
+        uint256 assetLiquidity = globalLiquidityAsset;
+        // The quote short-circuits to a plain spot value when the buy-back would empty the asset leg
+        // or leave a sub-unit pool; on those branches the answer bears no relation to dy0, and since
+        // a long window's dy0 exceeds the spot value of its dx0 by the slippage premium, `- curveDy`
+        // would underflow. This is the close path's own guard in the same positive form: outside it
+        // there is no window to unwind against, so the leg is priced at spot with no memory.
+        uint256 curveDx;
+        uint256 curveDy;
+        if (assetSize < assetLiquidity && (assetLiquidity - assetSize) * price / oracleDecimals >= 1e18) {
+            (curveDx, curveDy) = _readCurveMemory(true, price);
+        }
+        uint256 rawAmountIn = _computeExecutableAmountInLong(
+            assetSize + curveDx,
+            price,
+            oracleDecimals,
+            stableLiquidity,
+            stableLiquidity - curveDy,
+            assetLiquidity + curveDx,
+            curveParameters.longCurveParameterA,
+            curveParameters.longCurveParameterB,
+            1e8
+        );
+        // The guard makes this saturation unreachable; it must NOT stand alone — saturating without
+        // the guard would understate the buy-back and let an oversized short withdraw.
+        uint256 exactAmountIn = rawAmountIn > curveDy ? rawAmountIn - curveDy : 0;
+        uint256 feeDenominator = decimals.tradingFeeDecimals - tradingFee;
+        cost = Math.mulDiv(exactAmountIn, decimals.tradingFeeDecimals, feeDenominator, Math.Rounding.Ceil)
+            + Math.mulDiv(flatTradingFee, decimals.tradingFeeDecimals, feeDenominator, Math.Rounding.Ceil);
+        closeFee = cost > exactAmountIn ? cost - exactAmountIn : 0;
+    }
+
     ///@dev Opens a fresh curve window unless the current one is still active for this direction
     ///     and price. The accumulators and the (update, direction, price) triple are only ever
     ///     written together, here — the LP paths deliberately no longer touch the triple.

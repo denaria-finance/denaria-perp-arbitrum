@@ -4209,3 +4209,292 @@
             );
         }
     }
+
+    // The withdrawal gate is FEE-INCLUSIVE: it prices what leaving actually costs. For a net short
+    // that means the buy-back, so the preview can never report a smaller loss than the mark-valued
+    // read — which is precisely what let a position pass the old gate and then fail to exit.
+    #[test]
+    fn withdrawal_preview_never_quotes_a_cheaper_exit_than_the_mark() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.last_operation_timestamp.set(U64::from(1_700_000_000u64));
+
+        let user = addr(0xA1);
+        {
+            let mut up = e.user_virtual_trader_position.setter(user);
+            up.debt_asset.set(U256::from(10u64) * wad);
+            up.balance_stable.set(U256::from(40_000u64) * wad);
+        }
+        let price = U256::from(300_000_000_000u64);
+        let collateral = U256::from(100_000u64) * wad;
+
+        let (mark_pnl, mark_sign) = e.calc_pnl_user(user, price).expect("mark pnl");
+        let (preview_pnl, preview_sign, _) = e.withdrawal_check_data(user, price, collateral).expect("preview");
+
+        // Same sign here (both gains) — the preview must be the SMALLER gain, i.e. worse for the
+        // user, because it has paid the exit fee the mark ignores.
+        assert_eq!(mark_sign, preview_sign, "sign should not flip on this fixture");
+        if preview_sign {
+            assert!(preview_pnl <= mark_pnl, "preview gain {preview_pnl} exceeded the mark gain {mark_pnl}");
+        } else {
+            assert!(preview_pnl >= mark_pnl, "preview loss {preview_pnl} was smaller than the mark loss {mark_pnl}");
+        }
+        assert_ne!(preview_pnl, mark_pnl, "the exit fee must actually move the number");
+    }
+
+    // An empty position must cost nothing to leave: the preview must not invent an exit fee, and in
+    // particular must not charge the FLAT trading fee against a position with no asset leg.
+    #[test]
+    fn withdrawal_preview_is_free_for_an_empty_position() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.last_operation_timestamp.set(U64::from(1_700_000_000u64));
+
+        let user = addr(0xA2);
+        let price = U256::from(300_000_000_000u64);
+        let (pnl, _, margin_safe) =
+            e.withdrawal_check_data(user, price, U256::from(1_000u64) * wad).expect("preview");
+        assert_eq!(pnl, U256::ZERO, "an empty position has no exit cost");
+        assert!(margin_safe, "an empty position is always safe to withdraw against");
+    }
+
+    // The dust cutoff: an asset leg at or below `1e13 * oracleDecimals / price` is not priced at
+    // all. Charging the flat trading fee on a dust leg would invent a cost far larger than the leg.
+    #[test]
+    fn withdrawal_preview_does_not_price_a_dust_asset_leg() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.last_operation_timestamp.set(U64::from(1_700_000_000u64));
+
+        let price = U256::from(300_000_000_000u64);
+        let oracle_dec = U256::from(100_000_000u64);
+        let cutoff = cm::md(U256::from(10_000_000_000_000u64), oracle_dec, price);
+
+        let dust_user = addr(0xA3);
+        {
+            let mut up = e.user_virtual_trader_position.setter(dust_user);
+            up.balance_asset.set(cutoff); // exactly AT the cutoff -> strictly greater is required
+            up.balance_stable.set(wad);
+        }
+        let (dust_pnl, dust_sign, _) = e.withdrawal_check_data(dust_user, price, wad).expect("dust preview");
+        assert!(dust_sign, "a dust leg with a stable balance is a gain");
+        assert_eq!(dust_pnl, wad, "a dust leg must contribute no close value and no fee");
+
+        // A leg large enough to survive the flat fee IS priced, so the answer moves. (Just one unit
+        // past the cutoff the flat trading fee still exceeds the gross return, so the close value
+        // clamps to zero — the cutoff is the gate, not the only thing keeping dust unpriced.)
+        let live_user = addr(0xA4);
+        {
+            let mut up = e.user_virtual_trader_position.setter(live_user);
+            up.balance_asset.set(wad);
+            up.balance_stable.set(wad);
+        }
+        let (live_pnl, _, _) = e.withdrawal_check_data(live_user, price, wad).expect("live preview");
+        assert!(live_pnl > dust_pnl, "a priced leg must add close value on top of the stable balance");
+    }
+
+    // A net short at the pool's asset side, previewed while a LONG curve window is open on a
+    // STABLE-HEAVY pool. The executable quote short-circuits to a spot value there, which bears no
+    // relation to the window's dy0 — and when the asset side is worth less than the stable the
+    // window has already spent, subtracting dy0 goes NEGATIVE. With overflow-checks off in release
+    // that wraps, and the preview reports an astronomical exit cost that bricks the withdrawal.
+    #[test]
+    #[cfg(feature = "stub_boundary")]
+    fn withdrawal_preview_survives_an_oversized_short_under_an_open_long_window() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.last_operation_timestamp.set(U64::from(1_700_000_000u64));
+        let price = U256::from(300_000_000_000u64);
+
+        // Stable-heavy pool: the whole asset side is worth 3_000e18, far less than the window's dy0.
+        e.global_liquidity_stable.set(U256::from(1_000_000u64) * wad);
+        e.global_liquidity_asset.set(wad);
+
+        // An open LONG window that has already spent half the stable leg.
+        e.last_curve_update.set(U64::from(1_700_000_000u64));
+        e.last_trade_direction.set(true);
+        e.last_validated_price.set(price);
+        e.dy0.set(U256::from(500_000u64) * wad);
+        e.dx0.set(U256::ZERO);
+        assert!(e.has_active_curve_memory(true, price), "window must be open for the long direction");
+
+        // Net short at the asset side, so the quote takes its spot short circuit.
+        let user = addr(0xB2);
+        {
+            let mut up = e.user_virtual_trader_position.setter(user);
+            up.debt_asset.set(wad);
+            up.balance_stable.set(U256::from(100_000u64) * wad);
+        }
+
+        let collateral = U256::from(1_000u64) * wad;
+        let (pnl, _, _) = e.withdrawal_check_data(user, price, collateral).expect("preview must not revert");
+        // The only thing that matters: the answer stays in the domain. A wrap lands astronomically
+        // above any quantity this fixture can produce.
+        assert!(
+            pnl < U256::from(1_000_000_000u64) * wad,
+            "preview wrapped: pnl {pnl} is far outside the fixture's domain",
+        );
+    }
+
+    // The dust cutoff, pinned on the SHORT side — the side where it bites. `short_close_cost`
+    // charges the flat trading fee unconditionally, so crossing the threshold moves the preview by
+    // ~0.1 stable: four orders of magnitude more than the dust leg itself is worth. (On the long
+    // side the clamp in `long_close_value` already zeroes the close value just above the cutoff, so
+    // the boundary is invisible there.) The comparison is STRICT, so the threshold value preserves.
+    #[test]
+    fn withdrawal_preview_dust_cutoff_is_strict_on_the_short_side() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.last_operation_timestamp.set(U64::from(1_700_000_000u64));
+        let price = U256::from(300_000_000_000u64);
+        let oracle_dec = U256::from(100_000_000u64);
+        let threshold = cm::md(U256::from(10_000_000_000_000u64), oracle_dec, price);
+
+        let preview_at = |e: &mut PerpEngine, debt: U256, who: Address| -> (U256, U256) {
+            {
+                let mut up = e.user_virtual_trader_position.setter(who);
+                up.debt_asset.set(debt);
+                up.balance_stable.set(U256::from(1_000u64) * wad);
+            }
+            let (pnl, _, _) = e.withdrawal_check_data(who, price, wad).expect("preview");
+            // position_value must NOT be zeroed by the cutoff: it is computed before the branch, so
+            // a sub-cutoff position still takes the ratio branch rather than the empty-position one.
+            let (_, _, pv, _) = e.withdrawal_exit_preview(who, price).expect("preview parts");
+            (pnl, pv)
+        };
+
+        let (at_pnl, at_pv) = preview_at(&mut e, threshold, addr(0xC1));
+        let (over_pnl, over_pv) = preview_at(&mut e, threshold + U256::from(1u64), addr(0xC2));
+
+        assert!(at_pv > U256::ZERO, "a sub-cutoff position must still report a position value");
+        assert!(over_pv > U256::ZERO, "position value must not depend on the cutoff");
+        // One wei past the threshold the exit starts being priced, and the flat fee dominates.
+        assert!(over_pnl < at_pnl, "crossing the cutoff must start charging the exit");
+        assert!(at_pnl - over_pnl > U256::from(50_000_000_000_000_000u64), "the flat fee should dominate");
+    }
+
+    // The exit fee is subtracted from the collateral the LP-leverage guard is applied to. That
+    // subtraction MUST saturate: with overflow-checks off in release, an exit fee larger than the
+    // hypothetical collateral would wrap to ~2^256 and turn the guard into a permanent PASS —
+    // fail-OPEN, the one direction that loses money.
+    #[test]
+    fn withdrawal_leverage_guard_saturates_when_the_exit_fee_exceeds_the_collateral() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.last_operation_timestamp.set(U64::from(1_700_000_000u64));
+        let price = U256::from(300_000_000_000u64);
+
+        // An LP with a live claim, so the leverage guard is reached at all, and LP debt it could
+        // never back with one wei of collateral.
+        let user = addr(0xC3);
+        let liq_m_dec = e.liquidity_m_decimals.get();
+        {
+            let mut ep = e.liquidity_epochs.setter(U256::ZERO);
+            ep.liquidity_m00.set(liq_m_dec);
+            ep.liquidity_m11.set(liq_m_dec);
+            ep.active_lp_count.set(U256::from(1u64));
+        }
+        {
+            let mut p = e.liquidity_position.setter(user);
+            p.snapshot_m00.set(liq_m_dec);
+            p.snapshot_m11.set(liq_m_dec);
+            p.initial_stable_balance.set(U256::from(1_000_000u64) * wad);
+            p.initial_asset_balance.set(U256::from(100u64) * wad);
+            p.debt_stable.set(U256::from(1_000_000u64) * wad);
+        }
+
+        // One wei of hypothetical collateral cannot cover any exit fee, so the saturation is what
+        // stands between the guard and a wrap.
+        let (_, _, margin_safe) = e.withdrawal_check_data(user, price, U256::from(1u64)).expect("preview");
+        assert!(!margin_safe, "an LP that cannot cover its own exit fee must not be withdrawable");
+    }
+
+    // The withdrawal preview must quote against the OPEN curve window, not the raw pool. This is the
+    // subject of the second source commit and nothing else pins that the preview actually consumes
+    // the memory — the predicate has its own test, but a preview could ignore it and still pass.
+    //
+    // Direction matters: a net LONG exits by SHORTING, so it reads the short window; a net SHORT
+    // exits by BUYING BACK, so it reads the long window. In BOTH directions the raw-pool preview is
+    // optimistic for the withdrawing user — the curve return is concave and the inverse cost convex
+    // — so ignoring an open window over-credits the exit and lets too much collateral out.
+    #[test]
+    fn withdrawal_preview_consumes_the_open_curve_window() {
+        let wad = U256::from(WAD_U64);
+        let price = U256::from(300_000_000_000u64);
+
+        // A net LONG previewed against an open SHORT window.
+        {
+            let vm = TestVM::new();
+            vm.set_block_timestamp(1_700_000_000);
+            let mut e = PerpEngine::from(&vm);
+            seed_trade_engine(&mut e);
+            e.last_operation_timestamp.set(U64::from(1_700_000_000u64));
+            let user = addr(0xD1);
+            {
+                let mut up = e.user_virtual_trader_position.setter(user);
+                up.balance_asset.set(U256::from(100u64) * wad);
+            }
+            e.last_curve_update.set(U64::from(1_700_000_000u64));
+            e.last_trade_direction.set(false);
+            e.last_validated_price.set(price);
+            e.dx0.set(U256::from(500u64) * wad);
+            e.dy0.set(U256::from(1_500_000u64) * wad);
+            assert!(e.has_active_curve_memory(false, price), "short window must be open");
+
+            let (open_pnl, _, _) = e.withdrawal_check_data(user, price, wad).expect("open-window preview");
+            // Age the window out; every other input is untouched.
+            vm.set_block_timestamp(1_700_000_000 + 1_000);
+            assert!(!e.has_active_curve_memory(false, price), "window must have expired");
+            let (expired_pnl, _, _) = e.withdrawal_check_data(user, price, wad).expect("expired-window preview");
+
+            assert_ne!(open_pnl, expired_pnl, "the preview ignored the open short window");
+            assert!(open_pnl < expired_pnl, "an open window must credit the exit LESS, never more");
+        }
+
+        // A net SHORT previewed against an open LONG window.
+        {
+            let vm = TestVM::new();
+            vm.set_block_timestamp(1_700_000_000);
+            let mut e = PerpEngine::from(&vm);
+            seed_trade_engine(&mut e);
+            e.last_operation_timestamp.set(U64::from(1_700_000_000u64));
+            let user = addr(0xD2);
+            {
+                let mut up = e.user_virtual_trader_position.setter(user);
+                up.debt_asset.set(U256::from(100u64) * wad);
+                up.balance_stable.set(U256::from(10_000_000u64) * wad);
+            }
+            e.last_curve_update.set(U64::from(1_700_000_000u64));
+            e.last_trade_direction.set(true);
+            e.last_validated_price.set(price);
+            e.dx0.set(U256::from(500u64) * wad);
+            e.dy0.set(U256::from(1_500_000u64) * wad);
+            assert!(e.has_active_curve_memory(true, price), "long window must be open");
+
+            let (open_pnl, _, _) = e.withdrawal_check_data(user, price, wad).expect("open-window preview");
+            vm.set_block_timestamp(1_700_000_000 + 1_000);
+            assert!(!e.has_active_curve_memory(true, price), "window must have expired");
+            let (expired_pnl, _, _) = e.withdrawal_check_data(user, price, wad).expect("expired-window preview");
+
+            assert_ne!(open_pnl, expired_pnl, "the preview ignored the open long window");
+            assert!(open_pnl < expired_pnl, "an open window must charge the buy-back MORE, never less");
+        }
+    }

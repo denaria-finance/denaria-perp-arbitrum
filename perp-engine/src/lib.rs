@@ -1076,6 +1076,23 @@ impl PerpEngine {
         self.margin_check_data(user, price, collateral)
     }
 
+    /// `withdrawalCheckData(user, price, hypotheticalCollateral)` — the Vault's whole
+    /// collateral-withdrawal safety read in one call: (pnl, pnlSign, marginSafe), where the PnL is
+    /// FEE-INCLUSIVE: trade exit fee, LP removal fee, closing-curve slippage, and funding as of the
+    /// last `updateFG`. `Vault.removeCollateral` performs one immediately before this read, so on
+    /// that path the funding is current to the block; a bare `eth_call` sees the stored rate.
+    /// Replaces the Vault's separate `calcPnL` + `marginCheckData` pair on that path.
+    /// `marginCheckData` stays for the callers that only need the mark-valued margin read.
+    #[selector(name = "withdrawalCheckData")]
+    pub fn withdrawal_check_data_public(
+        &self,
+        user: Address,
+        price: U256,
+        hypothetical_collateral: U256,
+    ) -> Result<(U256, bool, bool), Vec<u8>> {
+        self.withdrawal_check_data(user, price, hypothetical_collateral)
+    }
+
     /// `userVirtualTraderPosition(user)` — the 8-field struct auto-getter shape the Vault
     /// decodes: (balanceStable, balanceAsset, debtStable, debtAsset, fundingFee,
     /// fundingFeeSign, initialFundingRate, initialFundingRateSign).

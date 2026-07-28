@@ -33,11 +33,17 @@ EVM bytecode:
 2. `Vault` still links `UtilMath` for collateral-ratio helpers (EVM library linking uses
    `DELEGATECALL`, which a Stylus program cannot provide).
 
-The Vault's collateral-removal margin check no longer fans out through `UtilMath.calcMR`.
-It now reads a single consolidated `marginCheckData` view from the engine — the margin
-ratio plus the raw position/liquidity fields it needs — and applies the bad-debt guard
-locally, replacing roughly a dozen separate reads into the engine with one. `UtilMath.calcMR`
-is retained for the front-end quote path and as the differential reference.
+The Vault's collateral-removal check no longer fans out through `UtilMath.calcMR`. It reads a
+single consolidated `withdrawalCheckData` view from the engine, which returns the FEE-INCLUSIVE
+exit PnL together with the margin verdict. Fee-inclusive means the quote already carries the
+trade exit fee, the LP removal fee, and the slippage of the closing curve against any open curve
+window — so a position can no longer pass the check and then be unable to exit without going into
+bad debt. Computing it engine-side also means the whole verdict comes from one snapshot; two
+separate reads could disagree.
+
+`marginCheckData` is retained: it ships in the deployed ABI and off-chain consumers decode
+against it, though it now has no production Solidity caller. `UtilMath.calcMR` is retained for
+the front-end quote path and as the differential reference.
 
 The Rust engine embeds the same math internally for execution. Golden-vector and
 differential tests lock the Rust routines against the Solidity libraries.

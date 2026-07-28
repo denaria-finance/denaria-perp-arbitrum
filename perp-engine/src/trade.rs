@@ -46,6 +46,22 @@ impl PerpEngine {
             }
     }
 
+    /// Solidity `perpTrade.readCurveMemory`: the curve accumulators, but only while the window is
+    /// genuinely open for `direction` at `price`; otherwise zero. A withdrawal preview has to quote
+    /// against the same base pool frame a real close would see, and reading `dx0`/`dy0` raw would
+    /// apply a stale window's accumulators to a fresh quote.
+    ///
+    /// Deliberately NOT on the `#[public]` surface: only the engine's own consolidated read
+    /// consumes it, so a selector would cost ABI surface and WASM for nothing. The Solidity
+    /// reference does expose it, for the differential harness.
+    pub(crate) fn read_curve_memory(&self, direction: bool, price: U256) -> (U256, U256) {
+        if self.has_active_curve_memory(direction, price) {
+            (self.dx0.get(), self.dy0.get())
+        } else {
+            (U256::ZERO, U256::ZERO)
+        }
+    }
+
     /// Solidity `perpTrade._syncCurveMemory`: open a fresh curve window unless the current one is
     /// still active for this direction and price. The accumulators and the
     /// (update, direction, price) triple are only ever written together, here — the LP paths

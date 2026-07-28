@@ -162,6 +162,11 @@ UNSUPPORTED = {
     # consolidation) — the Solidity reference still declares them individually.
     "ReadFundingParameters()", "ReadInsuranceFund()", "fundingRate()", "fundingRateSign()",
     "totalTraderExposure()", "totalTraderExposureSign()",
+    # Curve-memory accessor. The engine computes the withdrawal preview INTERNALLY, so nothing
+    # on-chain reads the accumulators across the boundary; a selector would cost ABI surface and
+    # WASM for no consumer. The Solidity reference exposes it so the differential harness can
+    # compare a preview built from it against the engine's consolidated read.
+    "readCurveMemory(uint256,uint256)",
     # Storage views still dropped (not needed on-chain: UtilMath probes curveMathAdapter
     # via a TOLERANT staticcall with a graceful linked-CurveMath fallback).
     "trustedForwarder()", "curveMathAdapter()",

@@ -200,6 +200,14 @@ interface IPerpPair {
         external
         view
         returns (uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256);
+    function withdrawalCheckData(
+        address user,
+        uint256 price,
+        uint256 hypotheticalCollateral
+    )
+        external
+        view
+        returns (uint256 pnl, bool pnlSign, bool marginSafe);
     function minimumLiquidityMovement() external view returns (uint256);
     function minimumTradeSize() external view returns (uint256);
     function trade(

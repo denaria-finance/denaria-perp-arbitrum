@@ -103,6 +103,8 @@ interface IPerpEngine {
 
     function marginCheckData(address user, uint256 price, uint256 collateral) external view returns (uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256);
 
+    function withdrawalCheckData(address user, uint256 price, uint256 hypothetical_collateral) external view returns (uint256, bool, bool);
+
     function userVirtualTraderPosition(address user) external view returns (uint256, uint256, uint256, uint256, uint256, bool, uint256, bool);
 
     function liquidityPosition(address user) external view returns (uint256, uint256, uint256, uint256);

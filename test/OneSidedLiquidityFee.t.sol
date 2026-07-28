@@ -158,8 +158,12 @@ contract OneSidedLiquidityFeeTest is PerpPairTest {
 
         vm.prank(scarceAssetLp);
         perpPair.addLiquidity(10_000_000 * 1e18, 1_000_000 * 1e18, maxUserLiquidityFee, fakeReport);
-        vm.prank(scarceAssetLp);
-        vault.removeCollateral(8_000_000 * 1e18, fakeReport);
+        // Drop the LP's collateral directly rather than through removeCollateral: the withdrawal
+        // check is now fee-inclusive and correctly REFUSES to let an LP withdraw down to a level
+        // that could not absorb its own removal fee. This test is about the forced-removal fee
+        // during liquidation, so it should not depend on the withdrawal path at all.
+        vm.prank(address(perpPair));
+        vault.addPnlToCollateral(scarceAssetLp, 8_000_000 * 1e18, false);
 
         uint256 initialGuess = perpPair.globalLiquidityAsset();
         vm.prank(trader);
