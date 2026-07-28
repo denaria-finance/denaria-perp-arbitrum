@@ -36,6 +36,16 @@ const TWO: I256 = I256::from_limbs([2u64, 0, 0, 0]);
 const THREE: I256 = I256::from_limbs([3u64, 0, 0, 0]);
 const CONVERGENCE_THRESHOLD: I256 = I256::from_limbs([10_000_000_000u64, 0, 0, 0]); // 1e10
 
+/// Executable-quote tolerance, in wei of STABLE (1e10). Deliberately NOT
+/// `CONVERGENCE_THRESHOLD`: that one is the Newton residual bound, a different quantity that
+/// happens to share a magnitude. It is used in two distinct roles that must not be factored
+/// together — a price-CONVERTED asset difference in `within_short_quote_dust`, and a RAW
+/// stable interval width in the bisection.
+const SHORT_QUOTE_DUST_VALUE: u64 = 10_000_000_000; // 1e10
+/// Smallest post-trade pool value (exactly 1.0 stable unit) for which a curve quote is still
+/// considered executable; below it the quote settles at spot instead.
+const MIN_EXECUTABLE_POOL_VALUE: u128 = 1_000_000_000_000_000_000; // 1e18
+
 pub fn s() -> I256 {
     SCALE
 }
@@ -360,6 +370,61 @@ pub fn compute_short_return_inner(
     init_stable - new_stable // outputSize (line 912)
 }
 
+/// Bit-exact port of Solidity `CurveMath.computeIncrementalShortReturn`. Prices a short slice
+/// as the difference between the aggregate curve return for `size + previous_size` and the
+/// return the already-consumed `previous_size` would fetch, BOTH evaluated from the same base
+/// pool state — so splitting a short across several transactions in one curve window cannot
+/// beat trading it in one go.
+///
+/// The two inner calls differ ONLY in the Newton seed: the aggregate uses the caller's
+/// `initial_guess`, while the baseline seeds at `base_stable` (the size==0 root, since a short
+/// return is `base_stable - new_stable`). Passing the caller's guess into the baseline changes
+/// the answer.
+#[allow(clippy::too_many_arguments)]
+pub fn compute_incremental_short_return(
+    size: U256,
+    previous_size: U256,
+    spot_price: U256,
+    oracle_dec: U256,
+    initial_guess: U256,
+    base_stable: U256,
+    base_asset: U256,
+    param_a: U256,
+    param_b: U256,
+    curve_dec: U256,
+) -> Result<U256, Vec<u8>> {
+    // Evaluated first and unconditionally, exactly as in Solidity.
+    let aggregate = compute_short_return_inner(
+        i(uadd(size, previous_size)?),
+        i(spot_price),
+        i(oracle_dec),
+        i(initial_guess),
+        i(base_stable),
+        i(base_asset),
+        i(param_a),
+        i(param_b),
+        i(curve_dec),
+    );
+    if previous_size == U256::ZERO {
+        return Ok(u(aggregate));
+    }
+    let baseline = compute_short_return_inner(
+        i(previous_size),
+        i(spot_price),
+        i(oracle_dec),
+        i(base_stable), // <- the baseline's own seed, NOT the caller's initial_guess
+        i(base_stable),
+        i(base_asset),
+        i(param_a),
+        i(param_b),
+        i(curve_dec),
+    );
+    // Solidity subtracts as a CHECKED uint256 (the library body is not `unchecked`), so a
+    // non-monotone Newton pair reverts there. `u` panics on a negative difference, which the
+    // engine surfaces as a revert too — never a wrapped, enormous trade return.
+    Ok(u(aggregate - baseline))
+}
+
 // -----------------------------------------------------------------------
 // Inverse cubic coefficients - Long (whitepaper eq. 28)
 // Maps to: computeExactAmountInLong (Solidity lines 926-991)
@@ -458,6 +523,12 @@ pub fn compute_exact_in_long_inner(
     param_b: I256,
     curve_dec: I256,
 ) -> I256 {
+    // An output at or beyond the pool's asset side cannot be bought on the curve; value it at
+    // spot instead of inverting. This makes the caller-side INVL1 guard unreachable, and it is
+    // what lets an oversized-but-healthy short be valued (and exited) rather than reverting.
+    if output_size >= init_asset {
+        return output_size * spot_price / oracle_dec;
+    }
     let (_a_prime, _lambda, _k, a, b, c, d) = inverse_long_coefficients(
         output_size,
         spot_price,
@@ -470,6 +541,181 @@ pub fn compute_exact_in_long_inner(
     );
     let new_stable = newton_cubic_signed(initial_guess, a, b, c, d);
     new_stable - init_stable // (line 991)
+}
+
+// -----------------------------------------------------------------------
+// Executable long quote (Solidity computeExecutableAmountInLong + helpers)
+// -----------------------------------------------------------------------
+
+/// Replays the forward long trade for a candidate stable `amount_in`, mirroring Solidity
+/// `CurveMath._computeLongReplay`.
+///
+/// The SPOT-CONVERTED asset outflow is clamped to `global_liquidity_asset - 1` before it is
+/// used as the Newton seed; the unclamped `amount_in` is still priced. Clamping `amount_in`
+/// itself would be dimensionally meaningless (a stable value against an asset bound) and would
+/// destroy the monotonicity the bisection relies on.
+///
+/// The clamp is a no-op on the FIRST replay (`amount_in == spot_value` implies
+/// `spot_asset_in <= output_size < global_liquidity_asset`); it first binds during the doubling
+/// expansion. Hoisting it to a single call-site computation therefore passes every shallow test
+/// and wraps to garbage on exactly the deep-undershoot path this function exists for.
+///
+/// Private, with the `global_liquidity_asset - 1` subtraction unguarded: every call site sits
+/// downstream of the `output_size == 0` and `output_size >= global_liquidity_asset` early
+/// returns, so `global_liquidity_asset >= 2`. The clamp also keeps the seed at 1 or more, which
+/// is what holds Newton's `fx * 1e18 / fpx` clear of a division by zero on the first iteration.
+#[allow(clippy::too_many_arguments)]
+fn compute_long_replay(
+    amount_in: U256,
+    spot_price: U256,
+    oracle_dec: U256,
+    global_liquidity_stable: U256,
+    global_liquidity_asset: U256,
+    param_a: U256,
+    param_b: U256,
+    curve_dec: U256,
+) -> U256 {
+    let mut spot_asset_in = md(amount_in, oracle_dec, spot_price);
+    if spot_asset_in >= global_liquidity_asset {
+        spot_asset_in = global_liquidity_asset - U256::from(1u64);
+    }
+    u(compute_long_return_inner(
+        i(amount_in),
+        i(spot_price),
+        i(oracle_dec),
+        i(global_liquidity_asset - spot_asset_in), // the Newton seed
+        i(global_liquidity_stable),
+        i(global_liquidity_asset),
+        i(param_a),
+        i(param_b),
+        i(curve_dec),
+    ))
+}
+
+/// Solidity `CurveMath._withinShortQuoteDust`: is the replayed output within the quote
+/// tolerance of the target? Symmetric — it accepts an overshoot as readily as an undershoot.
+/// `target` and `replayed` are ASSET amounts; the difference is price-converted to stable
+/// before the comparison, so this bounds exactly the quantity the close-path C0 check measures.
+fn within_short_quote_dust(target: U256, replayed: U256, spot_price: U256, oracle_dec: U256) -> bool {
+    let diff = if target >= replayed { target - replayed } else { replayed - target };
+    md(diff, spot_price, oracle_dec) < U256::from(SHORT_QUOTE_DUST_VALUE)
+}
+
+/// Bit-exact port of Solidity `CurveMath.computeExecutableAmountInLong` in its FINAL form
+/// (post-`6b807329`): the stable input actually needed to buy `output_size` asset out of the
+/// pool, found by replaying the forward long trade rather than inverting it analytically.
+///
+/// The analytic inverse is no longer consulted at all — the search starts from the spot value.
+/// That matters: the analytic inverse overstates the cost in stable-heavy pools.
+///
+/// `initial_guess` is retained and DEAD, keeping the 9-argument shape the Solidity signature and
+/// every call site share.
+///
+/// The result is the surviving upper bound of an interval at most `SHORT_QUOTE_DUST_VALUE`
+/// wide, so it over-buys by up to that much — conservative by construction. The one exception
+/// is the exhaustion return after the expansion cap, which is NOT known to reach the target.
+/// That is deliberate final behaviour and is reproduced exactly rather than "fixed" here.
+#[allow(clippy::too_many_arguments)]
+pub fn compute_executable_amount_in_long(
+    output_size: U256,
+    spot_price: U256,
+    oracle_dec: U256,
+    initial_guess: U256,
+    global_liquidity_stable: U256,
+    global_liquidity_asset: U256,
+    param_a: U256,
+    param_b: U256,
+    curve_dec: U256,
+) -> Result<U256, Vec<u8>> {
+    if output_size == U256::ZERO {
+        return Ok(U256::ZERO);
+    }
+    let dust = U256::from(SHORT_QUOTE_DUST_VALUE);
+    let spot_value = md(output_size, spot_price, oracle_dec);
+    // The `||` MUST short-circuit: `global_liquidity_asset - output_size` is safe only because
+    // the first disjunct already excluded `output_size >= global_liquidity_asset`. Precomputing
+    // it into a local wraps in release and the thin-pool guard then never fires.
+    if output_size >= global_liquidity_asset
+        || md(global_liquidity_asset - output_size, spot_price, oracle_dec) < U256::from(MIN_EXECUTABLE_POOL_VALUE)
+    {
+        return Ok(spot_value);
+    }
+
+    let _ = initial_guess; // dead since 6b807329; kept for signature parity
+    let quote = spot_value;
+    let mut replayed = compute_long_replay(
+        quote,
+        spot_price,
+        oracle_dec,
+        global_liquidity_stable,
+        global_liquidity_asset,
+        param_a,
+        param_b,
+        curve_dec,
+    );
+    if within_short_quote_dust(output_size, replayed, spot_price, oracle_dec) {
+        return Ok(quote);
+    }
+
+    let mut low = U256::ZERO;
+    let mut high = quote;
+    if replayed < output_size {
+        low = uadd(quote, U256::from(1u64))?;
+        high = uadd(uadd(quote, spot_value)?, dust)?;
+        replayed = compute_long_replay(
+            high,
+            spot_price,
+            oracle_dec,
+            global_liquidity_stable,
+            global_liquidity_asset,
+            param_a,
+            param_b,
+            curve_dec,
+        );
+        let mut iterations = 0u32;
+        while replayed < output_size && iterations < 8 {
+            high = uadd(high, high)?; // geometric, not += spot_value
+            replayed = compute_long_replay(
+                high,
+                spot_price,
+                oracle_dec,
+                global_liquidity_stable,
+                global_liquidity_asset,
+                param_a,
+                param_b,
+                curve_dec,
+            );
+            iterations += 1;
+        }
+        if replayed < output_size {
+            return Ok(high);
+        }
+    }
+    // Overshoot that missed the dust check falls through with the bracket UNCHANGED at
+    // (0, quote) — Solidity's default-initialised `uint256 low`. Seeding it uniformly would
+    // return a different integer, because the search terminates on a dust-wide interval rather
+    // than on an exact root.
+
+    // The tolerance here is a RAW stable interval width, not a price-converted difference.
+    while high > uadd(low, dust)? {
+        let mid = uadd(low, high)? / U256::from(2u64);
+        replayed = compute_long_replay(
+            mid,
+            spot_price,
+            oracle_dec,
+            global_liquidity_stable,
+            global_liquidity_asset,
+            param_a,
+            param_b,
+            curve_dec,
+        );
+        if replayed >= output_size {
+            high = mid;
+        } else {
+            low = uadd(mid, U256::from(1u64))?;
+        }
+    }
+    Ok(high) // never `low`, never `mid`
 }
 
 // -----------------------------------------------------------------------
@@ -1325,7 +1571,16 @@ impl CurveMath {
         long_curve_parameter_b: U256,
         curve_parameter_decimals: U256,
     ) -> Result<U256, Vec<u8>> {
-        assert!(global_liquidity_asset >= output_size, "INVL1");
+        // Mirrors the Solidity ordering: an output at or beyond the pool's asset side is valued
+        // at spot, which leaves the INVL1 guard below unreachable. The guard is retained to keep
+        // the documented revert code, and no longer traps via `assert!` — that would bypass the
+        // Error(string) convention the rest of this surface follows.
+        if output_size >= global_liquidity_asset {
+            return Ok(md(output_size, spot_price, oracle_decimals));
+        }
+        if global_liquidity_asset < output_size {
+            return Err(b"INVL1".to_vec());
+        }
         let result = compute_exact_in_long_inner(
             i(output_size),
             i(spot_price),
@@ -1616,6 +1871,18 @@ mod parity {
             "computeExactAmountInLong" => {
                 compute_exact_in_long_inner(amount, sp, od, guess, stable, asset, pa, pb, cd)
             }
+            "computeExecutableAmountInLong" => i(compute_executable_amount_in_long(
+                u(amount),
+                u(sp),
+                u(od),
+                u(guess),
+                u(stable),
+                u(asset),
+                u(pa),
+                u(pb),
+                u(cd),
+            )
+            .expect("computeExecutableAmountInLong overflowed on a fixture vector")),
             "computeExactAmountInShort" => {
                 compute_exact_in_short_inner(amount, sp, od, guess, stable, asset, pa, pb, cd)
             }

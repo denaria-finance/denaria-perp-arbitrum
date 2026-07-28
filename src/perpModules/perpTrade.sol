@@ -23,6 +23,32 @@ abstract contract PerpTrade is PerpLiquidity {
         uint256 leverage
     );
 
+    ///@dev Is the curve window still open for this direction at this price? All four conditions
+    ///     must hold. The timestamp bound is non-strict on the active side, so a trade landing
+    ///     exactly on the interval boundary still reuses the window.
+    ///@dev The fourth condition guards the base-frame reconstruction below. Now that the 1/64 rule
+    ///     lets the accumulators survive an LP removal that shrinks the pool, a pool leg can fall
+    ///     under the accumulator it must be netted against; `globalLiquidityStable - dy0` would
+    ///     then underflow. Note the pairing is the opposite of the naive one — a LONG nets against
+    ///     the STABLE leg, a SHORT against the ASSET leg.
+    function _hasActiveCurveMemory(bool direction, uint256 price) internal view returns (bool) {
+        return block.timestamp <= curveParameters.lastCurveUpdate + curveParameters.curveUpdateInterval
+            && curveParameters.lastTradeDirection == direction && curveParameters.lastValidatedPrice == price
+            && (direction ? globalLiquidityStable > dy0 : globalLiquidityAsset > dx0);
+    }
+
+    ///@dev Opens a fresh curve window unless the current one is still active for this direction
+    ///     and price. The accumulators and the (update, direction, price) triple are only ever
+    ///     written together, here — the LP paths deliberately no longer touch the triple.
+    function _syncCurveMemory(bool direction, uint256 price) private {
+        if (!_hasActiveCurveMemory(direction, price)) {
+            curveParameters.lastCurveUpdate = block.timestamp;
+            curveParameters.lastTradeDirection = direction;
+            curveParameters.lastValidatedPrice = price;
+            _clearCurveMemory();
+        }
+    }
+
     //Function for trading asset, direction is true=long, false=short. Size is in vStable for long and vAsset for short. Initial guess is for newton method, if we compute it from frontend
     ///@dev Main trading function. Opens a trade position from the frontend. Exchange virtual stable and assets minting additional virtual tokens for the user if necessary.
     ///@dev The separate trade positions are logged using the event being emitted in this function.
@@ -99,16 +125,7 @@ abstract contract PerpTrade is PerpLiquidity {
 
         uint256 zeroSlippageReturn = direction ? size * _oracleDecimals / spotPrice : size * spotPrice / _oracleDecimals;
 
-        if (
-            block.timestamp > curveParameters.lastCurveUpdate + curveParameters.curveUpdateInterval
-                || curveParameters.lastTradeDirection != direction || curveParameters.lastValidatedPrice != spotPrice
-        ) {
-            curveParameters.lastCurveUpdate = block.timestamp;
-            curveParameters.lastTradeDirection = direction;
-            curveParameters.lastValidatedPrice = spotPrice;
-            delete dy0;
-            delete dx0;
-        }
+        _syncCurveMemory(direction, spotPrice);
 
         // Compute trade return and validate slippage
         if (direction) {
@@ -173,8 +190,12 @@ abstract contract PerpTrade is PerpLiquidity {
                 initialGuess = stableLiq - (size * spotPrice) / _oracleDecimals;
             }
 
-            shortTotalTradeReturn = _computeShortReturn(
-                size + dx0,
+            // Priced as a SLICE against the window's base pool state, so splitting a short across
+            // several transactions in one window cannot beat trading it whole. The helper nets the
+            // already-consumed `dx0` internally, which is why the trailing `- dy0` is gone.
+            shortTotalTradeReturn = _computeIncrementalShortReturn(
+                size,
+                dx0,
                 spotPrice,
                 _oracleDecimals,
                 initialGuess + dy0,
@@ -183,15 +204,13 @@ abstract contract PerpTrade is PerpLiquidity {
                 curveParameters.shortCurveParameterA,
                 curveParameters.shortCurveParameterB,
                 1e8
-            ) - dy0;
+            );
             if (_lastOperationTimestamp != block.timestamp) {
                 avgSlippageS = UtilMath.calcEMA(
                     shortTotalTradeReturn * _oracleDecimals / size, spotPrice, _oracleDecimals, avgSlippageS, emaParam
                 );
             }
-            //Might miss LP fees, but even if it does the effect of this is minimal (impact of fees on liquidity and thus slippage should be minimal, and here we're not doing accounting)
             dx0 += size;
-            dy0 += shortTotalTradeReturn;
 
             tradingFeeAmount = (shortTotalTradeReturn * tradingFee) / decimals.tradingFeeDecimals + flatTradingFee;
             if (tradingFeeAmount < shortTotalTradeReturn) {
@@ -278,6 +297,10 @@ abstract contract PerpTrade is PerpLiquidity {
         } else {
             unchecked {
                 uint256 netReturn = shortTotalTradeReturn - feeLPShare;
+                // Record the NET pool outflow, not the gross return: dy0 must be exactly the sum
+                // of the `globalLiquidityStable` decrements over the window, so that
+                // `stableLiq + dy0` reconstructs the window-start pool bit-exactly.
+                dy0 += netReturn;
 
                 aX = SafeCast.toInt256(size * liqMDecU / stableLiq);
                 aY = SafeCast.toInt256(netReturn * liqMDecU / stableLiq);
@@ -430,68 +453,69 @@ abstract contract PerpTrade is PerpLiquidity {
             // Repay stable debt and fully close position
 
             if (pos.debtAsset > 0) {
-                if (
-                    block.timestamp > curveParameters.lastCurveUpdate + curveParameters.curveUpdateInterval
-                        || curveParameters.lastTradeDirection != true || curveParameters.lastValidatedPrice != price
-                ) {
-                    curveParameters.lastCurveUpdate = block.timestamp;
-                    curveParameters.lastTradeDirection = true;
-                    curveParameters.lastValidatedPrice = price;
-                    delete dy0;
-                    delete dx0;
-                }
-                uint256 exactAmountIn = _computeExactAmountInLong(
-                    pos.debtAsset + dx0,
-                    price,
-                    oracleDecimals,
-                    globalLiquidityStable,
-                    globalLiquidityStable,
-                    globalLiquidityAsset,
-                    curveParameters.longCurveParameterA,
-                    curveParameters.longCurveParameterB,
-                    1e8
-                ) - dy0;
-                uint256 inputNeeded;
-                if (frontendAddress == address(0) && feeFrontend > 0) {
-                    // Zero-frontend close: the forward trade rebates the frontend-fee share, so the
-                    // buy-back gross-up must not charge it. Two-term mulDiv-ceil.
-                    uint256 feeChargedFraction = decimals.feeFractionsDecimals - feeFrontend;
-                    uint256 feeDenominator =
-                        decimals.tradingFeeDecimals * decimals.feeFractionsDecimals - tradingFee * feeChargedFraction;
-                    inputNeeded = Math.mulDiv(
-                        exactAmountIn,
-                        decimals.tradingFeeDecimals * decimals.feeFractionsDecimals,
-                        feeDenominator,
-                        Math.Rounding.Ceil
-                    )
-                    + Math.mulDiv(
-                        flatTradingFee * feeChargedFraction,
-                        decimals.tradingFeeDecimals,
-                        feeDenominator,
-                        Math.Rounding.Ceil
-                    );
-                } else {
-                    inputNeeded = ((exactAmountIn + flatTradingFee) * decimals.tradingFeeDecimals)
-                        / (decimals.tradingFeeDecimals - tradingFee);
-                }
+                // Stays outside both guards: the curve window may roll even when no buy-back runs.
+                _syncCurveMemory(true, price);
+                // The guards read the RAW asset leg while the quote reads the memory-adjusted one;
+                // the two `+ dx0` terms cancel, so this is the callee's own oversized-output test
+                // written in positive form. When either guard fails there is no quote, no trade, no
+                // event and NO C0 check: the position is deleted carrying its residual debt.
+                if (pos.debtAsset < globalLiquidityAsset) {
+                    unchecked {
+                        if ((globalLiquidityAsset - pos.debtAsset) * price / oracleDecimals >= 1e18) {
+                            uint256 exactAmountIn = _computeExecutableAmountInLong(
+                                pos.debtAsset + dx0,
+                                price,
+                                oracleDecimals,
+                                globalLiquidityStable,
+                                globalLiquidityStable - dy0,
+                                globalLiquidityAsset + dx0,
+                                curveParameters.longCurveParameterA,
+                                curveParameters.longCurveParameterB,
+                                1e8
+                            ) - dy0;
+                            // One unconditional two-term ceil. With a real frontend the fraction is
+                            // the whole ratio and the frontend rebate drops out; with none, the
+                            // forward trade rebates that share so the gross-up must not charge it.
+                            uint256 feeChargedFraction = frontendAddress == address(0)
+                                ? decimals.feeFractionsDecimals - feeFrontend
+                                : decimals.feeFractionsDecimals;
+                            uint256 feeDenominator = decimals.tradingFeeDecimals * decimals.feeFractionsDecimals
+                                - tradingFee * feeChargedFraction;
+                            uint256 inputNeeded = Math.mulDiv(
+                                exactAmountIn,
+                                decimals.tradingFeeDecimals * decimals.feeFractionsDecimals,
+                                feeDenominator,
+                                Math.Rounding.Ceil
+                            )
+                            + Math.mulDiv(
+                                flatTradingFee * feeChargedFraction,
+                                decimals.tradingFeeDecimals,
+                                feeDenominator,
+                                Math.Rounding.Ceil
+                            );
+                            uint256 tradeReturn = _trade(
+                                true,
+                                inputNeeded,
+                                inputNeeded * oracleDecimals / price * (1e5 - maxSlippage) / 1e5,
+                                globalLiquidityAsset,
+                                frontendAddress,
+                                user,
+                                price
+                            );
+                            emit ExecutedTrade(user, true, inputNeeded, tradeReturn, price, 0);
 
-                uint256 minTradeReturn = inputNeeded * oracleDecimals / price * (1e5 - maxSlippage) / 1e5;
-                unchecked {
-                    uint256 tradeReturn =
-                        _trade(true, inputNeeded, minTradeReturn, globalLiquidityAsset, frontendAddress, user, price);
-                    emit ExecutedTrade(user, true, inputNeeded, tradeReturn, price, 0);
+                            // Flat dust bound. It was briefly pool-relative because the ANALYTIC
+                            // inverse left a residual that grew with pool depth; the executable
+                            // quote bisects to a tolerance expressed in exactly these units, so the
+                            // residual is bounded by the quote instead. Residuals under the bound
+                            // are still priced into the user's PnL by calcPnL, so the bound only
+                            // caps the per-close dust drift of totalTraderExposure.
+                            require(
+                                UtilMath.diffAbs(pos.balanceAsset, pos.debtAsset) * price / oracleDecimals < 1e10, "C0"
+                            );
+                        }
+                    }
                 }
-
-                // The exact-amount-in inversion leaves a fixed-point residual that grows
-                // with pool depth (not position size), so the dust bound is pool-relative
-                // (globalLiquidityStable / 1e10), floored at 1e10. Residuals under the
-                // bound are still priced into the user's PnL by calcPnL, so the bound only
-                // caps the per-close dust drift of totalTraderExposure.
-                require(
-                    UtilMath.diffAbs(pos.balanceAsset, pos.debtAsset) * price / oracleDecimals
-                        < Math.max(1e10, globalLiquidityStable / 1e10),
-                    "C0"
-                );
             }
         }
 
@@ -500,6 +524,18 @@ abstract contract PerpTrade is PerpLiquidity {
 
         if (isSelfClose && !pnlSign) {
             require(pnl < getCollateral(user), "C1"); //If user is closing his own positions (not liquidation) he can't do so if he's in bad debt.
+        }
+
+        // Give back whatever net short survives the close — the skip path and the dust-snap branch
+        // both leave one. Without this it stays in global exposure forever, corrupting the funding
+        // rate and pool-skew accounting. It must read the post-buy-back position, so it sits after
+        // the bad-debt check and before the delete.
+        if (pos.debtAsset > pos.balanceAsset) {
+            unchecked {
+                (totalTraderExposure, totalTraderExposureSign) = UtilMath.signedSum(
+                    totalTraderExposure, totalTraderExposureSign, pos.debtAsset - pos.balanceAsset, true
+                );
+            }
         }
 
         // Reset position

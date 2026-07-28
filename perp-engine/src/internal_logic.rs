@@ -96,15 +96,20 @@ impl PerpEngine {
             } else {
                 let ts = self.global_liquidity_stable.get();
                 let ta = self.global_liquidity_asset.get();
-                // Solidity `require(diffAsset <= getTotalLiquidityAsset(...), "PNL1")` —
-                // return the standard Error(string) revert (Solidity-standard encoding), not a panic.
-                if diff_asset > ta {
-                    return Err(err(b"PNL1"));
-                }
-                short_return = self.compute_exact_amount_in_long(
-                    diff_asset, price, oracle_dec, ts, ts, ta,
-                    U256::from(100_000_000u64), U256::from(10_000_000u64),
-                );
+                // No pool-size guard: the executable quote values an output at or beyond the asset
+                // side at spot. A hard revert here bricked every read that touched an oversized
+                // short — PnL, margin ratio, health checks, liquidation eligibility.
+                short_return = cm::compute_executable_amount_in_long(
+                    diff_asset,
+                    price,
+                    oracle_dec,
+                    ts,
+                    ts,
+                    ta,
+                    U256::from(100_000_000u64),
+                    U256::from(10_000_000u64),
+                    U256::from(100_000_000u64),
+                )?;
             }
         }
         Ok(cm::signed_sum(diff_stable, diff_stable_sign, short_return, diff_asset_sign))
@@ -254,9 +259,13 @@ impl PerpEngine {
         // the pool's asset liquidity cannot be bought back on the curve, so value it at spot.
         let total_balance_asset = vp.balance_asset.get() + asset_lp;
         let total_debt_asset = vp.debt_asset.get() + lp.debt_asset.get();
+        // The pool boundary itself falls back to spot (`>=`), matching the two other boundaries in
+        // this cluster: the exact-in early return and the executable quote's own spot guard. All
+        // three must agree at exact equality, which is the degenerate zero-output cubic. The middle
+        // comparison stays strict — it also guards the subtraction.
         let use_spot_price = allow_oversized_short_spot_fallback
             && total_debt_asset > total_balance_asset
-            && total_debt_asset - total_balance_asset > self.global_liquidity_asset.get();
+            && total_debt_asset - total_balance_asset >= self.global_liquidity_asset.get();
 
         self.calc_pnl(
             vp.balance_stable.get() + stable_lp,

@@ -86,6 +86,22 @@ impl PerpEngine {
         Ok(())
     }
 
+    /// Solidity `perpLiquidity._clearCurveMemoryIfSignificant`: clear curve memory only for an LP
+    /// movement large enough to matter. Either leg exceeding one sixty-fourth of its OWN
+    /// pre-operation pool leg clears BOTH accumulators — straight leg pairing, strict comparison,
+    /// OR. A zero or dust movement preserves them, which is the point: an unrelated dust deposit
+    /// must not reprice a curve window that is still open. The division is a truncating shift, and
+    /// it touches ONLY dx0/dy0 — never the (update, direction, price) triple.
+    pub(crate) fn clear_curve_memory_if_significant(&mut self, stable_amount: U256, asset_amount: U256) {
+        let sixty_four = U256::from(64u64);
+        if stable_amount > self.global_liquidity_stable.get() / sixty_four
+            || asset_amount > self.global_liquidity_asset.get() / sixty_four
+        {
+            self.dx0.set(U256::ZERO);
+            self.dy0.set(U256::ZERO);
+        }
+    }
+
     /// Solidity `perpLiquidity._distributeLiquidityFee`: credit the stable-denominated
     /// fee to the LPs that remain in the pool by updating the liquidity matrix row 0,
     /// then add it to global stable liquidity. A one-sided pool is served too: the
@@ -131,6 +147,11 @@ impl PerpEngine {
         if !(lp_stable_balance >= stable_to_remove && lp_asset_balance >= asset_to_remove) {
             return Err(err(b"L5"));
         }
+
+        // Measured against the PRE-removal pool: the global legs are decremented further down.
+        // Living in this internal body means voluntary removal, the partial-liquidation LP pull and
+        // the close-path LP drain all get the conditional behaviour.
+        self.clear_curve_memory_if_significant(stable_to_remove, asset_to_remove);
 
         let last_op_ts = U256::from(self.last_operation_timestamp.get());
         self.update_fg(spot_price, last_op_ts)?;
@@ -209,11 +230,6 @@ impl PerpEngine {
             }
         }
 
-        let block_ts = self.vm().block_timestamp();
-        self.last_curve_update.set(U64::from(block_ts));
-        self.last_validated_price.set(spot_price);
-        self.dy0.set(U256::ZERO);
-        self.dx0.set(U256::ZERO);
         self.emit(LiquidityMoved {
             user,
             liquidityStable: stable_to_remove,
@@ -364,13 +380,11 @@ impl PerpEngine {
             return Err(err(b"L2"));
         }
 
-        self.add_liquidity(liquidity_stable, liquidity_asset, fee_value, price, sender)?;
+        // Measured against the PRE-deposit pool, so it must precede `add_liquidity`. The amounts are
+        // the gross user-requested ones, before the liquidity fee is deducted.
+        self.clear_curve_memory_if_significant(liquidity_stable, liquidity_asset);
 
-        let block_ts = self.vm().block_timestamp();
-        self.last_curve_update.set(U64::from(block_ts));
-        self.last_validated_price.set(price);
-        self.dy0.set(U256::ZERO);
-        self.dx0.set(U256::ZERO);
+        self.add_liquidity(liquidity_stable, liquidity_asset, fee_value, price, sender)?;
 
         // getCollateral(sender) — read once (used by C1 and L3).
         let collateral: U256;

@@ -329,18 +329,13 @@ library UtilMath {
                     1e8
                 );
             } else {
-                require(diffAsset <= getTotalLiquidityAsset(perpPair), "PNL1"); //Requiring more asset then in the pool to exit. Cannot exit.
-                shortReturn = computeExactAmountInLong(
-                    perpPair,
-                    diffAsset,
-                    price,
-                    oracleDecimals,
-                    getTotalLiquidityStable(perpPair),
-                    getTotalLiquidityStable(perpPair),
-                    getTotalLiquidityAsset(perpPair),
-                    lA,
-                    lB,
-                    1e8
+                // No pool-size guard: the executable quote values an output at or beyond the asset
+                // side at spot. A hard revert here bricked every read that touched an oversized
+                // short — PnL, margin ratio, health checks, liquidation eligibility.
+                uint256 totalStable = getTotalLiquidityStable(perpPair);
+                uint256 totalAsset = getTotalLiquidityAsset(perpPair);
+                shortReturn = computeExecutableAmountInLong(
+                    perpPair, diffAsset, price, oracleDecimals, totalStable, totalStable, totalAsset, lA, lB, 1e8
                 );
             }
         }
@@ -706,6 +701,51 @@ library UtilMath {
 
         return ICurveMathAdapter(adapter)
             .computeExactAmountInLong(
+                outputSize,
+                spotPrice,
+                oracleDecimals,
+                initialGuess,
+                globalLiquidityStable,
+                globalLiquidityAsset,
+                longCurveParamA,
+                longCurveParamB,
+                curveParameterDecimals
+            );
+    }
+
+    function computeExecutableAmountInLong(
+        address perpPair,
+        uint256 outputSize,
+        uint256 spotPrice,
+        uint256 oracleDecimals,
+        uint256 initialGuess,
+        uint256 globalLiquidityStable,
+        uint256 globalLiquidityAsset,
+        uint256 longCurveParamA,
+        uint256 longCurveParamB,
+        uint256 curveParameterDecimals
+    )
+        private
+        view
+        returns (uint256)
+    {
+        address adapter = getCurveMathAdapter(perpPair);
+        if (adapter == address(0)) {
+            return CurveMath.computeExecutableAmountInLong(
+                outputSize,
+                spotPrice,
+                oracleDecimals,
+                initialGuess,
+                globalLiquidityStable,
+                globalLiquidityAsset,
+                longCurveParamA,
+                longCurveParamB,
+                curveParameterDecimals
+            );
+        }
+
+        return ICurveMathAdapter(adapter)
+            .computeExecutableAmountInLong(
                 outputSize,
                 spotPrice,
                 oracleDecimals,

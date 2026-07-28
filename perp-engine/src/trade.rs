@@ -23,6 +23,43 @@ impl PerpEngine {
         ))
     }
 
+    /// Solidity `perpTrade._hasActiveCurveMemory`: is the curve window still open for this
+    /// direction at this price? All four conditions must hold. The timestamp bound is non-strict
+    /// on the active side, so a trade landing exactly on the interval boundary reuses the window.
+    ///
+    /// The fourth condition guards the base-frame reconstruction in `execute_trade` and the close
+    /// path. Now that the 1/64 rule lets the accumulators survive an LP removal that shrinks the
+    /// pool, a pool leg can fall under the accumulator it is netted against. In this release build
+    /// `-` WRAPS, so `stable_liq - dy0` would silently yield an astronomically large pool leg and
+    /// a catastrophically wrong price rather than reverting; this condition turns that state into
+    /// a clean window reset. Note the pairing is the opposite of the naive one: a LONG nets against
+    /// the STABLE leg, a SHORT against the ASSET leg.
+    pub(crate) fn has_active_curve_memory(&self, direction: bool, price: U256) -> bool {
+        let block_ts = U256::from(self.vm().block_timestamp());
+        block_ts <= U256::from(self.last_curve_update.get()) + U256::from(self.curve_update_interval.get())
+            && self.last_trade_direction.get() == direction
+            && self.last_validated_price.get() == price
+            && if direction {
+                self.global_liquidity_stable.get() > self.dy0.get()
+            } else {
+                self.global_liquidity_asset.get() > self.dx0.get()
+            }
+    }
+
+    /// Solidity `perpTrade._syncCurveMemory`: open a fresh curve window unless the current one is
+    /// still active for this direction and price. The accumulators and the
+    /// (update, direction, price) triple are only ever written together, here — the LP paths
+    /// deliberately no longer touch the triple.
+    pub(crate) fn sync_curve_memory(&mut self, direction: bool, price: U256) {
+        if !self.has_active_curve_memory(direction, price) {
+            self.last_curve_update.set(U64::from(self.vm().block_timestamp()));
+            self.last_trade_direction.set(direction);
+            self.last_validated_price.set(price);
+            self.dy0.set(U256::ZERO);
+            self.dx0.set(U256::ZERO);
+        }
+    }
+
     /// Solidity `_assignProtocolFeeFillingInsurance(fee, protocolAddr)`.
     pub(crate) fn assign_protocol_fee_filling_insurance(&mut self, fee: U256, protocol_addr: Address) {
         if self.insurance_fund_sign.get() {
@@ -90,16 +127,7 @@ impl PerpEngine {
             cm::md(size, spot_price, oracle_dec)
         };
 
-        if block_ts > U256::from(self.last_curve_update.get()) + U256::from(self.curve_update_interval.get())
-            || self.last_trade_direction.get() != direction
-            || self.last_validated_price.get() != spot_price
-        {
-            self.last_curve_update.set(U64::from(block_ts_u64));
-            self.last_trade_direction.set(direction);
-            self.last_validated_price.set(spot_price);
-            self.dy0.set(zero);
-            self.dx0.set(zero);
-        }
+        self.sync_curve_memory(direction, spot_price);
 
         let trading_fee = self.trading_fee.get();
         let trading_fee_decimals = U256::from(1_000_000_000_000_000_000u64);
@@ -164,9 +192,21 @@ impl PerpEngine {
             let dy0 = self.dy0.get();
             let short_a = U256::from(100_000_000u64);
             let short_b = U256::from(10_000_000u64);
-            short_total_trade_return = self
-                .compute_short_return(size + dx0, spot_price, oracle_dec, initial_guess + dy0, stable_liq + dy0, asset_liq - dx0, short_a, short_b)
-                - dy0;
+            // Priced as a SLICE against the window's base pool state, so splitting a short across
+            // several transactions in one window cannot beat trading it whole. The helper nets the
+            // already-consumed `dx0` internally, which is why the trailing `- dy0` is gone.
+            short_total_trade_return = cm::compute_incremental_short_return(
+                size,
+                dx0,
+                spot_price,
+                oracle_dec,
+                initial_guess + dy0,
+                stable_liq + dy0,
+                asset_liq - dx0,
+                short_a,
+                short_b,
+                U256::from(100_000_000u64),
+            )?;
             if last_op_ts != block_ts {
                 let avg = self.avg_slippage_s.get();
                 self.avg_slippage_s.set(cm::calc_ema(
@@ -178,7 +218,6 @@ impl PerpEngine {
                 ));
             }
             self.dx0.set(dx0 + size);
-            self.dy0.set(dy0 + short_total_trade_return);
 
             trading_fee_amount = cm::md(short_total_trade_return, trading_fee, trading_fee_decimals) + flat_trading_fee;
             if trading_fee_amount < short_total_trade_return {
@@ -272,6 +311,11 @@ impl PerpEngine {
             self.global_liquidity_asset.set(self.global_liquidity_asset.get() - trade_return);
         } else {
             let net_return = short_total_trade_return - fee_lp_share;
+            // Record the NET pool outflow, not the gross return: dy0 must be exactly the sum of the
+            // `global_liquidity_stable` decrements over the window, so that `stable_liq + dy0`
+            // reconstructs the window-start pool bit-exactly. Re-read from storage — the local
+            // captured before the trade is stale by now.
+            self.dy0.set(self.dy0.get() + net_return);
             let a_x = cm::i(cm::md(size, liq_m_dec_u, stable_liq));
             let a_y = cm::i(cm::md(net_return, liq_m_dec_u, stable_liq));
             self.apply_liquidity_matrix_update(a_x, a_y, 1);

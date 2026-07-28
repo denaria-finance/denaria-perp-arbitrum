@@ -33,6 +33,14 @@ import "./UtilMath.sol";
  *
  */
 library CurveMath {
+    /// @dev Executable-quote tolerance, in wei of stable. Used in two distinct roles that must
+    ///      not be factored together: a price-converted asset difference in
+    ///      `_withinShortQuoteDust`, and a raw stable interval width in the bisection.
+    uint256 private constant SHORT_QUOTE_DUST_VALUE = 1e10;
+    /// @dev Smallest post-trade pool value (exactly one stable unit) for which a curve quote is
+    ///      still treated as executable; below it the quote settles at spot.
+    uint256 private constant MIN_EXECUTABLE_POOL_VALUE = 1e18;
+
     /* Compute long parameters */
 
     /// @notice Calculate lambda parameter for long trades.
@@ -902,6 +910,55 @@ library CurveMath {
         return (globalLiquidityStable - newStable);
     }
 
+    ///@notice Price a short slice as the difference between the aggregate curve return for
+    ///        `size + previousSize` and the return the already-consumed `previousSize` would
+    ///        fetch, both evaluated from the SAME base pool state — so splitting a short across
+    ///        several transactions inside one curve window cannot beat trading it in one go.
+    ///@dev The two inner calls differ only in the Newton seed: the aggregate takes the caller's
+    ///     `initialGuess`, the baseline seeds at `baseLiquidityStable` (the size==0 root, since a
+    ///     short return is `baseLiquidityStable - newStable`).
+    function computeIncrementalShortReturn(
+        uint256 size,
+        uint256 previousSize,
+        uint256 spotPrice,
+        uint256 oracleDecimals,
+        uint256 initialGuess,
+        uint256 baseLiquidityStable,
+        uint256 baseLiquidityAsset,
+        uint256 shortCurveParameterA,
+        uint256 shortCurveParameterB,
+        uint256 curveParameterDecimals
+    )
+        public
+        pure
+        returns (uint256)
+    {
+        uint256 aggregateReturn = computeShortReturn(
+            size + previousSize,
+            spotPrice,
+            oracleDecimals,
+            initialGuess,
+            baseLiquidityStable,
+            baseLiquidityAsset,
+            shortCurveParameterA,
+            shortCurveParameterB,
+            curveParameterDecimals
+        );
+        if (previousSize == 0) return aggregateReturn;
+        return aggregateReturn
+            - computeShortReturn(
+            previousSize,
+            spotPrice,
+            oracleDecimals,
+            baseLiquidityStable,
+            baseLiquidityStable,
+            baseLiquidityAsset,
+            shortCurveParameterA,
+            shortCurveParameterB,
+            curveParameterDecimals
+        );
+    }
+
     ///@notice Compute amount of vStable that are needed in input for an output of OutputSize vAsset
     ///@param outputSize Amount of virtual asset desired in output of the trade.
     ///@param spotPrice Oracle price of the asset.
@@ -928,6 +985,10 @@ library CurveMath {
         pure
         returns (uint256)
     {
+        // An output at or beyond the pool's asset side cannot be bought on the curve; value it at
+        // spot instead of inverting. This leaves the INVL1 require below unreachable — it is kept
+        // to preserve the documented revert code.
+        if (outputSize >= globalLiquidityAsset) return outputSize * spotPrice / oracleDecimals;
         require(globalLiquidityAsset >= outputSize, "INVL1"); //Requesting more asset than available
         uint256 aPrime = computeAPrimePramLong(
             longCurveParameterA, spotPrice, globalLiquidityAsset, globalLiquidityStable, oracleDecimals
@@ -979,6 +1040,169 @@ library CurveMath {
 
         uint256 newStable = newtonMethodCubic(initialGuess, a, b, c, d, bSign, cSign, dSign);
         return newStable - globalLiquidityStable;
+    }
+
+    ///@notice Stable input actually needed to buy `outputSize` asset out of the pool, found by
+    ///        REPLAYING the forward long trade rather than inverting it analytically.
+    ///@dev The analytic inverse is no longer consulted: the search starts from the spot value,
+    ///     because the inverse overstates the cost in stable-heavy pools. `initialGuess` is
+    ///     retained and deliberately unused, keeping the nine-argument shape every call site
+    ///     shares. The result is the surviving upper bound of an interval at most
+    ///     `SHORT_QUOTE_DUST_VALUE` wide, so it over-buys by at most that much. The single
+    ///     exception is the return after the expansion cap is exhausted, which is not known to
+    ///     reach the target — deliberate behaviour, not an oversight.
+    function computeExecutableAmountInLong(
+        uint256 outputSize,
+        uint256 spotPrice,
+        uint256 oracleDecimals,
+        uint256 initialGuess,
+        uint256 globalLiquidityStable,
+        uint256 globalLiquidityAsset,
+        uint256 longCurveParameterA,
+        uint256 longCurveParameterB,
+        uint256 curveParameterDecimals
+    )
+        public
+        pure
+        returns (uint256)
+    {
+        if (outputSize == 0) return 0;
+        uint256 spotValue = outputSize * spotPrice / oracleDecimals;
+        // The `||` must short circuit: `globalLiquidityAsset - outputSize` is safe only because
+        // the first disjunct already excluded `outputSize >= globalLiquidityAsset`.
+        if (
+            outputSize >= globalLiquidityAsset
+                || (globalLiquidityAsset - outputSize) * spotPrice / oracleDecimals < MIN_EXECUTABLE_POOL_VALUE
+        ) return spotValue;
+
+        initialGuess;
+        uint256 quote = spotValue;
+        uint256 replayed = _computeLongReplay(
+            quote,
+            spotPrice,
+            oracleDecimals,
+            globalLiquidityStable,
+            globalLiquidityAsset,
+            longCurveParameterA,
+            longCurveParameterB,
+            curveParameterDecimals
+        );
+        if (_withinShortQuoteDust(outputSize, replayed, spotPrice, oracleDecimals)) return quote;
+
+        uint256 low;
+        uint256 high = quote;
+        if (replayed < outputSize) {
+            low = quote + 1;
+            high = quote + spotValue + SHORT_QUOTE_DUST_VALUE;
+            replayed = _computeLongReplay(
+                high,
+                spotPrice,
+                oracleDecimals,
+                globalLiquidityStable,
+                globalLiquidityAsset,
+                longCurveParameterA,
+                longCurveParameterB,
+                curveParameterDecimals
+            );
+            for (uint256 i; replayed < outputSize && i < 8;) {
+                high += high;
+                replayed = _computeLongReplay(
+                    high,
+                    spotPrice,
+                    oracleDecimals,
+                    globalLiquidityStable,
+                    globalLiquidityAsset,
+                    longCurveParameterA,
+                    longCurveParameterB,
+                    curveParameterDecimals
+                );
+                unchecked {
+                    ++i;
+                }
+            }
+            if (replayed < outputSize) return high;
+        }
+        // An overshoot that missed the dust check falls through with the bracket UNCHANGED at
+        // (0, quote): the search terminates on a dust-wide interval rather than an exact root, so
+        // seeding the bracket uniformly would return a different integer.
+
+        // This tolerance is a RAW stable interval width, not a price-converted difference.
+        while (high > low + SHORT_QUOTE_DUST_VALUE) {
+            uint256 mid = (low + high) / 2;
+            replayed = _computeLongReplay(
+                mid,
+                spotPrice,
+                oracleDecimals,
+                globalLiquidityStable,
+                globalLiquidityAsset,
+                longCurveParameterA,
+                longCurveParameterB,
+                curveParameterDecimals
+            );
+            if (replayed >= outputSize) {
+                high = mid;
+            } else {
+                low = mid + 1;
+            }
+        }
+        return high;
+    }
+
+    ///@dev Replays the forward long trade for a candidate stable `amountIn`. The SPOT-CONVERTED
+    ///     asset outflow is clamped to `globalLiquidityAsset - 1` before being used as the Newton
+    ///     seed, while the unclamped `amountIn` is still priced — clamping `amountIn` itself would
+    ///     compare a stable value against an asset bound and would destroy the monotonicity the
+    ///     bisection relies on. The clamp is a no-op on the first replay and first binds during
+    ///     the doubling expansion, so hoisting it to the call site passes every shallow test and
+    ///     breaks the deep-undershoot path. Keeping the seed at one or more is also what holds
+    ///     Newton's `fx * 1e18 / fpx` clear of a division by zero on the first iteration.
+    ///     Private: the unguarded `- 1` is safe only because every call site sits downstream of
+    ///     the `outputSize == 0` and `outputSize >= globalLiquidityAsset` early returns.
+    function _computeLongReplay(
+        uint256 amountIn,
+        uint256 spotPrice,
+        uint256 oracleDecimals,
+        uint256 globalLiquidityStable,
+        uint256 globalLiquidityAsset,
+        uint256 longCurveParameterA,
+        uint256 longCurveParameterB,
+        uint256 curveParameterDecimals
+    )
+        private
+        pure
+        returns (uint256)
+    {
+        uint256 spotAssetIn = amountIn * oracleDecimals / spotPrice;
+        if (spotAssetIn >= globalLiquidityAsset) spotAssetIn = globalLiquidityAsset - 1;
+        return computeLongReturn(
+            amountIn,
+            spotPrice,
+            oracleDecimals,
+            globalLiquidityAsset - spotAssetIn,
+            globalLiquidityStable,
+            globalLiquidityAsset,
+            longCurveParameterA,
+            longCurveParameterB,
+            curveParameterDecimals
+        );
+    }
+
+    ///@dev Is the replayed output within quote tolerance of the target? Symmetric: it accepts an
+    ///     overshoot as readily as an undershoot. `target` and `replayed` are asset amounts and
+    ///     the difference is price-converted to stable, so this bounds exactly the quantity the
+    ///     close-path C0 check measures.
+    function _withinShortQuoteDust(
+        uint256 target,
+        uint256 replayed,
+        uint256 spotPrice,
+        uint256 oracleDecimals
+    )
+        private
+        pure
+        returns (bool)
+    {
+        uint256 diff = target >= replayed ? target - replayed : replayed - target;
+        return diff * spotPrice / oracleDecimals < SHORT_QUOTE_DUST_VALUE;
     }
 
     ///@notice Compute amount of vAsset that are needed in input for an output of OutputSize vStable

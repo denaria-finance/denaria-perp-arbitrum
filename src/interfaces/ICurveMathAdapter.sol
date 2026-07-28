@@ -32,6 +32,37 @@ interface ICurveMathAdapter {
         view
         returns (uint256);
 
+    function computeIncrementalShortReturn(
+        uint256 size,
+        uint256 previousSize,
+        uint256 spotPrice,
+        uint256 oracleDecimals,
+        uint256 initialGuess,
+        uint256 baseLiquidityStable,
+        uint256 baseLiquidityAsset,
+        uint256 shortCurveParamA,
+        uint256 shortCurveParamB,
+        uint256 curveParameterDecimals
+    )
+        external
+        view
+        returns (uint256);
+
+    function computeExecutableAmountInLong(
+        uint256 outputSize,
+        uint256 spotPrice,
+        uint256 oracleDecimals,
+        uint256 initialGuess,
+        uint256 globalLiquidityStable,
+        uint256 globalLiquidityAsset,
+        uint256 longCurveParamA,
+        uint256 longCurveParamB,
+        uint256 curveParameterDecimals
+    )
+        external
+        view
+        returns (uint256);
+
     function computeExactAmountInLong(
         uint256 outputSize,
         uint256 spotPrice,

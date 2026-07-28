@@ -18,6 +18,26 @@ abstract contract PerpLiquidity is InternalPerpLogic {
         address indexed user, uint256 liquidityStable, uint256 liquidityAsset, uint256 fee, bool added
     );
 
+    ///@dev Drops the directional curve accumulators. The accumulators and the
+    ///     (lastCurveUpdate, lastTradeDirection, lastValidatedPrice) triple are ONE consistent
+    ///     tuple: whoever clears the first must refresh the second, which is why only
+    ///     `_syncCurveMemory` and the significance check below ever write them.
+    function _clearCurveMemory() internal {
+        delete dy0;
+        delete dx0;
+    }
+
+    ///@dev Clears curve memory only for an LP movement large enough to matter: either leg
+    ///     exceeding one sixty-fourth of its OWN pre-operation pool leg clears BOTH accumulators.
+    ///     Straight leg pairing, strict comparison, and OR — one oversized leg is enough. A zero
+    ///     or dust movement preserves the memory, which is the point: an unrelated dust deposit
+    ///     must not reprice a curve window that is still open.
+    function _clearCurveMemoryIfSignificant(uint256 stableAmount, uint256 assetAmount) private {
+        if (stableAmount > globalLiquidityStable / 64 || assetAmount > globalLiquidityAsset / 64) {
+            _clearCurveMemory();
+        }
+    }
+
     ///@dev Adds liquidity to the pool, acting as a liquidity provider.
     ///@dev Since margin ratio of LP when adding liquidity is always 0 we require that the user has at least 10% of his total debts as collateral.
     ///@param liquidityStable Amount of stable liquidity to add into the pool
@@ -37,7 +57,8 @@ abstract contract PerpLiquidity is InternalPerpLogic {
         address sender = _msgSender();
         uint256 spotPrice = getPrice();
 
-        require(liquidityStable + (liquidityAsset * spotPrice) / oracleDecimals >= minimumLiquidityMovement, "L1"); // Error on add liquidity, under minimum movement
+        uint256 liquidityValue = liquidityStable + (liquidityAsset * spotPrice) / oracleDecimals;
+        require(liquidityValue >= minimumLiquidityMovement, "L1"); // Error on add liquidity, under minimum movement
 
         // Compute fees
         uint256 fee = FeeManager.computeLiquidityDepositFee(
@@ -57,17 +78,15 @@ abstract contract PerpLiquidity is InternalPerpLogic {
             fee = 0;
         }
 
-        uint256 feeValue =
-            ((liquidityStable + (liquidityAsset * spotPrice) / oracleDecimals) * fee) / decimals.liquidityFeeDecimals;
+        uint256 feeValue = (liquidityValue * fee) / decimals.liquidityFeeDecimals;
 
         require(feeValue <= maxFeeValue || maxFeeValue == 0, "L2");
 
-        _addLiquidity(liquidityStable, liquidityAsset, feeValue, spotPrice);
+        // Measured against the PRE-deposit pool, so it must precede `_addLiquidity`. The amounts
+        // are the gross user-requested ones, before the liquidity fee is deducted.
+        _clearCurveMemoryIfSignificant(liquidityStable, liquidityAsset);
 
-        curveParameters.lastCurveUpdate = block.timestamp;
-        curveParameters.lastValidatedPrice = spotPrice;
-        dy0 = 0;
-        dx0 = 0;
+        _addLiquidity(liquidityStable, liquidityAsset, feeValue, spotPrice);
 
         LiquidityPosition storage position = liquidityPosition[sender];
         VirtualTraderPosition storage tpos = userVirtualTraderPosition[sender];
@@ -209,6 +228,11 @@ abstract contract PerpLiquidity is InternalPerpLogic {
         // Ensure enough liquidity is available
         require(lpStableBalance >= liquidityStableToRemove && lpAssetBalance >= liquidityAssetToRemove, "L5"); // Error: Not enough liquidity
 
+        // Measured against the PRE-removal pool: the global legs are decremented further down.
+        // Living in the internal function means voluntary removal, the partial-liquidation LP pull
+        // and the close-path LP drain all get the conditional behaviour.
+        _clearCurveMemoryIfSignificant(liquidityStableToRemove, liquidityAssetToRemove);
+
         _updateFG(spotPrice, lastOperationTimestamp); // Update funding rate
 
         // Compute & apply funding fee
@@ -283,11 +307,6 @@ abstract contract PerpLiquidity is InternalPerpLogic {
                 }
             }
         }
-
-        curveParameters.lastCurveUpdate = block.timestamp;
-        curveParameters.lastValidatedPrice = spotPrice;
-        dy0 = 0;
-        dx0 = 0;
 
         emit LiquidityMoved(user, liquidityStableToRemove, liquidityAssetToRemove, feeValue, false);
     }

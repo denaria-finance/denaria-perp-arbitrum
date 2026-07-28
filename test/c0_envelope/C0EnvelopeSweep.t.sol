@@ -3,16 +3,20 @@ pragma solidity ^0.8.19;
 
 /// =====================================================================================
 /// C0 DUST-BOUND ENVELOPE REGRESSION HARNESS
-/// Regression coverage for the pool-relative C0 dust bound.
+/// Regression coverage for the flat C0 dust bound.
 ///
-/// Historically, closeAndWithdraw required the post-buy-back residual to satisfy an
-/// ABSOLUTE bound (perpTrade.sol: |balanceAsset - debtAsset| * price / oracleDecimals
-/// < 1e10). The production curve parameters (A=1e8, B=1e7, hardcoded in the PerpPair
-/// constructor) amplify the CurveMath.computeExactAmountInLong inversion residual far
-/// past that bound — the residual scales with POOL DEPTH, not position size — bricking
-/// ordinary short closes (51/60 cells at a 10x pool). The bound is now
-/// max(1e10, globalLiquidityStable / 1e10), mirrored bit-exactly in
-/// perp-engine/src/close.rs.
+/// closeAndWithdraw requires the post-buy-back residual to satisfy an ABSOLUTE bound
+/// (perpTrade.sol: |balanceAsset - debtAsset| * price / oracleDecimals < 1e10), mirrored
+/// bit-exactly in perp-engine/src/close.rs.
+///
+/// That bound was briefly pool-relative here. The reason was the ANALYTIC inverse
+/// computeExactAmountInLong, whose residual the production curve parameters (A=1e8, B=1e7,
+/// hardcoded in the PerpPair constructor) amplified far past 1e10 — worst case growing with
+/// pool depth, though erratically per cell rather than monotonically — bricking ordinary
+/// short closes (51/60 cells at a 10x pool). The close path now quotes through
+/// computeExecutableAmountInLong, which bisects to a tolerance expressed in exactly the
+/// units this bound measures, so the residual is bounded by the QUOTE rather than by the
+/// pool and the flat bound holds across the whole grid.
 ///
 /// This sweep deploys the stack exactly like test/PerpPair.t.sol (production constructor
 /// literals) and grids: side {SHORT, LONG} x notional {50,100,500,1000,5000,20000}e18
@@ -26,6 +30,7 @@ pragma solidity ^0.8.19;
 /// =====================================================================================
 
 import { Test, console2 } from "forge-std/Test.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { PerpPair } from "../../src/PerpPair.sol";
 import { Vault } from "../../src/Vault.sol";
 import { LostAndFound } from "../../src/LostAndFound.sol";
@@ -158,6 +163,13 @@ contract C0EnvelopeSweepTest is Test, PerpPairTestDeploymentHelper {
         _runSweep(false, 10);
     }
 
+    /// @dev A decade beyond where the pool-relative bound was calibrated. Under the analytic inverse
+    ///      this depth was the worst case by a wide margin; it is the rung that tells us whether the
+    ///      flat bound really is depth-independent now.
+    function testSweepShort100xPool() public {
+        _runSweep(false, 100);
+    }
+
     function testSweepLongBasePool() public {
         _runSweep(true, 1);
     }
@@ -240,11 +252,6 @@ contract C0EnvelopeSweepTest is Test, PerpPairTestDeploymentHelper {
         uint256 predictedBound = DUST_BOUND;
         if (!isLong) {
             predictedResidual = _predictShortCloseResidual(p1);
-            // Production bound: max(1e10, globalLiquidityStable / 1e10), pool term read
-            // pre-close (the post-trade read in the contract only differs by the
-            // buy-back notional, far inside the 88x envelope margin).
-            uint256 poolTerm = perpPair.globalLiquidityStable() / 1e10;
-            if (poolTerm > predictedBound) predictedBound = poolTerm;
         }
 
         // --- attempt close ---
@@ -297,10 +304,20 @@ contract C0EnvelopeSweepTest is Test, PerpPairTestDeploymentHelper {
         uint256 gLA = perpPair.globalLiquidityAsset();
         (,, uint256 longA, uint256 longB,,,,) = perpPair.curveParameters();
 
-        // perpTrade.sol:440-454 (dy0 = dx0 = 0 after reset)
-        uint256 exactIn =
-            CurveMath.computeExactAmountInLong(debtAsset, price, oracleDecimals, gLS, gLS, gLA, longA, longB, 1e8);
-        uint256 inputNeeded = (exactIn + flatTradingFee) * tradingFeeDecimals / (tradingFeeDecimals - tradingFee);
+        // The buy-back is SKIPPED entirely when the position reaches the pool's asset side or the
+        // post-trade pool would fall under one stable unit; the close then leaves the debt in place
+        // and never reaches the C0 require, so there is no residual to predict.
+        if (debtAsset >= gLA || (gLA - debtAsset) * price / oracleDecimals < 1e18) return 0;
+
+        uint256 exactIn = CurveMath.computeExecutableAmountInLong(
+            debtAsset, price, oracleDecimals, gLS, gLS, gLA, longA, longB, 1e8
+        );
+        // Unconditional two-term ceil gross-up; a real frontend charges the whole fee fraction.
+        uint256 feeChargedFraction = feeFractionDecimals;
+        uint256 feeDenominator = tradingFeeDecimals * feeChargedFraction - tradingFee * feeChargedFraction;
+        uint256 inputNeeded = Math.mulDiv(
+            exactIn, tradingFeeDecimals * feeChargedFraction, feeDenominator, Math.Rounding.Ceil
+        ) + Math.mulDiv(flatTradingFee * feeChargedFraction, tradingFeeDecimals, feeDenominator, Math.Rounding.Ceil);
 
         // _trade long branch with frontendAddress != address(0) (perpTrade.sol:121,139-149)
         uint256 tradingFeeAmount = inputNeeded * tradingFee / tradingFeeDecimals + flatTradingFee;

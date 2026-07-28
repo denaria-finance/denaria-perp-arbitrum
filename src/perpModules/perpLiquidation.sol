@@ -185,32 +185,35 @@ abstract contract PerpLiquidation is PerpAutoClose {
             }
             _assignProtocolFeeFillingInsurance(insuranceFraction, liquidator);
         } else {
-            uint256 dyPrime;
-            if (dAmount > globalLiquidityAsset) {
-                dyPrime = dAmount * price / oracleDecimals;
-            } else {
-                // Check if user is in bad debt, if so use spot price for liquidation.
-                (uint256 pnl, bool pnlSign) = _calcPnLLiquidationSafe(user, price);
-                //compute dy' with vamm formula for dx' output
-                dyPrime = _computeExactAmountInLong(
-                    dAmount,
-                    price,
-                    oracleDecimals,
-                    globalLiquidityStable,
-                    globalLiquidityStable,
-                    globalLiquidityAsset,
-                    curveParameters.shortCurveParameterA,
-                    curveParameters.shortCurveParameterB,
-                    1e8
-                );
-                //if slippage causes bad debt use spot price
-                //Subtraction can be done safely as it is input-zeroSlippageOutput of the curve.
+            // No oversized short circuit: the executable quote falls back to spot on its own when
+            // the requested amount reaches the pool's asset side, so the bad-debt and slippage
+            // overrides below now run for every liquidation instead of being skipped exactly when
+            // the position is largest.
+            // Check if user is in bad debt, if so use spot price for liquidation.
+            (uint256 pnl, bool pnlSign) = _calcPnLLiquidationSafe(user, price);
+            //compute dy' with vamm formula for dx' output — the LONG curve, since this inverts a
+            //long buy-back. Numerically identical to the short parameters here (both legs share
+            //the constructor's values, with no setter), so this is intent, not a value change.
+            uint256 dyPrime = _computeExecutableAmountInLong(
+                dAmount,
+                price,
+                oracleDecimals,
+                globalLiquidityStable,
+                globalLiquidityStable,
+                globalLiquidityAsset,
+                curveParameters.longCurveParameterA,
+                curveParameters.longCurveParameterB,
+                1e8
+            );
+            //if slippage causes bad debt use spot price
+            //Subtraction can be done safely as it is input-zeroSlippageOutput of the curve.
+            unchecked {
                 (pnl, pnlSign) = UtilMath.signedSum(pnl, pnlSign, dyPrime - dAmount * price / oracleDecimals, false);
-                //If slippage is over 3 times average slippage use spot price
-                uint256 slip = UtilMath.calcSlip(dyPrime * oracleDecimals / dAmount, price, 1e8);
-                if ((pnl > getCollateral(user) && !pnlSign) || slip > slipLiquidationTh * avgSlippageL) {
-                    dyPrime = dAmount * price / oracleDecimals;
-                }
+            }
+            //If slippage is over 3 times average slippage use spot price
+            uint256 slip = UtilMath.calcSlip(dyPrime * oracleDecimals / dAmount, price, 1e8);
+            if ((pnl > getCollateral(user) && !pnlSign) || slip > slipLiquidationTh * avgSlippageL) {
+                dyPrime = dAmount * price / oracleDecimals;
             }
 
             //compute dy'' = (1+d)dy'

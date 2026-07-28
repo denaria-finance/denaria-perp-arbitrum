@@ -173,8 +173,12 @@ abstract contract InternalPerpLogic is PerpFunding, ReentrancyGuardTransient {
 
         uint256 totalBalanceAsset = traderPosition.balanceAsset + assetLPBalance;
         uint256 totalDebtAsset = traderPosition.debtAsset + liquidityPosition[user].debtAsset;
+        // The pool boundary itself falls back to spot (`>=`), matching the two other boundaries in
+        // this cluster: the exact-in early return and the executable quote's own spot guard. All
+        // three must agree at exact equality, which is the degenerate zero-output cubic. The middle
+        // comparison stays strict — it also guards the subtraction.
         bool useSpotPrice = allowOversizedShortSpotFallback && totalDebtAsset > totalBalanceAsset
-            && totalDebtAsset - totalBalanceAsset > globalLiquidityAsset;
+            && totalDebtAsset - totalBalanceAsset >= globalLiquidityAsset;
 
         return UtilMath._calcPnL(
             traderPosition.balanceStable + stableLPBalance,

@@ -272,8 +272,9 @@ impl PerpEngine {
     /// liquidated position to the liquidator at a discount, routing the discount's
     /// insurance fraction through `assign_protocol_fee_filling_insurance`. `collateral`
     /// = `getCollateral(user)` (bad-debt check in the short branch; vault unchanged
-    /// since `liquidate` read it). NOTE: the short branch uses the SHORT curve
-    /// parameters in `_computeExactAmountInLong` — faithful to the Solidity source.
+    /// since `liquidate` read it). The short branch inverts a LONG buy-back, so it takes the
+    /// long curve parameters; both legs carry the same constructor values and have no setter,
+    /// so this is a naming correction rather than a value change.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn liquidate_position(
         &mut self,
@@ -322,25 +323,27 @@ impl PerpEngine {
             self.debit_stable(liquidator, insurance_fraction);
             self.assign_protocol_fee_filling_insurance(insurance_fraction, liquidator);
         } else {
-            let dy_prime: U256;
-            if d_amount > self.global_liquidity_asset.get() {
-                dy_prime = cm::md(d_amount, price, oracle_dec);
+            // No oversized short circuit: the executable quote falls back to spot on its own when
+            // the requested amount reaches the pool's asset side, so the bad-debt and slippage
+            // overrides below now run for every liquidation instead of being skipped exactly when
+            // the position is largest.
+            let gs = self.global_liquidity_stable.get();
+            let ga = self.global_liquidity_asset.get();
+            let long_a = U256::from(100_000_000u64);
+            let long_b = U256::from(10_000_000u64);
+            // PnL first, matching the Solidity ordering.
+            let (pnl0, pnl0_sign) = self.calc_pnl_user_liquidation_safe(user, price)?;
+            let exact_in = cm::compute_executable_amount_in_long(
+                d_amount, price, oracle_dec, gs, gs, ga, long_a, long_b, curve_dec,
+            )?;
+            let (pnl, pnl_sign) =
+                cm::signed_sum(pnl0, pnl0_sign, exact_in - cm::md(d_amount, price, oracle_dec), false);
+            let slip = cm::calc_slip(cm::md(exact_in, oracle_dec, d_amount), price, curve_dec);
+            let dy_prime = if (pnl > collateral && !pnl_sign) || slip > slip_liq_th * self.avg_slippage_l.get() {
+                cm::md(d_amount, price, oracle_dec)
             } else {
-                let gs = self.global_liquidity_stable.get();
-                let ga = self.global_liquidity_asset.get();
-                let short_a = U256::from(100_000_000u64);
-                let short_b = U256::from(10_000_000u64);
-                let exact_in = self.compute_exact_amount_in_long(d_amount, price, oracle_dec, gs, gs, ga, short_a, short_b);
-                let (pnl0, pnl0_sign) = self.calc_pnl_user_liquidation_safe(user, price)?;
-                let (pnl, pnl_sign) =
-                    cm::signed_sum(pnl0, pnl0_sign, exact_in - cm::md(d_amount, price, oracle_dec), false);
-                let slip = cm::calc_slip(cm::md(exact_in, oracle_dec, d_amount), price, curve_dec);
-                if (pnl > collateral && !pnl_sign) || slip > slip_liq_th * self.avg_slippage_l.get() {
-                    dy_prime = cm::md(d_amount, price, oracle_dec);
-                } else {
-                    dy_prime = exact_in;
-                }
-            }
+                exact_in
+            };
             let dy_second = cm::md(liq_dec + discount, dy_prime, liq_dec);
             let insurance_fraction = cm::md(discount / ins_fund_fraction, dy_prime, liq_dec);
             self.debit_stable(user, dy_second);

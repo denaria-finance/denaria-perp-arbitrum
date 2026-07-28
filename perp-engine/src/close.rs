@@ -82,56 +82,65 @@ impl PerpEngine {
 
             let da2 = self.user_virtual_trader_position.getter(user).debt_asset.get();
             if da2 > U256::ZERO {
-                let block_ts = self.vm().block_timestamp();
-                if U256::from(block_ts)
-                    > U256::from(self.last_curve_update.get()) + U256::from(self.curve_update_interval.get())
-                    || self.last_trade_direction.get() != true
-                    || self.last_validated_price.get() != price
+                // Stays outside both guards: the curve window may roll even when no buy-back runs.
+                self.sync_curve_memory(true, price);
+                let ga_raw = self.global_liquidity_asset.get();
+                // The guards read the RAW asset leg while the quote reads the memory-adjusted one;
+                // the two `+ dx0` terms cancel, so this is the callee's own oversized-output test
+                // written in positive form. When either guard fails there is no quote, no trade, no
+                // event and NO C0 check: the position is deleted carrying its residual debt.
+                if da2 < ga_raw
+                    && cm::md(ga_raw - da2, price, oracle_dec) >= U256::from(1_000_000_000_000_000_000u64)
                 {
-                    self.last_curve_update.set(U64::from(block_ts));
-                    self.last_trade_direction.set(true);
-                    self.last_validated_price.set(price);
-                    self.dy0.set(U256::ZERO);
-                    self.dx0.set(U256::ZERO);
-                }
-                let dx0 = self.dx0.get();
-                let dy0 = self.dy0.get();
-                let gs = self.global_liquidity_stable.get();
-                let ga = self.global_liquidity_asset.get();
-                let long_a = U256::from(100_000_000u64);
-                let long_b = U256::from(10_000_000u64);
-                let flat_fee = self.flat_trading_fee.get();
-                let trading_fee = self.trading_fee.get();
-                let trading_fee_dec = U256::from(1_000_000_000_000_000_000u64);
-                let exact_in = self.compute_exact_amount_in_long(da2 + dx0, price, oracle_dec, gs, gs, ga, long_a, long_b);
-                let exact_amount_in = exact_in - dy0;
-                let fee_frontend = U256::from(self.fee_frontend.get());
-                let input_needed = if frontend_address == Address::ZERO && fee_frontend > U256::ZERO {
-                    // Zero-frontend close: the forward trade rebates the frontend-fee share, so the
-                    // buy-back gross-up must not charge it. Mirrors the Solidity two-term mulDiv-ceil.
+                    let dx0 = self.dx0.get();
+                    let dy0 = self.dy0.get();
+                    let gs = self.global_liquidity_stable.get();
+                    let ga = ga_raw;
+                    let long_a = U256::from(100_000_000u64);
+                    let long_b = U256::from(10_000_000u64);
+                    let flat_fee = self.flat_trading_fee.get();
+                    let trading_fee = self.trading_fee.get();
+                    let trading_fee_dec = U256::from(1_000_000_000_000_000_000u64);
+                    // Quoted against the window's BASE pool frame (`gs - dy0`, `ga + dx0`), which
+                    // makes this leg the exact inverse of the forward long in `execute_trade`. The
+                    // Newton seed stays the raw current stable leg.
+                    let exact_in = cm::compute_executable_amount_in_long(
+                        da2 + dx0,
+                        price,
+                        oracle_dec,
+                        gs,
+                        gs - dy0,
+                        ga + dx0,
+                        long_a,
+                        long_b,
+                        U256::from(100_000_000u64),
+                    )?;
+                    let exact_amount_in = exact_in - dy0;
+                    let fee_frontend = U256::from(self.fee_frontend.get());
                     let ratio_dec = self.fee_fractions_decimals.get();
-                    let fee_charged_fraction = ratio_dec - fee_frontend;
+                    // One unconditional two-term ceil. With a real frontend the fraction is the whole
+                    // ratio and the frontend rebate drops out; with none, the forward trade rebates
+                    // that share so the gross-up must not charge it.
+                    let fee_charged_fraction =
+                        if frontend_address == Address::ZERO { ratio_dec - fee_frontend } else { ratio_dec };
                     let fee_denominator = trading_fee_dec * ratio_dec - trading_fee * fee_charged_fraction;
-                    cm::md_ceil(exact_amount_in, trading_fee_dec * ratio_dec, fee_denominator)
-                        + cm::md_ceil(flat_fee * fee_charged_fraction, trading_fee_dec, fee_denominator)
-                } else {
-                    cm::md(exact_amount_in + flat_fee, trading_fee_dec, trading_fee_dec - trading_fee)
-                };
-                let min_trade_return = cm::md(cm::md(input_needed, oracle_dec, price), bps - max_slippage, bps);
-                let tr = self.execute_trade(true, input_needed, min_trade_return, ga, frontend_address, user, price)?;
-                self.emit(ExecutedTrade {
-                    user, direction: true, tradeSize: input_needed, tradeReturn: tr, currentPrice: price, leverage: U256::ZERO,
-                });
+                    let input_needed = cm::md_ceil(exact_amount_in, trading_fee_dec * ratio_dec, fee_denominator)
+                        + cm::md_ceil(flat_fee * fee_charged_fraction, trading_fee_dec, fee_denominator);
+                    let min_trade_return = cm::md(cm::md(input_needed, oracle_dec, price), bps - max_slippage, bps);
+                    let tr = self.execute_trade(true, input_needed, min_trade_return, ga, frontend_address, user, price)?;
+                    self.emit(ExecutedTrade {
+                        user, direction: true, tradeSize: input_needed, tradeReturn: tr, currentPrice: price, leverage: U256::ZERO,
+                    });
 
-                let ba3 = self.user_virtual_trader_position.getter(user).balance_asset.get();
-                let da3 = self.user_virtual_trader_position.getter(user).debt_asset.get();
-                // Bit-exact mirror of perpTrade.sol "C0": max(1e10 floor,
-                // globalLiquidityStable / 1e10) — the inversion residual envelope scales
-                // with pool depth. global_liquidity_stable is read AFTER the buy-back
-                // trade, like the Solidity storage read inside the require.
-                let dust_bound = dust.max(self.global_liquidity_stable.get() / dust);
-                if !(cm::md(cm::util_diff_abs(ba3, da3), price, oracle_dec) < dust_bound) {
-                    return Err(err(b"C0"));
+                    let ba3 = self.user_virtual_trader_position.getter(user).balance_asset.get();
+                    let da3 = self.user_virtual_trader_position.getter(user).debt_asset.get();
+                    // Flat dust bound, mirroring perpTrade.sol "C0". This used to be pool-relative
+                    // because the ANALYTIC inverse left a residual that grew with pool depth. The
+                    // executable quote bisects to a tolerance expressed in exactly these units, so
+                    // the residual is now bounded by the quote itself rather than by the pool.
+                    if !(cm::md(cm::util_diff_abs(ba3, da3), price, oracle_dec) < dust) {
+                        return Err(err(b"C0"));
+                    }
                 }
             }
         }
@@ -141,6 +150,24 @@ impl PerpEngine {
 
         if is_self_close && !pnl_sign && !(pnl < collateral) {
             return Err(err(b"C1"));
+        }
+
+        // Give back whatever net short survives the close — the skip path and the dust-snap branch
+        // both leave one. Without this it stays in global exposure forever, corrupting the funding
+        // rate and pool-skew accounting. Read fresh here: the guarded block above may not have run.
+        {
+            let vp = self.user_virtual_trader_position.getter(user);
+            let (ba_final, da_final) = (vp.balance_asset.get(), vp.debt_asset.get());
+            if da_final > ba_final {
+                let (tte, tte_sign) = cm::signed_sum(
+                    self.total_trader_exposure.get(),
+                    self.total_trader_exposure_sign.get(),
+                    da_final - ba_final,
+                    true,
+                );
+                self.total_trader_exposure.set(tte);
+                self.total_trader_exposure_sign.set(tte_sign);
+            }
         }
 
         self.clear_virtual_trader_position(user);

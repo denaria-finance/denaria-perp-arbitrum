@@ -289,6 +289,97 @@ abstract contract PerpStorage {
             );
     }
 
+    function _computeIncrementalShortReturn(
+        uint256 size,
+        uint256 previousSize,
+        uint256 spotPrice,
+        uint256 _oracleDecimals,
+        uint256 initialGuess,
+        uint256 baseLiquidityStable,
+        uint256 baseLiquidityAsset,
+        uint256 shortCurveParamA,
+        uint256 shortCurveParamB,
+        uint256 curveParameterDecimals
+    )
+        internal
+        view
+        returns (uint256)
+    {
+        address adapter = curveMathAdapter;
+        if (adapter == address(0)) {
+            return CurveMath.computeIncrementalShortReturn(
+                size,
+                previousSize,
+                spotPrice,
+                _oracleDecimals,
+                initialGuess,
+                baseLiquidityStable,
+                baseLiquidityAsset,
+                shortCurveParamA,
+                shortCurveParamB,
+                curveParameterDecimals
+            );
+        }
+
+        return ICurveMathAdapter(adapter)
+            .computeIncrementalShortReturn(
+                size,
+                previousSize,
+                spotPrice,
+                _oracleDecimals,
+                initialGuess,
+                baseLiquidityStable,
+                baseLiquidityAsset,
+                shortCurveParamA,
+                shortCurveParamB,
+                curveParameterDecimals
+            );
+    }
+
+    function _computeExecutableAmountInLong(
+        uint256 outputSize,
+        uint256 spotPrice,
+        uint256 _oracleDecimals,
+        uint256 initialGuess,
+        uint256 globalLiquidityStable_,
+        uint256 globalLiquidityAsset_,
+        uint256 longCurveParamA,
+        uint256 longCurveParamB,
+        uint256 curveParameterDecimals
+    )
+        internal
+        view
+        returns (uint256)
+    {
+        address adapter = curveMathAdapter;
+        if (adapter == address(0)) {
+            return CurveMath.computeExecutableAmountInLong(
+                outputSize,
+                spotPrice,
+                _oracleDecimals,
+                initialGuess,
+                globalLiquidityStable_,
+                globalLiquidityAsset_,
+                longCurveParamA,
+                longCurveParamB,
+                curveParameterDecimals
+            );
+        }
+
+        return ICurveMathAdapter(adapter)
+            .computeExecutableAmountInLong(
+                outputSize,
+                spotPrice,
+                _oracleDecimals,
+                initialGuess,
+                globalLiquidityStable_,
+                globalLiquidityAsset_,
+                longCurveParamA,
+                longCurveParamB,
+                curveParameterDecimals
+            );
+    }
+
     function _computeExactAmountInLong(
         uint256 outputSize,
         uint256 spotPrice,

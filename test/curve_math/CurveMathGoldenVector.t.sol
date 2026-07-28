@@ -20,7 +20,8 @@ contract CurveMathGoldenVectorTest is Test {
         LongReturn,
         ShortReturn,
         ExactAmountInLong,
-        ExactAmountInShort
+        ExactAmountInShort,
+        ExecutableAmountInLong
     }
 
     struct PublicVectorInput {
@@ -388,7 +389,9 @@ contract CurveMathGoldenVectorTest is Test {
         if (fnType == PublicFunction.ShortReturn) {
             return stable - amount * spotPrice / ORACLE_DECIMALS;
         }
-        if (fnType == PublicFunction.ExactAmountInLong) {
+        if (fnType == PublicFunction.ExactAmountInLong || fnType == PublicFunction.ExecutableAmountInLong) {
+            // The executable quote ignores the guess entirely; keep the inverse-long shape so the
+            // vector still carries a plausible value.
             return stable + amount * spotPrice / ORACLE_DECIMALS;
         }
         return asset + amount * ORACLE_DECIMALS / spotPrice;
@@ -436,6 +439,89 @@ contract CurveMathGoldenVectorTest is Test {
         // all 29 prior vectors already use oracleDecimals=1e8 — a divisor of
         // 1e18 — so they are the divisor control that confirms the fix is not
         // over-broad.)
+        // Executable long quote. The search is NOT run to an exact root: the answer is the
+        // surviving upper bound of a dust-wide bracket, so it is fully determined by the branch
+        // taken, the bracket seeds and the midpoint rounding. These four vectors pin one route
+        // each, because two routes can return DIFFERENT integers for the same inputs.
+
+        // Route 1: output at or beyond the pool's asset side -> straight spot value, no search.
+        (vectors, count) = append(
+            vectors,
+            oracleVector(
+                "executable-long-spot-fallback-oversized",
+                PublicFunction.ExecutableAmountInLong,
+                asset,
+                3000 * 1e8,
+                1e8,
+                1e8,
+                stable,
+                stable,
+                asset,
+                1e8,
+                1e7
+            ),
+            count
+        );
+
+        // Route 2: an output that leaves the pool below one stable unit -> spot value again, via
+        // the OTHER disjunct of the same guard.
+        (vectors, count) = append(
+            vectors,
+            oracleVector(
+                "executable-long-spot-fallback-thin-pool",
+                PublicFunction.ExecutableAmountInLong,
+                asset - 1,
+                3000 * 1e8,
+                1e8,
+                1e8,
+                stable,
+                stable,
+                asset,
+                1e8,
+                1e7
+            ),
+            count
+        );
+
+        // Route 3: an ordinary in-range output that runs the real search.
+        (vectors, count) = append(
+            vectors,
+            oracleVector(
+                "executable-long-search-in-range",
+                PublicFunction.ExecutableAmountInLong,
+                10 * CURRENCY_DECIMALS,
+                3000 * 1e8,
+                1e8,
+                1e8,
+                stable,
+                stable,
+                asset,
+                1e8,
+                1e7
+            ),
+            count
+        );
+
+        // Route 4: a stable-heavy pool, where the analytic inverse overstates the cost and the two
+        // functions must be seen to disagree.
+        (vectors, count) = append(
+            vectors,
+            oracleVector(
+                "executable-long-stable-heavy",
+                PublicFunction.ExecutableAmountInLong,
+                1 * CURRENCY_DECIMALS,
+                3000 * 1e8,
+                1e8,
+                1e8,
+                stable * 10,
+                stable * 10,
+                asset,
+                1e8,
+                1e7
+            ),
+            count
+        );
+
         // Guard: inverse-short with non-divisor oracle stays bit-exact (Solidity
         // computes px0 once), so the long fix must not be mirrored into short.
         (vectors, count) = append(
@@ -600,6 +686,11 @@ contract CurveMathGoldenVectorTest is Test {
         }
         if (fnType == PublicFunction.ExactAmountInLong) {
             return CurveMath.computeExactAmountInLong(
+                amount, spotPrice, oracleDecimals, initialGuess, stable, asset, parameterA, parameterB, curveDecimals
+            );
+        }
+        if (fnType == PublicFunction.ExecutableAmountInLong) {
+            return CurveMath.computeExecutableAmountInLong(
                 amount, spotPrice, oracleDecimals, initialGuess, stable, asset, parameterA, parameterB, curveDecimals
             );
         }
@@ -1135,6 +1226,7 @@ contract CurveMathGoldenVectorTest is Test {
         if (fnType == PublicFunction.LongReturn) return "computeLongReturn";
         if (fnType == PublicFunction.ShortReturn) return "computeShortReturn";
         if (fnType == PublicFunction.ExactAmountInLong) return "computeExactAmountInLong";
+        if (fnType == PublicFunction.ExecutableAmountInLong) return "computeExecutableAmountInLong";
         return "computeExactAmountInShort";
     }
 

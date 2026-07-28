@@ -394,6 +394,18 @@ fn assert_public_vector(vector: &Value, label: &str) {
             inputs.parameter_b,
             inputs.curve_dec,
         ),
+        "computeExecutableAmountInLong" => i(compute_executable_amount_in_long(
+            u(inputs.amount),
+            u(inputs.spot_price),
+            u(inputs.oracle_dec),
+            u(initial_guess),
+            u(inputs.stable),
+            u(inputs.asset),
+            u(inputs.parameter_a),
+            u(inputs.parameter_b),
+            u(inputs.curve_dec),
+        )
+        .expect("computeExecutableAmountInLong overflowed on a fixture vector")),
         "computeExactAmountInShort" => compute_exact_in_short_inner(
             inputs.amount,
             inputs.spot_price,

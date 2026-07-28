@@ -1567,11 +1567,11 @@
         assert_eq!(e.user_virtual_trader_position.getter(user).debt_asset.get(), U256::ZERO, "user asset debt repaid");
     }
 
-    // Oversized-short spot fallback (liquidation-only): when a net-short position exceeds the
-    // pool's asset liquidity, the curve buy-back reverts PNL1, which would let an oversized
-    // short block its own liquidation. The liquidation-safe PnL values the residual at spot;
-    // the close/realize/auto-close path keeps the reverting curve valuation. An in-range short
-    // is unaffected (the fallback is conditional on debt-asset - balance-asset > pool asset).
+    // Oversized-short valuation. Valuing a net short larger than the pool's asset liquidity no
+    // longer reverts on EITHER path: the executable quote prices an output at or beyond the asset
+    // side at spot, so the old PNL1 revert — which bricked every read that touched such a position,
+    // including its own liquidation eligibility — is gone. The liquidation-safe path still differs
+    // from the close path in WHICH spot rule it applies, and an in-range short is unaffected.
     #[test]
     fn calc_pnl_liquidation_safe_uses_spot_only_for_oversized_short() {
         let wad = U256::from(WAD_U64);
@@ -1591,8 +1591,11 @@
             up.debt_asset.set(U256::from(100u64) * wad);
             up.balance_stable.set(U256::from(1_000_000u64) * wad);
         }
-        // Close-path PnL routes the oversized short through the curve buy-back -> reverts PNL1.
-        assert_eq!(e.calc_pnl_user(big, price), Err(err(b"PNL1")), "curve valuation reverts on an oversized short");
+        // Close-path PnL routes the oversized short through the executable quote, which returns the
+        // spot value rather than reverting. Same number as the liquidation-safe path here, reached
+        // by a different rule: the quote's own oversized-output guard, not the caller's fallback.
+        let close_path = e.calc_pnl_user(big, price).expect("oversized short must no longer brick valuation");
+        assert_eq!(close_path, (U256::from(700_000u64) * wad, true), "curve valuation falls back to spot");
         // Liquidation-safe PnL values the residual at spot -> no revert.
         // spot short = 100e18 * 3000 = 300_000e18; PnL = 1_000_000e18 collateral - 300_000e18 = 700_000e18.
         let safe = e.calc_pnl_user_liquidation_safe(big, price).expect("spot fallback must not revert");
@@ -4031,4 +4034,178 @@
         let p = e.liquidity_position.getter(user);
         assert_eq!(p.initial_stable_balance.get(), U256::ZERO, "no-snapshot close must not create LP state");
         assert_eq!(e.liquidity_epochs.getter(U256::ZERO).active_lp_count.get(), U256::ZERO, "no epoch refcount churn");
+    }
+
+    // The 1/64 significance rule, pinned at the boundary. Strict comparison against a FLOORED
+    // sixty-fourth of the position's OWN pool leg, straight leg pairing, and OR: one oversized leg
+    // clears both accumulators. A zero or dust movement preserves them, which is the whole point —
+    // an unrelated dust deposit must not reprice a curve window that is still open.
+    #[test]
+    fn curve_memory_significance_threshold_boundaries() {
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        e.global_liquidity_stable.set(U256::from(6_400u64));
+        e.global_liquidity_asset.set(U256::from(6_400u64));
+
+        let seed = |e: &mut PerpEngine| {
+            e.dx0.set(U256::from(11u64));
+            e.dy0.set(U256::from(22u64));
+        };
+        let preserved = |e: &PerpEngine| e.dx0.get() == U256::from(11u64) && e.dy0.get() == U256::from(22u64);
+
+        // threshold = 6400 / 64 = 100; strictly greater clears.
+        seed(&mut e);
+        e.clear_curve_memory_if_significant(U256::ZERO, U256::ZERO);
+        assert!(preserved(&e), "a zero movement must never clear");
+
+        seed(&mut e);
+        e.clear_curve_memory_if_significant(U256::from(100u64), U256::from(100u64));
+        assert!(preserved(&e), "exactly at the threshold must preserve");
+
+        seed(&mut e);
+        e.clear_curve_memory_if_significant(U256::from(101u64), U256::ZERO);
+        assert!(!preserved(&e), "one over on the stable leg must clear both");
+
+        seed(&mut e);
+        e.clear_curve_memory_if_significant(U256::ZERO, U256::from(101u64));
+        assert!(!preserved(&e), "one over on the asset leg must clear both");
+
+        // The threshold FLOORS: a pool leg of 127 gives a threshold of 1, so 2 clears.
+        e.global_liquidity_stable.set(U256::from(127u64));
+        seed(&mut e);
+        e.clear_curve_memory_if_significant(U256::from(1u64), U256::ZERO);
+        assert!(preserved(&e), "at the floored threshold must preserve");
+        seed(&mut e);
+        e.clear_curve_memory_if_significant(U256::from(2u64), U256::ZERO);
+        assert!(!preserved(&e), "above the floored threshold must clear");
+    }
+
+    // The four-condition activity predicate. The fourth condition is the one that matters and its
+    // leg pairing is the opposite of the naive one: a LONG nets against the STABLE leg, a SHORT
+    // against the ASSET leg. Without it a pool leg that has fallen under its accumulator would wrap
+    // in `stable_liq - dy0` and produce a catastrophically wrong price instead of a clean reset.
+    #[test]
+    fn curve_memory_activity_predicate_conditions() {
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_000);
+        let mut e = PerpEngine::from(&vm);
+        e.curve_update_interval.set(U64::from(6u64));
+        e.last_curve_update.set(U64::from(996u64));
+        e.last_trade_direction.set(true);
+        e.last_validated_price.set(U256::from(300_000_000_000u64));
+        e.global_liquidity_stable.set(U256::from(1_000u64));
+        e.global_liquidity_asset.set(U256::from(1_000u64));
+
+        let price = U256::from(300_000_000_000u64);
+        // 1000 == 996 + 6 is false; 1000 <= 1002 holds, so the window is still open.
+        assert!(e.has_active_curve_memory(true, price), "inside the interval");
+
+        e.last_curve_update.set(U64::from(994u64)); // boundary: 1000 <= 994 + 6
+        assert!(e.has_active_curve_memory(true, price), "exactly on the interval boundary stays active");
+        e.last_curve_update.set(U64::from(993u64));
+        assert!(!e.has_active_curve_memory(true, price), "one past the interval is stale");
+
+        e.last_curve_update.set(U64::from(996u64));
+        assert!(!e.has_active_curve_memory(false, price), "a direction flip is stale");
+        assert!(!e.has_active_curve_memory(true, price + U256::from(1u64)), "a price change is stale");
+
+        // Fourth condition: the LONG side nets against the STABLE leg.
+        e.dy0.set(U256::from(1_000u64));
+        assert!(!e.has_active_curve_memory(true, price), "stable leg at dy0 must reset the long window");
+        e.dy0.set(U256::from(999u64));
+        assert!(e.has_active_curve_memory(true, price), "stable leg above dy0 keeps it");
+
+        // ...and the SHORT side against the ASSET leg.
+        e.last_trade_direction.set(false);
+        e.dx0.set(U256::from(1_000u64));
+        assert!(!e.has_active_curve_memory(false, price), "asset leg at dx0 must reset the short window");
+        e.dx0.set(U256::from(999u64));
+        assert!(e.has_active_curve_memory(false, price), "asset leg above dx0 keeps it");
+    }
+
+    // Splitting a short across two calls inside ONE curve window must not pay better than trading it
+    // whole. Before incremental pricing each slice was priced from the window's base state as if it
+    // were the first, so a split captured strictly better fills — a free arbitrage against the LPs.
+    #[test]
+    fn short_split_does_not_beat_aggregate_within_one_window() {
+        let wad = U256::from(WAD_U64);
+        let price = U256::from(300_000_000_000u64);
+        let size = U256::from(10u64) * wad;
+
+        let vm_whole = TestVM::new();
+        vm_whole.set_block_timestamp(1_700_000_000);
+        let mut whole_engine = PerpEngine::from(&vm_whole);
+        seed_trade_engine(&mut whole_engine);
+        let user = addr(0x91);
+        whole_engine.execute_trade(false, size + size, U256::ZERO, U256::ZERO, Address::ZERO, user, price).unwrap();
+        let whole = whole_engine.user_virtual_trader_position.getter(user).balance_stable.get();
+
+        let vm_split = TestVM::new();
+        vm_split.set_block_timestamp(1_700_000_000);
+        let mut split_engine = PerpEngine::from(&vm_split);
+        seed_trade_engine(&mut split_engine);
+        split_engine.execute_trade(false, size, U256::ZERO, U256::ZERO, Address::ZERO, user, price).unwrap();
+        split_engine.execute_trade(false, size, U256::ZERO, U256::ZERO, Address::ZERO, user, price).unwrap();
+        let split = split_engine.user_virtual_trader_position.getter(user).balance_stable.get();
+
+        assert!(split <= whole, "split {split} beat aggregate {whole} inside one curve window");
+    }
+
+    // Drives a real short close through the buy-back block and returns the residual the C0 bound
+    // measures. Both guards must pass for the block to be entered at all, so this is also the only
+    // engine-side exercise of that bound. `pool_scale` multiplies the seeded pool.
+    #[cfg(feature = "stub_boundary")]
+    fn short_close_residual(pool_scale: u64, debt_asset_wad: u64) -> Result<U256, Vec<u8>> {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.vault.set(addr(0x99));
+        e.last_operation_timestamp.set(U64::from(1_700_000_000u64));
+        let scale = U256::from(pool_scale);
+        e.global_liquidity_stable.set(e.global_liquidity_stable.get() * scale);
+        e.global_liquidity_asset.set(e.global_liquidity_asset.get() * scale);
+
+        let user = e.vm().msg_sender();
+        {
+            let mut up = e.user_virtual_trader_position.setter(user);
+            up.debt_asset.set(U256::from(debt_asset_wad) * wad);
+            up.balance_stable.set(U256::from(10_000_000u64) * wad);
+        }
+        let price = U256::from(300_000_000_000u64);
+        e.close_and_withdraw_inner(
+            U256::from(100_000u64),
+            U256::ZERO,
+            addr(0x77),
+            user,
+            price,
+            U256::from(10_000_000u64) * wad,
+            false,
+        )?;
+        let vp = e.user_virtual_trader_position.getter(user);
+        Ok(cm::md(cm::util_diff_abs(vp.balance_asset.get(), vp.debt_asset.get()), price, U256::from(100_000_000u64)))
+    }
+
+    // The engine-side C0 bound had NO coverage: every other close test seeds a long, so the sell
+    // branch zeroes the asset debt and the buy-back block is never entered. This drives a real short
+    // close at three pool depths and pins the residual the bound is checked against.
+    //
+    // Scope note: at a flat price this residual stays small under BOTH the executable quote and the
+    // analytic inverse, so this test proves the block is exercised and the bound holds here — it is
+    // NOT a discriminating measurement of the two quotes. The pool/price-move envelope that
+    // separates them lives in the Solidity sweep under test/c0_envelope/.
+    #[test]
+    #[cfg(feature = "stub_boundary")]
+    fn short_close_residual_stays_within_the_dust_bound() {
+        for (scale, debt) in [(1u64, 10u64), (10u64, 100u64), (100u64, 1_000u64)] {
+            let residual = short_close_residual(scale, debt).expect("short close must not revert");
+            // The executable quote searches to a dust tolerance expressed in exactly these units, so
+            // the residual is bounded by construction rather than by pool depth.
+            assert!(
+                residual < U256::from(10_000_000_000u64),
+                "pool x{scale}: residual {residual} reached the flat dust bound",
+            );
+        }
     }
