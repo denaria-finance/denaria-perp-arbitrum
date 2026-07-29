@@ -39,6 +39,14 @@ impl PerpEngine {
         self.liquidation_discount.set(U32::from(7_500u32));
         self.auto_close_fee.set(U256::from(200_000_000_000_000_000u64)); // 2e17
         self.minimum_liquidity_movement.set(wad / U256::from(100u64)); // 1e16
+        // Liquidity removal-fee curve, matching the real PerpPair constructor defaults
+        // (liquidityMinFee 0, liquidityMaxFee 5*1e10/100, liquidityFeeK 1e10). These were
+        // omitted (left zero), and a zero max fee WAIVES every removal fee — invisible while
+        // no test removed liquidity disproportionately, divergent from the reference once one
+        // does.
+        self.liquidity_min_fee.set(U256::ZERO);
+        self.liquidity_max_fee.set(U256::from(500_000_000u64)); // 5*1e10/100
+        self.liquidity_fee_k.set(U256::from(10_000_000_000u64)); // 1e10
         // Q80 fixed-point matrix scale: 2^80 (LIQUIDITY_M_Q80), replacing the old decimal 1e22.
         let liq_m_dec = U256::from_limbs([0u64, 65_536u64, 0, 0]); // 2^80 = 2^16 << 64
         self.liquidity_m_decimals.set(cm::i(liq_m_dec));

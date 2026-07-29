@@ -29,10 +29,12 @@ RAW_SIZE=$(stat -c%s "$RAW")
 RAW_SHA=$(sha256sum "$RAW" | cut -d' ' -f1)
 
 echo "== [2/5] wasm-opt -Oz (binaryen $BINARYEN_VERSION, pinned) =="
+# Anchored version match: a PATH wasm-opt of ANY other binaryen version produces a different
+# artifact, so only the pinned one is accepted; otherwise fetch it.
 WOPT="$(command -v wasm-opt || true)"
-if [ -z "$WOPT" ]; then
+if [ -z "$WOPT" ] || ! "$WOPT" --version 2>/dev/null | grep -qE "^wasm-opt version ${BINARYEN_VERSION#version_}( |\$)"; then
   TAR="$WORK/binaryen.tar.gz"
-  curl -sL -o "$TAR" "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+  curl -fsSL -o "$TAR" "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz"
   tar xzf "$TAR" -C "$WORK"
   WOPT="$WORK/binaryen-${BINARYEN_VERSION}/bin/wasm-opt"
 fi

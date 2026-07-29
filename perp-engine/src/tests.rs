@@ -3248,12 +3248,15 @@
             let block_ts: u64 = op["blockTs"].as_str().unwrap().parse().unwrap();
             vm.set_block_timestamp(block_ts);
 
+            // Optional fee tolerance (absent on the legacy fee-free ops -> zero, the old call
+            // shape): the disproportionate removal pays a real fee and must accept it.
+            let tol = op.get("tol").map(|v| u256s(v.as_str().unwrap())).unwrap_or_default();
             match kind {
                 "add" => e
-                    .add_liquidity_for(user, stable, asset, U256::ZERO, Bytes::new())
+                    .add_liquidity_for(user, stable, asset, tol, Bytes::new())
                     .unwrap_or_else(|_| panic!("op {i} add reverted on Stylus")),
                 "remove" => e
-                    .remove_liquidity_for(user, stable, asset, U256::ZERO, Bytes::new())
+                    .remove_liquidity_for(user, stable, asset, tol, Bytes::new())
                     .unwrap_or_else(|_| panic!("op {i} remove reverted on Stylus")),
                 other => panic!("op {i}: unknown kind {other}"),
             }
@@ -3419,6 +3422,55 @@
                 lp.balance_stable.set(us("lqBalS"));
                 lp.balance_asset.set(us("lqBalA"));
             }
+            // Optional LP seed (scaled-identity, the withdrawal-preview trick): the LP-pull
+            // branch of liquidate only runs for a user that actually holds LP liquidity.
+            let lpv = |k: &str| op.get(k).map(|v| u256s(v.as_str().unwrap())).unwrap_or_default();
+            let (lp_s, lp_a) = (lpv("lpS"), lpv("lpA"));
+            if lp_s != U256::ZERO || lp_a != U256::ZERO {
+                let scale = e.liquidity_m_decimals.get();
+                {
+                    let mut ep = e.liquidity_epochs.setter(U256::ZERO);
+                    // FULL matrix overwrite, exactly like the generator's seedLp: update_fg
+                    // drifts the funding row (m10/m11) over the preceding ops, and seeding only
+                    // the diagonal would leave that drift in the engine while the generator
+                    // anchors to true identity — a phantom divergence, not an engine one.
+                    ep.liquidity_m00.set(scale);
+                    ep.liquidity_m01.set(I256::ZERO);
+                    ep.liquidity_m10.set(I256::ZERO);
+                    ep.liquidity_m11.set(scale);
+                    ep.active_lp_count.set(U256::from(1u64));
+                }
+                {
+                    let mut lp = e.liquidity_position.setter(user);
+                    lp.snapshot_m00.set(scale);
+                    lp.snapshot_m11.set(scale);
+                    lp.initial_stable_balance.set(lp_s);
+                    lp.initial_asset_balance.set(lp_a);
+                    lp.debt_stable.set(lpv("lpDebtS"));
+                    lp.debt_asset.set(lpv("lpDebtA"));
+                }
+                e.liquidity_position_epoch.setter(user).set(U256::ZERO);
+            }
+            // Seed the slippage benchmarks like the generator does (zero when the op carries no
+            // seed): the curve-vs-spot dyPrime override reads them, and the curve branch is only
+            // reachable with a nonzero benchmark.
+            let ema = |k: &str| op.get(k).map(|v| u256s(v.as_str().unwrap())).unwrap_or_default();
+            e.avg_slippage_l.set(ema("emaL"));
+            e.avg_slippage_s.set(ema("emaS"));
+            // Funding-settled margin ratio, asserted to the UNIT against the generator's
+            // measurement (the discount formula plateaus over ~2.67 MR units and the band flips
+            // only at the threshold, so outcome asserts alone are blind to a ±1-unit divergence).
+            // Mirrors the harness helper: updateFG first (idempotent within the block, exactly
+            // what liquidate itself does), then calcMR on the refreshed timestamp.
+            if let Some(mr_v) = op.get("mr") {
+                let price = U256::from(300_000_000_000u64);
+                let last_op = U256::from(e.last_operation_timestamp.get());
+                e.update_fg(price, last_op).unwrap_or_else(|_| panic!("op {i} mr updateFG"));
+                let mr = e
+                    .calc_mr(user, price, U256::from(1_000u64) * wad, U256::from(e.last_operation_timestamp.get()))
+                    .unwrap_or_else(|_| panic!("op {i} mr calcMR"));
+                assert_eq!(mr, u256s(mr_v.as_str().unwrap()), "op {i} funding-settled marginRatio");
+            }
 
             match op["kind"].as_str().unwrap() {
                 "liquidate" => e
@@ -3440,6 +3492,9 @@
             assert_eq!(e.total_trader_exposure_sign.get(), bs("exposureSign"), "op {i} exposureSign");
             assert_eq!(e.insurance_fund.get(), us("insurance"), "op {i} insurance");
             assert_eq!(e.insurance_fund_sign.get(), bs("insuranceSign"), "op {i} insuranceSign");
+            // Post-op EMAs: pins the close-sweep writes and the auto-close restore bit-exact.
+            assert_eq!(e.avg_slippage_l.get(), us("avgL_post"), "op {i} avgL_post");
+            assert_eq!(e.avg_slippage_s.get(), us("avgS_post"), "op {i} avgS_post");
             // user position — fully closed out
             let up = e.user_virtual_trader_position.getter(user);
             assert_eq!(up.balance_stable.get(), us("uBalS_post"), "op {i} user balS");
@@ -3452,6 +3507,16 @@
             assert_eq!(lq.balance_asset.get(), us("lqBalA_post"), "op {i} liq balA");
             assert_eq!(lq.debt_stable.get(), us("lqDebtS_post"), "op {i} liq debtS");
             assert_eq!(lq.debt_asset.get(), us("lqDebtA_post"), "op {i} liq debtA");
+            // LP post-state, when the op seeded one: pins the LP-pull branch (fraction with LP
+            // legs, the required-removal override, the nested fee-bearing removal).
+            if op.get("lpS_post").is_some() {
+                let (ls, la) = e.get_lp_liquidity_balance(user).unwrap();
+                assert_eq!(ls, us("lpS_post"), "op {i} lpS_post");
+                assert_eq!(la, us("lpA_post"), "op {i} lpA_post");
+                let lp = e.liquidity_position.getter(user);
+                assert_eq!(lp.debt_stable.get(), us("lpDebtS_post"), "op {i} lpDebtS_post");
+                assert_eq!(lp.debt_asset.get(), us("lpDebtA_post"), "op {i} lpDebtA_post");
+            }
         }
     }
 
@@ -3602,6 +3667,9 @@
                     if lp_added {
                         let (ls, la) = e.get_lp_liquidity_balance(lp).unwrap();
                         if ls > wad && la > U256::ZERO {
+                            // Tolerance 0 = UNCAPPED (the L6 check is waived at zero), so the
+                            // now-live benchmark fee curve cannot dead-end this arm on draws
+                            // where the pool ratio drifted from spot.
                             let _ = e.remove_liquidity_for(lp, ls / U256::from(4u64), la / U256::from(4u64), U256::ZERO, Bytes::new());
                         }
                     }

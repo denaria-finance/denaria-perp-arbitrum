@@ -9,8 +9,11 @@ import "../../src/PerpPair.sol";
 ///         (empty-pool bootstrap → general add → partial remove → full remove) and snapshots
 ///         the full liquidity state after each op into a JSON fixture. The Rust/Stylus
 ///         `PerpEngine` replays it under `stub_boundary` (perp-engine test
-///         `liquidity_differential`) and asserts bit-exact. Fee-free (the default config's
-///         liquidityMaxFee=0 waives fees); the fee math itself is separately golden-locked
+///         `liquidity_differential`) and asserts bit-exact. The proportional ops are fee-free
+///         (a removal matching the pool ratio prices to ~zero and liquidityMinFee is 0); the
+///         final DISPROPORTIONATE removal pays a real fee through the live default curve
+///         (maxFee 5e8, k 1e10), pinning the fee WIRING cross-language — the fee math itself
+///         is separately golden-locked.
 ///         Env mirrors the Stylus stub: oracle 3000e8, vault collateral 1000e18.
 contract MockOracleL {
     function verifyReportIfNecessary(bytes calldata) external { }
@@ -83,6 +86,11 @@ contract LiquidityDifferentialTest is Test {
         // op3: lp2 removes its full balance
         (uint256 s2, uint256 a2) = ref.getLpLiquidityBalance(lp2);
         ops = string.concat(ops, ",", doRemove(lp2, s2, a2, 11_800));
+        // op4: DISPROPORTIONATE removal — stable-heavy vs the ~3000 pool ratio, so the default
+        // fee curve prices a real removal fee (the proportional ops above price to ~zero). The
+        // big tolerance accepts it; the removed amounts clear the small-removal waiver.
+        (uint256 s3, uint256 a3) = ref.getLpLiquidityBalance(lp1);
+        ops = string.concat(ops, ",", doRemoveTol(lp1, s3 * 4 / 5, a3 / 5, 15_400, 1e30));
 
         vm.writeFile(string.concat(vm.projectRoot(), FIXTURE_PATH), string.concat('{"ops":[', ops, "]}"));
     }
@@ -95,13 +103,32 @@ contract LiquidityDifferentialTest is Test {
     }
 
     function doRemove(address u, uint256 s, uint256 a, uint256 ts) internal returns (string memory) {
+        return doRemoveTol(u, s, a, ts, 0);
+    }
+
+    function doRemoveTol(address u, uint256 s, uint256 a, uint256 ts, uint256 tol) internal returns (string memory) {
         vm.warp(ts);
         vm.prank(u);
-        ref.removeLiquidity(s, a, 0, "");
-        return entry("remove", u, s, a, ts);
+        ref.removeLiquidity(s, a, tol, "");
+        // The fee tolerance is part of the replayed call, so it travels in the fixture.
+        return string.concat(entrySansClose("remove", u, s, a, ts), ',"tol":"', vm.toString(tol), '"}');
     }
 
     function entry(
+        string memory kind,
+        address u,
+        uint256 s,
+        uint256 a,
+        uint256 ts
+    )
+        internal
+        view
+        returns (string memory)
+    {
+        return string.concat(entrySansClose(kind, u, s, a, ts), "}");
+    }
+
+    function entrySansClose(
         string memory kind,
         address u,
         uint256 s,
@@ -159,7 +186,7 @@ contract LiquidityDifferentialTest is Test {
             vm.toString(g1),
             '"'
         );
-        return string.concat(head, glob, lpJson(u), "}");
+        return string.concat(head, glob, lpJson(u));
     }
 
     function lpJson(address u) internal view returns (string memory) {

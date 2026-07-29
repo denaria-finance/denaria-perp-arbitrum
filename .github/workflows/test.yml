@@ -107,6 +107,28 @@ jobs:
           ./script/candidate_abi.sh
         id: candidate_abi
 
+  # Activation-budget gate on EVERY push/PR (the deploy-artifact pipeline below stays
+  # workflow_dispatch): rebuild the verification tree — which fails on any unpinned raw-wasm
+  # drift, enforcing the re-baseline discipline — then wasm-opt with the pinned binaryen and
+  # fail if the deploy artifact exceeds the ~283 KB Stylus activation cap minus a 4 KB margin.
+  # Without this lane, a change that eats the budget only surfaced at deploy time.
+  wasm-size:
+    name: WASM activation-budget gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-stylus
+          key: cargo-stylus-0.10.8-${{ runner.os }}
+      - name: Build the verify tree and check the activation budget
+        run: |
+          rustup component add rust-src
+          command -v cargo-stylus >/dev/null 2>&1 || cargo install cargo-stylus --version 0.10.8 --locked
+          bash script/generate_verify_tree.sh --opt-check
+
   supply-chain:
     name: Supply-chain (advisories + SBOM)
     runs-on: ubuntu-latest
@@ -153,7 +175,7 @@ jobs:
       - name: Build + wasm-opt + validate + report
         run: |
           rustup component add rust-src
-          cargo install cargo-stylus --version 0.10.7 --locked
+          cargo install cargo-stylus --version 0.10.8 --locked
           bash script/build_deploy_artifact.sh
       - name: Upload optimized artifact + report
         continue-on-error: true
@@ -182,5 +204,5 @@ jobs:
       - name: Run the Nitro E2E money-path
         run: |
           rustup component add rust-src
-          cargo install cargo-stylus --version 0.10.7 --locked
+          cargo install cargo-stylus --version 0.10.8 --locked
           bash script/nitro_e2e.sh

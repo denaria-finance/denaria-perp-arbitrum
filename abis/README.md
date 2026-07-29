@@ -29,11 +29,12 @@ Two explicit lanes are kept (per the tooling audit):
 - **Candidate ABI** — [`PerpEngine.candidate.abi.sol`](PerpEngine.candidate.abi.sol): the
   macro-authoritative interface generated from the *current* `perp-engine` source
   (`cargo run -p denaria-perp-engine-stylus --features export-abi`). CI runs
-  `script/candidate_abi.sh`, which regenerates it, fails on drift, and prints the
-  deployed-vs-candidate function delta — the selectors a redeploy will add
-  (`updateLpSnapshot`, `getLpLiquidityEpoch`, `marginCheckData`, `oracle`, `batchLiquidateFor`,
-  `autoCloseUsersData`) or remove (`ReadFundingParameters`, `ReadInsuranceFund`, `fundingRate*`,
-  `totalTraderExposure*`, `initializeProduction`).
+  `script/candidate_abi.sh`, which regenerates it, fails on drift, and prints the live
+  deployed-vs-candidate function delta — the script's output is the source of truth, not this
+  file. Current delta: the candidate adds `withdrawalCheckData` and removes nothing. NOTE: the
+  refactored `Vault.removeCollateral` depends on that selector, so the next engine deploy and
+  the Vault deploy must ship together — a new Vault pointed at the live engine reverts every
+  withdrawal (the post-deploy smoke script probes exactly this).
 
 On redeploy, regenerate `PerpEngine.json` from this same source (runbook §11) so the two lanes
 converge.
