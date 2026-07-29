@@ -70,6 +70,8 @@ contract ClosePnlDifferentialTest is Test {
     address internal ub = address(0xB);
     address internal uc = address(0xC);
     address internal ud = address(0xD);
+    address internal ue = address(0xE);
+    address internal uf = address(0xF);
 
     uint256 internal constant MAX_SLIP = 50_000; // 50% tolerance (units of 1e5): no slippage revert
     uint256 internal constant MAX_LIQ_FEE = 1e18;
@@ -90,6 +92,17 @@ contract ClosePnlDifferentialTest is Test {
         // uses leverage in the trade math, and exercises the forwarded path at leverage>1.
         ops = string.concat(ops, ",", tradeOp(ud, true, 800e18, 5, 23_800));
         ops = string.concat(ops, ",", closeOp(ud, 28_600));
+        // Two trades INSIDE one curve window (interval is 6s). Every op above is 1800-3600s apart,
+        // so the window always resets and dx0/dy0 are always zero — which makes the incremental
+        // pricing degenerate to the plain aggregate and the memory-adjusted pool frames trivial.
+        // These two are the only ops in any differential that exercise a live window.
+        ops = string.concat(ops, ",", tradeOp(ue, false, 1e17, 1, 33_000));
+        ops = string.concat(ops, ",", tradeOp(ue, false, 1e17, 1, 33_003));
+        // A SHORT self-close, reaching the executable quote and the flat dust bound. This used to
+        // revert C0 — the analytic inverse left a residual that grew with pool depth — so the lane
+        // deliberately avoided it. The replay quote is bounded by its own search tolerance now.
+        ops = string.concat(ops, ",", tradeOp(uf, false, 1e17, 1, 40_000));
+        ops = string.concat(ops, ",", closeOp(uf, 44_000));
 
         vm.writeFile(string.concat(vm.projectRoot(), FIXTURE_PATH), string.concat('{"ops":[', ops, "]}"));
     }

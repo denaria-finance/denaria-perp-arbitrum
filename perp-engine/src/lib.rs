@@ -242,9 +242,8 @@ sol_interface! {
 
 #[public]
 impl PerpEngine {
-    /// **Production constructor** — atomic deploy + activate + initialize via StylusDeployer,
-    /// so the engine cannot be seized by front-running a separate initializer transaction.
-    /// Parity with the Solidity `PerpPair` constructor: takes the full configurable parameter
+    /// **Production initializer** — one-shot, called right after the engine is deployed and
+    /// activated. Parity with the Solidity `PerpPair` constructor: takes the full configurable parameter
     /// set and applies the `SET*` validation, in reference order: SET2 oracle≠0, SET3 vault≠0,
     /// SET4 MMR ≥ 2 (keeps `MMR/2` non-zero), SET1 fee-sum < feeFractionsDecimals, SET5
     /// tradingFee range, SET6 flat-fee bound, SET7 feeProtocol≠0, SET9 emaParam ≤ oracleDecimals,
@@ -254,14 +253,11 @@ impl PerpEngine {
     /// engine's narrowing convention). The non-configurable protocol constants (decimals,
     /// curve, clamp, identity liquidity matrix, funding/liquidation defaults) are fixed exactly
     /// as the constructor hardcodes them. `multi_call_manager` is the ERC2771 trusted forwarder.
-    /// `admin` receives DEFAULT_ADMIN_ROLE + MOD_ROLE and is passed explicitly: in a Stylus
-    /// constructor `msg_sender()` is the StylusDeployer, not the intended administrator.
-    /// Production initializer (post-deploy, one-shot): sets the configurable protocol parameters and
-    /// grants the CALLER (the deployer) DEFAULT_ADMIN_ROLE + MOD_ROLE. Called via `cast` right after
-    /// the engine is deployed + activated. NOTE: a Stylus `#[constructor]` would make this atomic +
-    /// front-run-proof, but it routes through the StylusDeployer, which cannot deploy this contract's
-    /// wasm-opt'd multi-fragment artifact (the only one that fits the activation cap) — so init is a
-    /// separate call; run it immediately after deploy (same operator, next tx) to minimise the window.
+    /// It grants the CALLER — the deployer — DEFAULT_ADMIN_ROLE + MOD_ROLE, and can only be run
+    /// once. There is NO constructor: the deploy path that carries the size-fitting artifact does
+    /// not invoke one, so deploy and initialize are two transactions. That leaves a window in which
+    /// a third party could claim the roles by front-running the initializer, so it must be sent
+    /// immediately after activation, from the same operator, as the next transaction.
     #[selector(name = "initializeProduction")]
     #[allow(clippy::too_many_arguments)]
     pub fn initialize_production(

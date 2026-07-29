@@ -555,7 +555,8 @@ fn assert_matrix_vector(vector: &Value, label: &str) {
                 i_field(inputs, "b10", label),
                 i_field(inputs, "b11", label),
                 i_field(inputs, "norm", label),
-            );
+            )
+            .unwrap_or_else(|_| panic!("{label}: matmul overflowed"));
             assert_eq!(r00, i_field(expected, "r00", label), "{label}:r00");
             assert_eq!(r01, i_field(expected, "r01", label), "{label}:r01");
             assert_eq!(r10, i_field(expected, "r10", label), "{label}:r10");
@@ -570,7 +571,8 @@ fn assert_matrix_vector(vector: &Value, label: &str) {
                 i_field(inputs, "m10", label),
                 i_field(inputs, "m11", label),
                 i_field(inputs, "norm", label),
-            );
+            )
+            .unwrap_or_else(|_| panic!("{label}: vec_mat overflowed"));
             assert_eq!(r0, i_field(expected, "r0", label), "{label}:r0");
             assert_eq!(r1, i_field(expected, "r1", label), "{label}:r1");
         }
@@ -583,7 +585,8 @@ fn assert_matrix_vector(vector: &Value, label: &str) {
                 i_field(inputs, "v0", label),
                 i_field(inputs, "v1", label),
                 i_field(inputs, "norm", label),
-            );
+            )
+            .unwrap_or_else(|_| panic!("{label}: mat_vec overflowed"));
             assert_eq!(r0, i_field(expected, "r0", label), "{label}:r0");
             assert_eq!(r1, i_field(expected, "r1", label), "{label}:r1");
         }
@@ -594,7 +597,8 @@ fn assert_matrix_vector(vector: &Value, label: &str) {
                 i_field(inputs, "v2_0", label),
                 i_field(inputs, "v2_1", label),
                 i_field(inputs, "norm", label),
-            );
+            )
+            .unwrap_or_else(|_| panic!("{label}: scalar overflowed"));
             assert_eq!(result, i_field(expected, "r", label), "{label}:r");
         }
         unsupported => panic!("{label}: unsupported matrix op `{unsupported}`"),

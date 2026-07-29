@@ -32,12 +32,12 @@ set -euo pipefail
 # workspace root changes Rust's crate-metadata hashes, so the tree has its own
 # deterministic, path-independent hash. NOTE: this ~307 KB tree wasm is NOT the
 # deployed artifact and is OVER the ~283 KB activation cap by design — the deploy
-# artifact is this wasm run through `wasm-opt -Oz` (binaryen v119) to ~243 KB,
+# artifact is this wasm run through `wasm-opt -Oz` (binaryen v119) to ~254 KB,
 # which activates. Because cargo-stylus does not wasm-opt, `cargo stylus verify`
-# rebuilds to this ~307 KB tree and cannot reproduce the deployed ~243 KB artifact;
+# rebuilds to this ~319 KB tree and cannot reproduce the deployed ~254 KB artifact;
 # re-derive the deployed bytes deterministically via the documented wasm-opt step.
-EXPECT_SIZE=314205
-EXPECT_SHA256=f3f9d9c5b20a90cee12ed8fe901640acb88c77ce180df626a03f3296844b29c3
+EXPECT_SIZE=326425
+EXPECT_SHA256=e64fd095c6454a71608f806023708630f5ad7cff21ed06c724266c24cf4980a6
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

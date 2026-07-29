@@ -89,6 +89,14 @@ else
     FAILS=$((FAILS + 1))
 fi
 
+# The vault's withdrawal path calls these two directly on the engine. `withdrawalCheckData` is a
+# NEW selector: an engine deployed before it exists will make every removeCollateral revert, which
+# is exactly the failure class this script was written for. Engine and vault must deploy together.
+echo "== Vault -> engine withdrawal-path reads =="
+check "oracle() (vault resolves the price feed through it)" must-pass "$ENGINE" "oracle()(address)"
+check "withdrawalCheckData (empty position)" must-pass "$ENGINE" "withdrawalCheckData(address,uint256,uint256)(uint256,bool,bool)" "$USER_ADDR" "$PRICE" 0
+check "calcPnL (empty position)" must-pass "$ENGINE" "calcPnL(address,uint256)(uint256,bool)" "$USER_ADDR" "$PRICE"
+
 echo "== UtilMath end-to-end reads ($UTILMATH -> engine callbacks) =="
 check "_calcPnLNoExit (pure)" must-pass "$UTILMATH" "_calcPnLNoExit(uint256,uint256,uint256,uint256,uint256,bool,uint256,uint256)(uint256,bool)" 1000000000000000000 0 0 0 0 true "$PRICE" 100000000
 check "calcMR(user,…)" must-pass "$UTILMATH" "calcMR(address,uint256,address,uint256,uint256)(uint256)" "$USER_ADDR" "$PRICE" "$ENGINE" 0 1

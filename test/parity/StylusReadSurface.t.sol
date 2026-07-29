@@ -10,10 +10,13 @@ import "./StylusEngineSurfaceMock.sol";
 /// @notice Locks the 2026-06-10 diagnosis: UtilMath's read paths (`calcMR`,
 /// `returnTradeInfo`, `_calcPnL`, `calcHypotheticalMR`) make typed callbacks into
 /// the engine, and the 2026-06-08 Stylus deploy did not expose those selectors, so
-/// every one of them reverted (and `Vault.removeCollateral` with them, via
-/// `Vault._checkMR -> UtilMath.calcMR` — the same library call this suite drives,
-/// so that transitive leg is covered by equivalence; the static
-/// `script/selector_dependency_audit.py` checks the full call graph).
+/// every one of them reverted.
+///
+/// `Vault.removeCollateral` USED to be covered here by equivalence, through
+/// `Vault._checkMR -> UtilMath.calcMR`. It no longer is: the vault now calls the engine's
+/// `withdrawalCheckData` directly, which is a different selector and not a UtilMath path at all.
+/// That leg is covered by the static `script/selector_dependency_audit.py` and by an explicit
+/// probe in `script/post_deploy_read_smoke.sh` — not by this suite.
 ///
 /// Two mocked engine surfaces:
 ///  - `Engine20260608SurfaceMock`     = the surface actually deployed on 2026-06-08
