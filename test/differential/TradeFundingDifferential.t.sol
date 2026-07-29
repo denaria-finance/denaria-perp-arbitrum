@@ -62,6 +62,13 @@ contract PerpEngineRef is PerpPair {
     function getInsurance() external view returns (uint256, bool) {
         return (insuranceFund, insuranceFundSign);
     }
+
+    /// The slippage EMAs are internal with no production getter; the differential records them
+    /// because they are cross-language state (liquidation pricing reads them) that no other
+    /// recorded field depends on — without this, an EMA divergence replays green.
+    function getAvgSlippages() external view returns (uint256, uint256) {
+        return (avgSlippageL, avgSlippageS);
+    }
 }
 
 contract TradeFundingDifferentialTest is Test {
@@ -81,7 +88,7 @@ contract TradeFundingDifferentialTest is Test {
     function buildOps() internal pure returns (Op[] memory ops) {
         address a = address(0xA11CE);
         address b = address(0xB0B);
-        ops = new Op[](5);
+        ops = new Op[](9);
         // open A long; open B long (funding now accrues from A's exposure over time);
         // A second trade (nonzero funding fee on A); B short reduces exposure; A short.
         ops[0] = Op(a, true, 1000e18, 1, 1000);
@@ -89,6 +96,16 @@ contract TradeFundingDifferentialTest is Test {
         ops[2] = Op(a, true, 200e18, 1, 8200); // +3600s, A trades again
         ops[3] = Op(b, false, 0.05e18, 1, 11_800); // +3600s, B short
         ops[4] = Op(a, false, 0.05e18, 1, 15_400); // +3600s, A short
+        // SAME-BLOCK pairs, one per leg: the block's first trade stamps lastOperationTimestamp,
+        // the second must still MOVE its EMA (the old same-block gate skipped exactly that
+        // write, and no other recorded field would catch a one-sided regression of it). The
+        // second-in-block sizes are chosen big enough that the EMA value actually changes —
+        // under the constant-price mock a dust trade's relative slippage rounds to the stored
+        // value, and skip-the-write vs write-the-same-value would be indistinguishable.
+        ops[5] = Op(b, true, 300e18, 1, 19_000); // stamps the block
+        ops[6] = Op(a, false, 0.3e18, 1, 19_000); // SAME block: short-leg EMA must move
+        ops[7] = Op(b, false, 0.05e18, 1, 22_600); // stamps the block
+        ops[8] = Op(a, true, 500e18, 1, 22_600); // SAME block: long-leg EMA must move
     }
 
     function test_generate() external {
@@ -126,6 +143,7 @@ contract TradeFundingDifferentialTest is Test {
     function opEntry(Op memory o, uint256 ret) internal view returns (string memory) {
         (int256 g0, int256 g1) = ref.getG();
         (uint256 ins, bool insSign) = ref.getInsurance();
+        (uint256 avgL, uint256 avgS) = ref.getAvgSlippages();
         (
             uint256 balS,
             uint256 balA,
@@ -176,7 +194,12 @@ contract TradeFundingDifferentialTest is Test {
             '","insurance":"',
             vm.toString(ins),
             '","insuranceSign":',
-            insSign ? "true" : "false"
+            insSign ? "true" : "false",
+            ',"avgSlippageL":"',
+            vm.toString(avgL),
+            '","avgSlippageS":"',
+            vm.toString(avgS),
+            '"'
         );
         // acting user's position
         string memory usr = string.concat(

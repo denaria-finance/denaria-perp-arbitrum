@@ -1759,9 +1759,11 @@
         );
     }
 
-    // item20 batch auto-close: BEST-EFFORT keeper sweep — an eligible user is closed, an ineligible
-    // (unauthorized / threshold-unmet) user is SKIPPED (not fatal), so one call sweeps every eligible
-    // position. Plus bounds (BA1/BA2) + dedup (BA3). Eligible setup mirrors the differential op.
+    // item20 batch auto-close: best-effort ONLY for the typed pre-mutation outcome — an eligible
+    // user is closed, a user that never AUTHORIZED auto-close is SKIPPED (nothing written for it).
+    // A threshold miss is no longer skippable: it is discovered after the close executed and must
+    // hard-revert the batch (batch_auto_close_post_execution_failure_is_hard). Plus bounds
+    // (BA1/BA2) + dedup (BA3). Eligible setup mirrors the differential op.
     #[cfg(feature = "stub_boundary")]
     #[test]
     fn batch_auto_close_best_effort_and_bounds() {
@@ -1785,10 +1787,12 @@
         e.enable_auto_close_for(eligible, U256::ZERO, U256::from(1u64), U256::from(50_000u64), wad)
             .expect("enable eligible");
 
-        // Batch [eligible, ineligible]: closes the eligible one, skips the ineligible one -> Ok.
+        // Batch [ineligible, eligible]: the SKIP comes first, so this also pins that the loop keeps
+        // processing after a skip (a `continue` degraded to `break` would leave the eligible one
+        // open and still return Ok).
         e.batch_auto_close_user_position_impl(
             caller,
-            vec![eligible, ineligible],
+            vec![ineligible, eligible],
             vec![Address::ZERO, Address::ZERO],
             Bytes::new(),
         )
@@ -1796,6 +1800,17 @@
         let elig = e.user_virtual_trader_position.getter(eligible);
         assert_eq!(elig.balance_asset.get(), U256::ZERO, "eligible long closed");
         assert_eq!(elig.debt_stable.get(), U256::ZERO, "eligible debt cleared");
+        // The skip's safety premise — nothing was written for the skipped user — is enforced only
+        // by code placement (authorized check before the fee debits), so assert it: the skipped
+        // user carries no state and the caller collected exactly ONE auto-close fee.
+        let skipped = e.user_virtual_trader_position.getter(ineligible);
+        assert_eq!(skipped.debt_stable.get(), U256::ZERO, "skipped user charged no fee");
+        assert_eq!(skipped.balance_stable.get(), U256::ZERO, "skipped user untouched");
+        assert_eq!(
+            e.user_virtual_trader_position.getter(caller).balance_stable.get(),
+            e.auto_close_fee.get(),
+            "caller collected exactly one fee (none from the skipped target)"
+        );
         assert!(!e.auto_close_users_data.getter(eligible).authorized.get(), "eligible config cleared on close");
 
         // Bounds + dedup (checked before any per-user work).
@@ -1815,6 +1830,276 @@
             e.batch_auto_close_user_position_impl(caller, vec![dup, addr(0x52), dup], vec![Address::ZERO; 3], Bytes::new()),
             Err(err(b"BA3")),
             "duplicate -> BA3",
+        );
+    }
+
+    // A trade in the SAME block as a funding update must still feed the slippage EMA, on both
+    // legs. update_fg stamps last_operation_timestamp = block ts; the old same-block gate then
+    // skipped the EMA write, so an attacker calling updateFG every block could freeze the
+    // liquidation pricing benchmark while moving the pool.
+    #[test]
+    fn same_block_trade_after_update_fg_updates_ema() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        let spot = U256::from(300_000_000_000u64);
+
+        e.update_fg(spot, U256::from(e.last_operation_timestamp.get())).expect("updateFG");
+        assert_eq!(e.last_operation_timestamp.get(), U64::from(1_700_000_000u64), "funding stamped this block");
+
+        let avg_l = e.avg_slippage_l.get();
+        let avg_s = e.avg_slippage_s.get();
+        e.execute_trade(true, U256::from(1_000u64) * wad, U256::ZERO, U256::ZERO, Address::ZERO, addr(0xA1), spot)
+            .expect("same-block long");
+        assert!(e.avg_slippage_l.get() > avg_l, "long EMA updated in the funding block");
+        e.execute_trade(false, wad, U256::ZERO, U256::ZERO, Address::ZERO, addr(0xA2), spot)
+            .expect("same-block short");
+        assert!(e.avg_slippage_s.get() > avg_s, "short EMA updated in the funding block");
+    }
+
+    // Auto-close must leave BOTH slippage EMAs exactly where they were: its internal sell/buy-back
+    // feeds the EMA like any trade (unconditionally, post same-block-gate removal), and a
+    // keeper-timed forced close must not prime the liquidation pricing benchmark.
+    #[cfg(feature = "stub_boundary")]
+    #[test]
+    fn auto_close_restores_slippage_ema() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.trusted_forwarder.set(e.vm().msg_sender());
+        let user = addr(0x71);
+        {
+            // Underwater long: the close SELLS the 1e18 asset leg -> avg_slippage_s would move.
+            let mut up = e.user_virtual_trader_position.setter(user);
+            up.balance_asset.set(wad);
+            up.debt_stable.set(U256::from(3_500u64) * wad);
+        }
+        let avg_l_sentinel = U256::from(123_456_789u64);
+        let avg_s_sentinel = U256::from(987_654_321u64);
+        e.avg_slippage_l.set(avg_l_sentinel);
+        e.avg_slippage_s.set(avg_s_sentinel);
+        e.enable_auto_close_for(user, U256::ZERO, U256::from(1u64), U256::from(50_000u64), wad).expect("enable");
+
+        e.auto_close_user_position_impl(addr(0xFE), user, Address::ZERO, Bytes::new()).expect("auto-close");
+
+        let up = e.user_virtual_trader_position.getter(user);
+        assert_eq!(up.balance_asset.get(), U256::ZERO, "position closed (sell leg really ran)");
+        assert_eq!(e.avg_slippage_l.get(), avg_l_sentinel, "avgSlippageL restored");
+        assert_eq!(e.avg_slippage_s.get(), avg_s_sentinel, "avgSlippageS restored");
+    }
+
+    // Twin of auto_close_restores_slippage_ema for the BUY-BACK leg: a net short's close runs the
+    // long-direction trade, which feeds avg_slippage_l — the restore must cover both legs.
+    #[cfg(feature = "stub_boundary")]
+    #[test]
+    fn auto_close_restores_slippage_ema_on_buy_back() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.trusted_forwarder.set(e.vm().msg_sender());
+        let user = addr(0x73);
+        {
+            // Net short in profit: the close BUYS BACK the 1e18 asset debt.
+            let mut up = e.user_virtual_trader_position.setter(user);
+            up.debt_asset.set(wad);
+            up.balance_stable.set(U256::from(3_500u64) * wad);
+        }
+        let avg_l_sentinel = U256::from(123_456_789u64);
+        let avg_s_sentinel = U256::from(987_654_321u64);
+        e.avg_slippage_l.set(avg_l_sentinel);
+        e.avg_slippage_s.set(avg_s_sentinel);
+        e.enable_auto_close_for(user, U256::from(1u64), U256::ZERO, U256::from(50_000u64), wad).expect("enable");
+
+        e.auto_close_user_position_impl(addr(0xFE), user, Address::ZERO, Bytes::new()).expect("auto-close");
+
+        let up = e.user_virtual_trader_position.getter(user);
+        assert_eq!(up.debt_asset.get(), U256::ZERO, "short closed (buy-back really ran)");
+        assert_eq!(e.avg_slippage_l.get(), avg_l_sentinel, "avgSlippageL restored");
+        assert_eq!(e.avg_slippage_s.get(), avg_s_sentinel, "avgSlippageS restored");
+    }
+
+    // The single-user external path maps the typed pre-mutation outcome to the Solidity A1: a user
+    // that never authorized auto-close must revert, not silently no-op.
+    #[cfg(feature = "stub_boundary")]
+    #[test]
+    fn single_auto_close_unauthorized_reverts_a1() {
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        assert_eq!(
+            e.auto_close_user_position_impl(addr(0xFE), addr(0x74), Address::ZERO, Bytes::new()),
+            Err(err(b"A1")),
+            "never-authorized single auto-close -> A1"
+        );
+    }
+
+    // Applies the auto-close fee debits and runs the shared close body on a twin-seeded engine,
+    // returning the realized (pnl, sign) — i.e. exactly the Vault collateral delta the real
+    // auto-close path will settle (stub collateral 1000e18, no clamp for these seeds).
+    #[cfg(feature = "stub_boundary")]
+    fn dry_run_settled_close(
+        seed_position: impl Fn(&mut PerpEngine),
+        caller: Address,
+        user: Address,
+    ) -> (U256, bool) {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        seed_position(&mut e);
+        let fee = e.auto_close_fee.get();
+        {
+            let mut up = e.user_virtual_trader_position.setter(user);
+            let ds = up.debt_stable.get();
+            up.debt_stable.set(ds + fee);
+        }
+        {
+            let mut cp = e.user_virtual_trader_position.setter(caller);
+            let bs = cp.balance_stable.get();
+            cp.balance_stable.set(bs + fee);
+        }
+        e.close_and_withdraw_inner(
+            U256::from(50_000u64),
+            wad,
+            Address::ZERO,
+            user,
+            U256::from(300_000_000_000u64),
+            U256::from(1_000u64) * wad,
+            true,
+        )
+        .expect("dry-run close")
+    }
+
+    // Threshold exactness: the gate binds on the SETTLED collateral delta, to the wei.
+    // A dry-run twin engine learns the realized delta; the real path must then pass with the
+    // threshold set exactly at it and hard-revert A1 with the threshold one unit above it —
+    // on both the loss and the profit side.
+    #[cfg(feature = "stub_boundary")]
+    #[test]
+    fn auto_close_threshold_exact_and_one_unit_missed() {
+        let wad = U256::from(WAD_U64);
+        let caller = addr(0xFE);
+        let user = addr(0x71);
+
+        // (seed, threshold side): underwater long -> loss; low-debt long -> profit.
+        let loss_seed = |e: &mut PerpEngine| {
+            let mut up = e.user_virtual_trader_position.setter(addr(0x71));
+            up.balance_asset.set(U256::from(WAD_U64));
+            up.debt_stable.set(U256::from(3_500u64) * U256::from(WAD_U64));
+        };
+        let profit_seed = |e: &mut PerpEngine| {
+            let mut up = e.user_virtual_trader_position.setter(addr(0x71));
+            up.balance_asset.set(U256::from(WAD_U64));
+            up.debt_stable.set(U256::from(2_000u64) * U256::from(WAD_U64));
+        };
+
+        for (seed, is_profit) in [
+            (&loss_seed as &dyn Fn(&mut PerpEngine), false),
+            (&profit_seed as &dyn Fn(&mut PerpEngine), true),
+        ] {
+            let (settled, sign) = dry_run_settled_close(seed, caller, user);
+            assert_eq!(sign, is_profit, "dry-run realized sign");
+            assert!(settled > U256::ZERO, "dry-run realized magnitude");
+
+            for (bump, expect_ok) in [(U256::ZERO, true), (U256::from(1u64), false)] {
+                let vm = TestVM::new();
+                vm.set_block_timestamp(1_700_000_000);
+                let mut e = PerpEngine::from(&vm);
+                seed_trade_engine(&mut e);
+                seed(&mut e);
+                e.trusted_forwarder.set(e.vm().msg_sender());
+                let th = settled + bump;
+                let (profit_th, loss_th) =
+                    if is_profit { (th, U256::ZERO) } else { (U256::ZERO, th) };
+                e.enable_auto_close_for(user, profit_th, loss_th, U256::from(50_000u64), wad).expect("enable");
+                let got = e.auto_close_user_position_impl(caller, user, Address::ZERO, Bytes::new());
+                if expect_ok {
+                    got.expect("threshold exactly met -> executes");
+                } else {
+                    assert_eq!(got, Err(err(b"A1")), "one unit missed -> hard A1 after the close");
+                }
+            }
+        }
+    }
+
+    // Fee-bearing divergence: a position whose PRE-close PnL is a (tiny) profit settles as a LOSS
+    // once the auto-close fee, trading fees and close-curve slippage land. The old pre-close gate
+    // took the profit branch and closed it; the realized-delta gate takes the loss branch, finds
+    // lossTh disabled, and hard-reverts A1.
+    #[cfg(feature = "stub_boundary")]
+    #[test]
+    fn auto_close_pnl_sign_delta_divergence_hard_reverts() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.trusted_forwarder.set(e.vm().msg_sender());
+        let user = addr(0x71);
+        let price = U256::from(300_000_000_000u64);
+        {
+            // 1e18 long against 2999.9e18 stable debt: marked at 3000, ~0.1e18 raw profit —
+            // smaller than the 0.2e18 auto-close fee alone.
+            let mut up = e.user_virtual_trader_position.setter(user);
+            up.balance_asset.set(wad);
+            up.debt_stable.set(U256::from(29_999u64) * wad / U256::from(10u64));
+        }
+        let (raw_pnl, raw_sign) = e.calc_pnl_user(user, price).expect("pre-close PnL");
+        assert!(raw_sign && raw_pnl > U256::ZERO, "precondition: pre-close PnL is a profit");
+
+        // profitTh=1 wei (old gate: raw profit >= 1 -> would have closed), lossTh disabled.
+        e.enable_auto_close_for(user, U256::from(1u64), U256::ZERO, U256::from(50_000u64), wad).expect("enable");
+        assert_eq!(
+            e.auto_close_user_position_impl(addr(0xFE), user, Address::ZERO, Bytes::new()),
+            Err(err(b"A1")),
+            "settled delta is a loss, loss threshold disabled -> hard A1"
+        );
+    }
+
+    // Post-execution failure in a batch is HARD: the second target's close executes and only then
+    // misses its threshold — the whole batch must error (on-chain: the transaction reverts and the
+    // EVM unwinds every prior target; the harness cannot roll back, so the Err IS the assertion).
+    // The old batch matched revert bytes against A1 and would have swallowed exactly this case.
+    #[cfg(feature = "stub_boundary")]
+    #[test]
+    fn batch_auto_close_post_execution_failure_is_hard() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.trusted_forwarder.set(e.vm().msg_sender());
+        let caller = addr(0xFE);
+        let first = addr(0x71);
+        let second = addr(0x72);
+        for u in [first, second] {
+            let mut up = e.user_virtual_trader_position.setter(u);
+            up.balance_asset.set(wad);
+            up.debt_stable.set(U256::from(3_500u64) * wad);
+        }
+        // First: genuinely eligible (realized loss ~500e18 >= 1 wei). Second: authorized, but a
+        // loss threshold no close of this position can reach.
+        e.enable_auto_close_for(first, U256::ZERO, U256::from(1u64), U256::from(50_000u64), wad).expect("enable 1");
+        e.enable_auto_close_for(second, U256::ZERO, U256::from(10_000u64) * wad, U256::from(50_000u64), wad)
+            .expect("enable 2");
+
+        assert_eq!(
+            e.batch_auto_close_user_position_impl(
+                caller,
+                vec![first, second],
+                vec![Address::ZERO, Address::ZERO],
+                Bytes::new(),
+            ),
+            Err(err(b"A1")),
+            "post-execution threshold miss -> the whole batch errors, no skip"
         );
     }
 
@@ -2917,6 +3202,11 @@
             assert_eq!(e.liquidity_epochs.getter(U256::ZERO).matrix_row_g1.get(), idecs(op["g1"].as_str().unwrap()), "op {i} g1");
             assert_eq!(e.insurance_fund.get(), us("insurance"), "op {i} insurance");
             assert_eq!(e.insurance_fund_sign.get(), bs("insuranceSign"), "op {i} insuranceSign");
+            // Slippage EMAs, bit-exact: liquidation pricing reads them and no other recorded
+            // field depends on them, so this is the only cross-language pin of the calcEMA
+            // wiring (including the same-block pair at the end of the sequence).
+            assert_eq!(e.avg_slippage_l.get(), us("avgSlippageL"), "op {i} avgSlippageL");
+            assert_eq!(e.avg_slippage_s.get(), us("avgSlippageS"), "op {i} avgSlippageS");
             // acting user's virtual position
             let p = e.user_virtual_trader_position.getter(user);
             assert_eq!(p.balance_stable.get(), us("uBalStable"), "op {i} uBalStable");
@@ -3282,7 +3572,7 @@
             // suite — not per-op success — is the assertion; this lets the randomized sequence mix
             // open/close/realizePnL/LP ops without hand-tuning every draw to succeed.
             let u = traders[((s >> 20) % 6) as usize];
-            match (s >> 33) % 10 {
+            match (s >> 33) % 11 {
                 0..=3 => {
                     // long: `size` is the STABLE input — ≥ minimumTradeSize(48e18); 50..99e18.
                     let size = U256::from(50u64 + (s >> 16) % 50) * wad;
@@ -3308,7 +3598,7 @@
                         lp_added = true;
                     }
                 }
-                _ => {
+                9 => {
                     if lp_added {
                         let (ls, la) = e.get_lp_liquidity_balance(lp).unwrap();
                         if ls > wad && la > U256::ZERO {
@@ -3316,7 +3606,19 @@
                         }
                     }
                 }
+                _ => {
+                    // auto-close (keeper-shaped): authorize with 1-wei thresholds on both sides,
+                    // then trigger. Tolerant like every op — a post-close A1 (zero realized delta)
+                    // or C1 reverts on-chain; the loop-tail latch reset stands in for that
+                    // rollback, and the surviving harness state is an ordinary closed position.
+                    let _ = e.enable_auto_close_for(u, U256::from(1u64), U256::from(1u64), U256::from(50_000u64), wad);
+                    let _ = e.auto_close_user_position_impl(addr(0xFE), u, Address::ZERO, Bytes::new());
+                }
             }
+            // A tolerated mid-body Err leaves the reentrancy latch set — on-chain the revert
+            // rolls the latch back with everything else. Mirror that rollback for the latch
+            // alone, so one failed op cannot vacuously R-block the rest of the sequence.
+            e.entered.set(false);
             check_financial_invariants(&e, &all, "fuzz");
         }
     }

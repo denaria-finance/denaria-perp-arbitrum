@@ -585,8 +585,9 @@ impl PerpEngine {
     }
 
     /// Public `autoCloseUserPosition` — Solidity `perpAutoClose.autoCloseUserPosition`.
-    /// A third party closes `user`'s position once their authorized PnL threshold is
-    /// met, collecting `autoCloseFee`.
+    /// A third party closes an authorized `user`'s position, collecting `autoCloseFee`;
+    /// the call stands only if the realized Vault collateral delta meets the user's
+    /// configured threshold (checked after the close, A1 otherwise).
     #[selector(name = "autoCloseUserPosition")]
     pub fn auto_close_user_position(
         &mut self,
@@ -613,8 +614,9 @@ impl PerpEngine {
     }
 
     /// Forwarded BATCH `autoCloseUserPosition` (keeper helper): trusted-forwarder-only, explicit
-    /// `caller` (the auto-close fee recipient). Best-effort — users that are not currently eligible
-    /// are skipped, not fatal; see `batch_auto_close_user_position_impl` for the atomicity policy.
+    /// `caller` (the auto-close fee recipient). Best-effort ONLY for users that never authorized
+    /// auto-close (skipped pre-mutation); any post-close threshold miss reverts the whole batch —
+    /// see `batch_auto_close_user_position_impl` for the atomicity policy.
     #[selector(name = "batchAutoCloseUserPositionFor")]
     pub fn batch_auto_close_user_position_for(
         &mut self,

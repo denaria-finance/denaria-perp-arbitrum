@@ -1917,8 +1917,9 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         perpPair.autoCloseUserPosition(bob, charlie, fakeReport);
     }
 
-    ///@dev Test the base autoClosing feature in loss.
-    function testAutoCloseUnauthorizedRevert() public {
+    ///@dev A threshold left unset on the direction the close actually realizes must refuse the
+    /// auto-close: profit realized with only lossTh set, then loss realized with only profitTh set.
+    function testAutoCloseWrongDirectionsRevert() public {
         oracle.setPrice(100 * oracleDecimals);
 
         address alice = makeAddr("alice");
@@ -1962,8 +1963,9 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         perpPair.autoCloseUserPosition(bob, charlie, fakeReport);
     }
 
-    ///@dev Test the base autoClosing feature in loss.
-    function testAutoCloseWrongDirectionsRevert() public {
+    ///@dev A user that never enabled auto-close cannot be closed by a third party — the one
+    /// eligibility check that stays BEFORE the close.
+    function testAutoCloseUnauthorizedRevert() public {
         oracle.setPrice(100 * oracleDecimals);
 
         address alice = makeAddr("alice");
@@ -1993,6 +1995,174 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         vm.expectRevert(bytes("A1"));
         vm.prank(charlie);
         perpPair.autoCloseUserPosition(bob, charlie, fakeReport);
+    }
+
+    // avgSlippageL/S are internal benchmarks with no getter; read them straight from storage.
+    // Slots come from `forge inspect PerpPair storage-layout` (avgSlippageL=29, avgSlippageS=30)
+    // and are pinned by the sanity assertion in testSameBlockUpdateFGDoesNotFreezeSlippageEMA:
+    // a trade in a fresh block must move the observed slot, so a layout shift cannot silently
+    // turn these reads into no-ops.
+    uint256 internal constant AVG_SLIPPAGE_L_SLOT = 29;
+    uint256 internal constant AVG_SLIPPAGE_S_SLOT = 30;
+
+    function _avgSlippageL() internal view returns (uint256) {
+        return uint256(vm.load(address(perpPair), bytes32(AVG_SLIPPAGE_L_SLOT)));
+    }
+
+    function _avgSlippageS() internal view returns (uint256) {
+        return uint256(vm.load(address(perpPair), bytes32(AVG_SLIPPAGE_S_SLOT)));
+    }
+
+    ///@dev Seeds a price-consistent pool at $100 and opens a long for `user`.
+    function _seedPoolAndOpenLong(address user, uint256 tradeSize) internal {
+        oracle.setPrice(100 * oracleDecimals);
+        address alice = makeAddr("alice");
+        vm.prank(alice);
+        perpPair.addLiquidity(1_000_000 * 1e18, 10_000 * 1e18, maxUserLiquidityFee, fakeReport);
+        uint256 liq = perpPair.globalLiquidityAsset();
+        vm.prank(user);
+        perpPair.trade(true, tradeSize, 1, liq, frontendAddress, 1, fakeReport);
+    }
+
+    ///@dev A trade in the SAME block as a funding update must still feed the slippage EMA, on
+    /// both legs: updateFG stamps lastOperationTimestamp, and the removed same-block gate used
+    /// to skip the EMA write — an attacker calling updateFG every block could freeze the
+    /// liquidation pricing benchmark while moving the pool.
+    function testSameBlockUpdateFGDoesNotFreezeSlippageEMA() public {
+        address bob = makeAddr("bob");
+        address charlie = makeAddr("charlie");
+        _seedPoolAndOpenLong(bob, 1000 * 1e18);
+
+        // Fresh block: this long must move avgSlippageL — this also pins the storage slots the
+        // helpers read (a wrong slot would stay zero here and fail loudly).
+        skip(1);
+        uint256 avgLBefore = _avgSlippageL();
+        uint256 liqAsset = perpPair.globalLiquidityAsset(); // hoisted: an inline read would consume the prank
+        vm.prank(charlie);
+        perpPair.trade(true, 1000 * 1e18, 1, liqAsset, frontendAddress, 1, fakeReport);
+        assertGt(_avgSlippageL(), 0, "slot sanity: long EMA must be observable");
+        assertTrue(_avgSlippageL() != avgLBefore, "fresh-block long must move the EMA");
+
+        // Same block, after an explicit keeper funding update: both legs must still update.
+        perpPair.updateFG(fakeReport);
+        assertEq(perpPair.lastOperationTimestamp(), block.timestamp, "funding stamped this block");
+        avgLBefore = _avgSlippageL();
+        uint256 avgSBefore = _avgSlippageS();
+        liqAsset = perpPair.globalLiquidityAsset();
+        vm.prank(bob);
+        perpPair.trade(true, 1000 * 1e18, 1, liqAsset, frontendAddress, 1, fakeReport);
+        assertTrue(_avgSlippageL() != avgLBefore, "same-block long EMA frozen");
+        uint256 liqStable = perpPair.globalLiquidityStable();
+        vm.prank(charlie);
+        perpPair.trade(false, 10 * 1e18, 1, liqStable, frontendAddress, 1, fakeReport);
+        assertTrue(_avgSlippageS() != avgSBefore, "same-block short EMA frozen");
+    }
+
+    ///@dev Auto-close must leave BOTH slippage EMAs exactly where they were: its internal
+    /// sell/buy-back feeds the EMA like any trade, and a keeper-timed forced close must not
+    /// prime the liquidation pricing benchmark.
+    function testAutoCloseDoesNotUpdateSlippageBenchmarks() public {
+        address bob = makeAddr("bob");
+        address charlie = makeAddr("charlie");
+        _seedPoolAndOpenLong(bob, 1000 * 1e18);
+
+        skip(1);
+        oracle.setPrice(110 * oracleDecimals);
+        uint256 avgLBefore = _avgSlippageL();
+        uint256 avgSBefore = _avgSlippageS();
+
+        vm.prank(bob);
+        perpPair.enableAutoClose(1, 0, 1e5, 1e10);
+        vm.prank(charlie);
+        perpPair.autoCloseUserPosition(bob, charlie, fakeReport);
+
+        (, uint256 balanceAsset,,,,,,) = perpPair.userVirtualTraderPosition(bob);
+        assertEq(balanceAsset, 0, "position closed (the sell leg really ran)");
+        assertEq(_avgSlippageL(), avgLBefore, "auto-close moved avgSlippageL");
+        assertEq(_avgSlippageS(), avgSBefore, "auto-close moved avgSlippageS");
+    }
+
+    ///@dev Eligibility binds on the SETTLED Vault-collateral delta, to the wei — not on the
+    /// pre-close PnL estimate. A dry run (state snapshot) learns the realized delta; the same
+    /// close must then pass with the threshold exactly at it, and revert — rolling everything
+    /// back — with the threshold one wei above it, even though the pre-close PnL still clears it.
+    function testAutoCloseThresholdUsesSettledCollateralDelta() public {
+        address bob = makeAddr("bob");
+        address charlie = makeAddr("charlie");
+        _seedPoolAndOpenLong(bob, 1000 * 1e18);
+
+        skip(1);
+        oracle.setPrice(110 * oracleDecimals);
+        uint256 collateralBefore = vault.userCollateral(bob);
+        (uint256 rawPnl, bool rawSign) = perpPair.calcPnL(bob, 110 * oracleDecimals);
+        assertTrue(rawSign && rawPnl > 0, "precondition: pre-close PnL is a profit");
+
+        // Dry run: learn the settled delta, then rewind.
+        uint256 snap = vm.snapshotState();
+        vm.prank(bob);
+        perpPair.enableAutoClose(1, 0, 1e5, 1e10);
+        vm.prank(charlie);
+        perpPair.autoCloseUserPosition(bob, charlie, fakeReport);
+        uint256 settled = vault.userCollateral(bob) - collateralBefore;
+        assertTrue(vm.revertToState(snap), "rewind");
+        assertGt(rawPnl, settled, "closing costs must separate raw PnL from the settled delta");
+
+        // Threshold exactly met -> executes.
+        snap = vm.snapshotState();
+        vm.prank(bob);
+        perpPair.enableAutoClose(settled, 0, 1e5, 1e10);
+        vm.prank(charlie);
+        perpPair.autoCloseUserPosition(bob, charlie, fakeReport);
+        assertEq(vault.userCollateral(bob) - collateralBefore, settled, "settled delta reproduced");
+        assertTrue(vm.revertToState(snap), "rewind");
+
+        // One wei over the settled delta -> the close executes, misses, and everything unwinds
+        // (the OLD pre-close gate would have admitted this: rawPnl > settled + 1).
+        vm.prank(bob);
+        perpPair.enableAutoClose(settled + 1, 0, 1e5, 1e10);
+        vm.expectRevert(bytes("A1"));
+        vm.prank(charlie);
+        perpPair.autoCloseUserPosition(bob, charlie, fakeReport);
+        assertEq(vault.userCollateral(bob), collateralBefore, "failed auto-close changed collateral");
+        (, uint256 balanceAsset,,,,,,) = perpPair.userVirtualTraderPosition(bob);
+        assertGt(balanceAsset, 0, "failed auto-close left the position closed");
+    }
+
+    ///@dev Fee-bearing divergence: a position whose pre-close PnL is a (tiny) profit settles as
+    /// a LOSS once the auto-close fee, trading fees and close-curve slippage land. The old gate
+    /// took the profit branch on the estimate and closed it; the realized-delta gate takes the
+    /// loss branch, finds lossTh disabled, and reverts — leaving the EMAs and the position alone.
+    function testAutoCloseFeeFlipsProfitToLossAndReverts() public {
+        address bob = makeAddr("bob");
+        address charlie = makeAddr("charlie");
+        _seedPoolAndOpenLong(bob, 1000 * 1e18);
+
+        skip(1);
+        // +0.2%: enough to clear the ~1.1e18 the open already cost (raw PnL turns positive),
+        // but inside the deterministic close-fee wedge below, so it settles as a loss.
+        uint256 price = 10_020 * oracleDecimals / 100;
+        oracle.setPrice(price);
+        (uint256 rawPnl, bool rawSign) = perpPair.calcPnL(bob, price);
+        assertTrue(rawSign && rawPnl > 0, "precondition: pre-close PnL is a profit");
+        // The close pays at least autoCloseFee + flatTradingFee + tradingFee on the ~1000e18
+        // buy-back notional (slippage only widens the wedge): a raw profit inside the wedge
+        // must settle as a loss.
+        (,, uint256 autoCloseFee_,,,,,,,,) = perpPair.ReadFees();
+        uint256 feeWedge = autoCloseFee_ + flatTradingFee + (1000 * 1e18) * tradingFee / tradingFeeDecimals;
+        assertGt(feeWedge, rawPnl, "precondition: the deterministic close fees eat the raw profit");
+
+        uint256 collateralBefore = vault.userCollateral(bob);
+        uint256 avgLBefore = _avgSlippageL();
+        uint256 avgSBefore = _avgSlippageS();
+        vm.prank(bob);
+        perpPair.enableAutoClose(1, 0, 1e5, 1e10);
+        vm.expectRevert(bytes("A1"));
+        vm.prank(charlie);
+        perpPair.autoCloseUserPosition(bob, charlie, fakeReport);
+
+        assertEq(vault.userCollateral(bob), collateralBefore, "failed auto-close changed collateral");
+        assertEq(_avgSlippageL(), avgLBefore, "failed auto-close moved avgSlippageL");
+        assertEq(_avgSlippageS(), avgSBefore, "failed auto-close moved avgSlippageS");
     }
 
     ///@dev Test the setter functions.

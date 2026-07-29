@@ -5,6 +5,16 @@ use super::*;
 /// resource consumption to a predictable maximum (mirrors `MAX_LIQUIDATION_BATCH`).
 pub(crate) const MAX_AUTOCLOSE_BATCH: usize = 100;
 
+/// Typed per-user auto-close outcome. `IneligibleBeforeExecution` is returned ONLY from checks
+/// that run before any state mutation, so the batch can skip that user with nothing to roll
+/// back. Every failure after execution starts is an `Err` and must revert the whole call —
+/// the batch must never classify errors by comparing revert bytes.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum AutoCloseOutcome {
+    Executed,
+    IneligibleBeforeExecution,
+}
+
 #[allow(dead_code)]
 impl PerpEngine {
     /// Shared `enableAutoClose` body (EOA + forwarded) parameterized by the position
@@ -70,49 +80,53 @@ impl PerpEngine {
         #[cfg(feature = "stub_boundary")]
         let price = U256::from(300_000_000_000u64);
 
-        self.auto_close_with_price(caller, user, frontend_address, price)?;
+        match self.auto_close_with_price(caller, user, frontend_address, price)? {
+            AutoCloseOutcome::Executed => {}
+            // Single-user external ABI: not-authorized surfaces as the same A1 the Solidity
+            // reference reverts with.
+            AutoCloseOutcome::IneligibleBeforeExecution => return Err(err(b"A1")),
+        }
         self.entered.set(false);
         Ok(())
     }
 
     /// Guard-free per-user auto-close body, parameterized by the already-read `price`. Shared by
     /// the single (`auto_close_user_position_impl`) and batch (`batch_auto_close_user_position_impl`)
-    /// paths so the batch pays the reentrancy guard + report verify + oracle read ONCE. Returns A1
-    /// for an INELIGIBLE user (not authorized / threshold not met) so the batch can skip it; any
-    /// other Err is a hard failure that must propagate.
+    /// paths so the batch pays the reentrancy guard + report verify + oracle read ONCE.
+    ///
+    /// Eligibility is decided AFTER the close, from the collateral delta the close actually
+    /// produced in the Vault: a pre-close PnL estimate diverges from the realized delta whenever
+    /// fees or the close curves move the outcome across a threshold. The only pre-execution check
+    /// is authorization, surfaced as the typed `IneligibleBeforeExecution` (nothing written yet,
+    /// so the batch may skip it). A realized delta that misses both thresholds is a hard A1 `Err`
+    /// AFTER mutation — it must revert the entire transaction, batch included.
     pub(crate) fn auto_close_with_price(
         &mut self,
         caller: Address,
         user: Address,
         frontend_address: Address,
         price: U256,
-    ) -> Result<(), Vec<u8>> {
+    ) -> Result<AutoCloseOutcome, Vec<u8>> {
         if !self.auto_close_users_data.getter(user).authorized.get() {
-            return Err(err(b"A1"));
+            return Ok(AutoCloseOutcome::IneligibleBeforeExecution);
         }
 
-        let (user_pnl, user_pnl_sign) = self.calc_pnl_user(user, price)?;
-
-        let collateral: U256;
+        let collateral_before: U256;
         #[cfg(not(feature = "stub_boundary"))]
         {
             let vault = IVault::new(self.vault.get());
-            collateral = vault.user_collateral(self.vm(), Call::new(), user)?;
+            collateral_before = vault.user_collateral(self.vm(), Call::new(), user)?;
         }
         #[cfg(feature = "stub_boundary")]
         {
-            collateral = U256::from(1_000u64) * U256::from(WAD_U64);
+            collateral_before = U256::from(1_000u64) * U256::from(WAD_U64);
         }
 
+        // Capture the whole config before the mode-1 clear below zeroes it.
         let profit_th = self.auto_close_users_data.getter(user).profit_th.get();
         let loss_th = self.auto_close_users_data.getter(user).loss_th.get();
-        if user_pnl_sign {
-            if !(profit_th != U256::ZERO && user_pnl >= profit_th) {
-                return Err(err(b"A1"));
-            }
-        } else if !(loss_th != U256::ZERO && user_pnl >= loss_th && user_pnl <= collateral) {
-            return Err(err(b"A1"));
-        }
+        let max_slippage = self.auto_close_users_data.getter(user).max_slippage.get();
+        let max_liq_fee = self.auto_close_users_data.getter(user).max_liq_fee.get();
 
         let auto_close_fee = self.auto_close_fee.get();
         {
@@ -126,36 +140,71 @@ impl PerpEngine {
             cp.balance_stable.set(bs + auto_close_fee);
         }
 
-        let max_slippage = self.auto_close_users_data.getter(user).max_slippage.get();
-        let max_liq_fee = self.auto_close_users_data.getter(user).max_liq_fee.get();
         // Log ToggledAutoClose(mode 1 = third-party auto-close) and clear BEFORE the shared close
         // body: that body clears too (mode 0), and running it first would emit mode 0 and flip
         // `authorized` off, suppressing this mode-1 log. The close params are already captured above.
         self.clear_auto_close_data(user, U256::from(1u64));
+        // The close's buy-back feeds the slippage EMA like any trade; restore it so a keeper-timed
+        // auto-close cannot prime the liquidation pricing benchmark.
+        let avg_slippage_l_before = self.avg_slippage_l.get();
+        let avg_slippage_s_before = self.avg_slippage_s.get();
         // Force the C1 self-close bad-debt guard on auto-close regardless of caller: a distinct
         // auto-close caller must not be able to close a bad-debt position (that would drain the
         // insurance fund). The auto-close fee is still credited to the distinct `caller` above.
-        let (cpnl, cpnl_sign) =
-            self.close_and_withdraw_inner(max_slippage, max_liq_fee, frontend_address, user, price, collateral, true)?;
+        let (cpnl, cpnl_sign) = self.close_and_withdraw_inner(
+            max_slippage,
+            max_liq_fee,
+            frontend_address,
+            user,
+            price,
+            collateral_before,
+            true,
+        )?;
+        self.avg_slippage_l.set(avg_slippage_l_before);
+        self.avg_slippage_s.set(avg_slippage_s_before);
 
+        let collateral_after: U256;
         #[cfg(not(feature = "stub_boundary"))]
         {
             let vault = IVault::new(self.vault.get());
             let cfg = Call::new_mutating(self);
             vault.add_pnl_to_collateral(self.vm(), cfg, user, cpnl, cpnl_sign)?;
+            // Measure, don't model: re-read the Vault so the delta reflects whatever the write
+            // actually did (its loss branch clamps at zero).
+            collateral_after = vault.user_collateral(self.vm(), Call::new(), user)?;
         }
         #[cfg(feature = "stub_boundary")]
-        let _ = (cpnl, cpnl_sign);
+        {
+            // Stubbed boundary: mirror Vault.addPnlToCollateral exactly (losses clamp at zero).
+            // The clamp branch is defensive: the C1 guard forced on this path rejects any close
+            // whose loss reaches the collateral before the write, so no auto-close can reach it.
+            collateral_after = if cpnl_sign {
+                collateral_before + cpnl
+            } else if collateral_before >= cpnl {
+                collateral_before - cpnl
+            } else {
+                U256::ZERO
+            };
+        }
 
-        Ok(())
+        if collateral_after >= collateral_before {
+            if !(profit_th != U256::ZERO && collateral_after - collateral_before >= profit_th) {
+                return Err(err(b"A1"));
+            }
+        } else if !(loss_th != U256::ZERO && collateral_before - collateral_after >= loss_th) {
+            return Err(err(b"A1"));
+        }
+
+        Ok(AutoCloseOutcome::Executed)
     }
 
     /// Batch `autoCloseUserPosition` (forwarded keeper helper): verify the report + read the oracle
-    /// price ONCE, then run the per-user auto-close body for each target. BEST-EFFORT — a user that
-    /// is not currently eligible (A1: not authorized / threshold not met) is SKIPPED, not fatal, so
-    /// a keeper can sweep every eligible position in one call. Any OTHER per-user failure reverts the
-    /// whole batch (all-or-nothing on real errors; a skip leaves no partial state — the A1 returns
-    /// precede any mutation). Bounded by MAX_AUTOCLOSE_BATCH; duplicate targets are rejected (BA3).
+    /// price ONCE, then run the per-user auto-close body for each target. Best-effort ONLY for the
+    /// typed pre-mutation outcome: a user that never authorized auto-close is SKIPPED (nothing was
+    /// written for it). EVERY other per-user failure — including a realized collateral delta that
+    /// misses the user's thresholds, discovered after that close executed — is a hard error that
+    /// reverts the whole batch, so no ineligible close can stand. Bounded by MAX_AUTOCLOSE_BATCH;
+    /// duplicate targets are rejected (BA3).
     pub(crate) fn batch_auto_close_user_position_impl(
         &mut self,
         caller: Address,
@@ -198,12 +247,11 @@ impl PerpEngine {
         #[cfg(feature = "stub_boundary")]
         let price = U256::from(300_000_000_000u64);
 
-        let ineligible = err(b"A1");
         for (user, frontend) in users.iter().zip(frontend_addresses.iter()) {
-            match self.auto_close_with_price(caller, *user, *frontend, price) {
-                Ok(()) => {}
-                Err(e) if e == ineligible => continue, // not eligible at this price -> skip
-                Err(e) => return Err(e),               // hard failure -> revert the whole batch
+            match self.auto_close_with_price(caller, *user, *frontend, price)? {
+                AutoCloseOutcome::Executed => {}
+                // Proven pre-mutation (first check in the body) -> nothing to roll back, skip.
+                AutoCloseOutcome::IneligibleBeforeExecution => continue,
             }
         }
 

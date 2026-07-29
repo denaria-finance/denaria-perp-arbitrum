@@ -45,6 +45,11 @@ abstract contract PerpAutoClose is PerpTrade {
     }
 
     ///@notice Function to close the position of another user. They must have enabled the autoTrade feature and established the thresholds.
+    ///@dev Eligibility is decided AFTER the close, from the collateral delta the close actually
+    /// produced in the Vault: a pre-close PnL estimate diverges from the realized delta whenever
+    /// fees or the close curves move the outcome across a threshold. Before the close the only
+    /// check is authorization. The whole call reverts when the realized delta misses both
+    /// thresholds, so an ineligible close cannot stand.
     ///@param user user which position is to be closed.
     ///@param frontendAddress address that will receive the frontend part of the fees.
     ///@param unverifiedReport Chainlink price report.
@@ -58,23 +63,29 @@ abstract contract PerpAutoClose is PerpTrade {
     {
         IOracleMiddleware(oracle).verifyReportIfNecessary(unverifiedReport);
         require(autoCloseUsersData[user].authorized, "A1");
-        (uint256 userPnL, bool userPnLSign) = calcPnL(user, getPrice());
-        if (userPnLSign) {
-            require(autoCloseUsersData[user].profitTh != 0 && userPnL >= autoCloseUsersData[user].profitTh, "A1");
-        } else {
-            require(
-                autoCloseUsersData[user].lossTh != 0 && userPnL >= autoCloseUsersData[user].lossTh
-                    && userPnL <= getCollateral(user),
-                "A1"
-            );
-        }
-        userVirtualTraderPosition[user].debtStable += autoCloseFee;
-        userVirtualTraderPosition[_msgSender()].balanceStable += autoCloseFee;
+        uint256 collateralBefore = getCollateral(user);
+        // Capture the config before the mode-1 clear below zeroes it.
+        uint256 acProfitTh = autoCloseUsersData[user].profitTh;
+        uint256 acLossTh = autoCloseUsersData[user].lossTh;
         uint256 acMaxSlippage = autoCloseUsersData[user].maxSlippage;
         uint256 acMaxLiqFee = autoCloseUsersData[user].maxLiqFee;
+        userVirtualTraderPosition[user].debtStable += autoCloseFee;
+        userVirtualTraderPosition[_msgSender()].balanceStable += autoCloseFee;
         // Log ToggledAutoClose(mode 1 = third-party auto-close) and clear BEFORE the shared close
         // body: its own clear (mode 0) runs first otherwise and suppresses this mode-1 log.
         _disableAutoClose(user, 1);
+        // The close's buy-back feeds the slippage EMA like any trade; restore it so a keeper-timed
+        // auto-close cannot prime the liquidation pricing benchmark.
+        uint256 avgSlippageLBefore = avgSlippageL;
+        uint256 avgSlippageSBefore = avgSlippageS;
         _closeAndWithdraw(acMaxSlippage, acMaxLiqFee, frontendAddress, user, true);
+        avgSlippageL = avgSlippageLBefore;
+        avgSlippageS = avgSlippageSBefore;
+        uint256 collateralAfter = getCollateral(user);
+        if (collateralAfter >= collateralBefore) {
+            require(acProfitTh != 0 && collateralAfter - collateralBefore >= acProfitTh, "A1");
+        } else {
+            require(acLossTh != 0 && collateralBefore - collateralAfter >= acLossTh, "A1");
+        }
     }
 }

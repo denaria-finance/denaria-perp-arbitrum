@@ -386,15 +386,16 @@ abstract contract PerpTrade is PerpLiquidity {
                     ) - dx0;
                     dy0 += size - tradingFeeAmount;
                 }
-                if (_lastOperationTimestamp != block.timestamp) {
-                    avgSlippageL = UtilMath.calcEMA(
-                        (size - tradingFeeAmount) * _oracleDecimals / tradeReturn,
-                        spotPrice,
-                        _oracleDecimals,
-                        avgSlippageL,
-                        emaParam
-                    );
-                }
+                // Every executed trade feeds the slippage EMA — including a second trade in the
+                // same block. The former same-block skip let an attacker split a move across one
+                // block to leave the liquidation benchmark stale.
+                avgSlippageL = UtilMath.calcEMA(
+                    (size - tradingFeeAmount) * _oracleDecimals / tradeReturn,
+                    spotPrice,
+                    _oracleDecimals,
+                    avgSlippageL,
+                    emaParam
+                );
                 dx0 += tradeReturn;
             } else {
                 //If the trade is so small that it cannot cover its own fees then don't trade at all and only take fee.
@@ -425,11 +426,11 @@ abstract contract PerpTrade is PerpLiquidity {
                 curveParameters.shortCurveParameterB,
                 1e8
             );
-            if (_lastOperationTimestamp != block.timestamp) {
-                avgSlippageS = UtilMath.calcEMA(
-                    shortTotalTradeReturn * _oracleDecimals / size, spotPrice, _oracleDecimals, avgSlippageS, emaParam
-                );
-            }
+            // Unconditional for the same reason as the long leg: same-block trades must not skip
+            // the EMA.
+            avgSlippageS = UtilMath.calcEMA(
+                shortTotalTradeReturn * _oracleDecimals / size, spotPrice, _oracleDecimals, avgSlippageS, emaParam
+            );
             dx0 += size;
 
             tradingFeeAmount = (shortTotalTradeReturn * tradingFee) / decimals.tradingFeeDecimals + flatTradingFee;

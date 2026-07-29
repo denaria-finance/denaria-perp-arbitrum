@@ -21,11 +21,32 @@ contract MockOracleLq {
 }
 
 contract MockVaultLq {
-    function userCollateral(address) external pure returns (uint256) {
-        return 1000e18;
+    /// Stateful collateral, defaulting to the stub constant 1000e18 for every untouched account:
+    /// auto-close eligibility is decided from the collateral delta the close actually produced, so
+    /// a no-op vault would make every auto-close op revert A1. Writes mirror the real
+    /// `Vault.addPnlToCollateral` (losses clamp at zero) exactly like the engine's stub_boundary
+    /// arm; the ops use distinct users, so every recorded engine value still sees 1000e18.
+    mapping(address => uint256) internal collateral;
+    mapping(address => bool) internal touched;
+
+    function userCollateral(address user) external view returns (uint256) {
+        return touched[user] ? collateral[user] : 1000e18;
     }
-    function addPnlToCollateral(address, uint256, bool) external { }
-    function removeAllCollateralForUser(address) external { }
+
+    function addPnlToCollateral(address user, uint256 pnl, bool pnlSign) external {
+        uint256 current = touched[user] ? collateral[user] : 1000e18;
+        touched[user] = true;
+        if (pnlSign) {
+            collateral[user] = current + pnl;
+        } else {
+            collateral[user] = current >= pnl ? current - pnl : 0;
+        }
+    }
+
+    function removeAllCollateralForUser(address user) external {
+        touched[user] = true;
+        collateral[user] = 0;
+    }
 }
 
 contract PerpLiquidationRef is PerpPair {

@@ -129,8 +129,6 @@ impl PerpEngine {
         let oracle_dec = U256::from(self.oracle_decimals.get());
         let fee_frontend = U256::from(self.fee_frontend.get());
         let last_op_ts = U256::from(self.last_operation_timestamp.get());
-        let block_ts_u64 = self.vm().block_timestamp();
-        let block_ts = U256::from(block_ts_u64);
 
         let mut initial_guess = initial_guess;
         let mut trading_fee_amount: U256;
@@ -179,16 +177,17 @@ impl PerpEngine {
                         - dx0;
                     self.dy0.set(dy0 + size - trading_fee_amount);
                 }
-                if last_op_ts != block_ts {
-                    let avg = self.avg_slippage_l.get();
-                    self.avg_slippage_l.set(cm::calc_ema(
-                        cm::md(size - trading_fee_amount, oracle_dec, trade_return),
-                        spot_price,
-                        oracle_dec,
-                        avg,
-                        ema_param,
-                    ));
-                }
+                // Every executed trade feeds the slippage EMA — including a second trade in the
+                // same block. The former same-block skip let an attacker split a move across one
+                // block to leave the liquidation benchmark stale.
+                let avg = self.avg_slippage_l.get();
+                self.avg_slippage_l.set(cm::calc_ema(
+                    cm::md(size - trading_fee_amount, oracle_dec, trade_return),
+                    spot_price,
+                    oracle_dec,
+                    avg,
+                    ema_param,
+                ));
                 self.dx0.set(self.dx0.get() + trade_return);
             } else {
                 trade_return = zero;
@@ -223,16 +222,16 @@ impl PerpEngine {
                 short_b,
                 U256::from(100_000_000u64),
             )?;
-            if last_op_ts != block_ts {
-                let avg = self.avg_slippage_s.get();
-                self.avg_slippage_s.set(cm::calc_ema(
-                    cm::md(short_total_trade_return, oracle_dec, size),
-                    spot_price,
-                    oracle_dec,
-                    avg,
-                    ema_param,
-                ));
-            }
+            // Unconditional for the same reason as the long leg: same-block trades must not skip
+            // the EMA.
+            let avg = self.avg_slippage_s.get();
+            self.avg_slippage_s.set(cm::calc_ema(
+                cm::md(short_total_trade_return, oracle_dec, size),
+                spot_price,
+                oracle_dec,
+                avg,
+                ema_param,
+            ));
             self.dx0.set(dx0 + size);
 
             trading_fee_amount = cm::md(short_total_trade_return, trading_fee, trading_fee_decimals) + flat_trading_fee;
