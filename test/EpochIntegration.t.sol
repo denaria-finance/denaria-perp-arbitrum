@@ -204,4 +204,56 @@ contract EpochIntegrationTest is PerpPairTest {
         assertLt(_diffAbs(stableAfter, stableBefore), 1e14, "realizePnL materially changed the stable balance");
         assertLt(_diffAbs(assetAfter, assetBefore), 1e10, "realizePnL materially changed the asset balance");
     }
+
+    ///@dev SOLVENCY ACROSS EPOCHS — the property every other epoch test here stops short of. Each
+    /// LP reconstructs its balance against its OWN accounting epoch's matrix, so with three LPs
+    /// pinned to three different epochs there are three independent reconstructions reading one
+    /// shared pool. `getLpLiquidityBalance` clamps each LP individually to the globals, which says
+    /// nothing about their SUM: if a cross-epoch reconstruction over-credits, the LPs collectively
+    /// hold claims the pool cannot honour and the last one out cannot be paid. Nothing pinned that
+    /// sum — the existing tests roll a single epoch and only check ids and one LP's drift.
+    function testLpClaimsAcrossThreeEpochsNeverExceedThePool() public {
+        // Roll #1: alice stays in epoch 0, bob lands in the fresh epoch 1.
+        _prepareIllConditionedPool();
+        uint256 bobStable = 20_000 * 1e18;
+        vm.prank(bobLp);
+        perpPair.addLiquidity(bobStable, (bobStable * oracleDecimals) / BTC_PRICE, maxUserLiquidityFee, fakeReport);
+        assertEq(_harness().exposedCurrentLiquidityEpoch(), 1, "first roll");
+
+        // Churn epoch 1 down the same way, then roll #2 with a third LP.
+        int256 minHealthyDeterminant = Q80_SCALE / int256(1e12);
+        for (uint256 i; i < 200 && _harness().exposedLiquidityEpochDeterminant(1) > minHealthyDeterminant; i++) {
+            for (uint256 j; j < 5; j++) {
+                _attemptFractionalLong(1000);
+                _attemptFractionalShort(1000);
+            }
+        }
+        assertLe(_harness().exposedLiquidityEpochDeterminant(1), minHealthyDeterminant, "epoch 1 did not decay");
+
+        // Reuse a setUp-funded address: a fresh one holds no vault collateral, and a fully
+        // debt-financed LP add then prices to a zero-magnitude LOSS which trips the C1 bad-debt
+        // guard (`0 < 0` is false). Minting alone is not enough either — `addCollateral` needs the
+        // ERC20 approval that setUp grants only to the named users.
+        address carolLp = charlieCaller;
+        uint256 carolStable = 15_000 * 1e18;
+        vm.prank(carolLp);
+        perpPair.addLiquidity(carolStable, (carolStable * oracleDecimals) / BTC_PRICE, maxUserLiquidityFee, fakeReport);
+        assertEq(_harness().exposedCurrentLiquidityEpoch(), 2, "second roll");
+
+        // Three LPs, three distinct epochs — the state the invariant has to hold over.
+        assertEq(perpPair.getLpLiquidityEpoch(aliceLp), 0, "alice pinned to epoch 0");
+        assertEq(perpPair.getLpLiquidityEpoch(bobLp), 1, "bob pinned to epoch 1");
+        assertEq(perpPair.getLpLiquidityEpoch(carolLp), 2, "carol pinned to epoch 2");
+
+        (uint256 aS, uint256 aA) = perpPair.getLpLiquidityBalance(aliceLp);
+        (uint256 bS, uint256 bA) = perpPair.getLpLiquidityBalance(bobLp);
+        (uint256 cS, uint256 cA) = perpPair.getLpLiquidityBalance(carolLp);
+
+        assertLe(aS + bS + cS, perpPair.globalLiquidityStable(), "LP stable claims exceed the pool");
+        assertLe(aA + bA + cA, perpPair.globalLiquidityAsset(), "LP asset claims exceed the pool");
+
+        // And the pool is not merely large enough by accident: the incumbent still holds a real
+        // claim, so the bound above is being tested against a live multi-LP distribution.
+        assertGt(aS, 0, "incumbent LP lost its stable claim entirely");
+    }
 }

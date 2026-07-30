@@ -60,6 +60,14 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
     event ToggledAutoClose(
         address indexed user, uint256 profitTh, uint256 lossTh, uint256 maxSlippage, uint256 maxLiqFee
     );
+    event ParametersUpdated(
+        address _oracle,
+        uint256 _feeFrontend,
+        address _feeProtocolAddr,
+        uint256 _insuranceFundCap,
+        uint256 _maxLeverage,
+        uint256 _liquidationDiscount
+    );
 
     function setUp() public {
         uint256 numStableCoins = 2;
@@ -2165,18 +2173,102 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
         assertEq(_avgSlippageS(), avgSBefore, "failed auto-close moved avgSlippageS");
     }
 
+    ///@dev A third party must not be able to auto-close a position that is already in bad debt.
+    /// The shared close body is entered with the self-close flag SET on this path precisely so the
+    /// C1 guard applies to the keeper too: closing into bad debt settles the shortfall against the
+    /// insurance fund, and a keeper must not get to choose when that happens. The refusal must also
+    /// unwind the fee the keeper was credited before the close ran — the credit is applied first,
+    /// so only the revert takes it back. C1 fires inside the close, ahead of the post-close
+    /// threshold gate, so the failure is C1 and not A1.
+    function testAutoCloseCannotCloseAPositionInBadDebt() public {
+        address bob = makeAddr("bob");
+        address charlie = makeAddr("charlie");
+
+        // Strip bob to a thin margin so a moderate move puts him under water. The price has to be
+        // live first: the withdrawal values the (empty) position through it.
+        oracle.setPrice(100 * oracleDecimals);
+        vm.prank(bob);
+        vault.removeAllCollateral(fakeReport);
+        uint256[] memory collateral = new uint256[](2);
+        collateral[0] = 100 * 1e6; // 100e18 normalized
+        vm.prank(bob);
+        vault.addCollateral(collateral);
+
+        _seedPoolAndOpenLong(bob, 1000 * 1e18); // ~10x against that margin
+
+        oracle.setPrice(80 * oracleDecimals);
+        (uint256 pnl, bool pnlSign) = perpPair.calcPnL(bob, 80 * oracleDecimals);
+        assertTrue(!pnlSign, "precondition: the position is at a loss");
+        assertGt(pnl, perpPair.getCollateral(bob), "precondition: the loss exceeds the collateral");
+
+        vm.prank(bob);
+        perpPair.enableAutoClose(0, 1, 1e5, 1e10); // loss threshold met many times over
+
+        (,, uint256 autoCloseFee_,,,,,,,,) = perpPair.ReadFees();
+        assertGt(autoCloseFee_, 0, "the keeper fee is live, so its unwind is observable");
+
+        vm.expectRevert(bytes("C1"));
+        vm.prank(charlie);
+        perpPair.autoCloseUserPosition(bob, charlie, fakeReport);
+
+        (uint256 keeperStable,,,,,,,) = perpPair.userVirtualTraderPosition(charlie);
+        assertEq(keeperStable, 0, "the keeper's fee credit is unwound with the revert");
+        (, uint256 balanceAsset,,,,,,) = perpPair.userVirtualTraderPosition(bob);
+        assertGt(balanceAsset, 0, "the refused close leaves the position standing");
+        (bool stillAuthorized,,,,) = perpPair.autoCloseUsersData(bob);
+        assertTrue(stillAuthorized, "the authorization survives the refused close");
+    }
+
+    ///@dev Closing your own position must retire any auto-close order standing against it. The
+    /// order is a standing permission for a third party; leaving it behind would let a keeper act
+    /// on a position that no longer exists, and it would re-arm silently the moment the user opened
+    /// a new one. The clear is logged with mode 0 — a user-initiated close, not a keeper's.
+    function testCloseAndWithdrawClearsAStandingAutoCloseOrder() public {
+        address bob = makeAddr("bob");
+        _seedPoolAndOpenLong(bob, 1000 * 1e18);
+
+        vm.prank(bob);
+        perpPair.enableAutoClose(50e18, 50e18, 1e5, 1e10);
+        (bool authorized,,,,) = perpPair.autoCloseUsersData(bob);
+        assertTrue(authorized, "precondition: the order stands");
+
+        skip(1);
+        vm.expectEmit(true, false, false, true, address(perpPair));
+        emit ToggledAutoClose(bob, 0, 0, 0, 0); // mode 0 = user-initiated
+        vm.prank(bob);
+        perpPair.closeAndWithdraw(1e5, 1e10, frontendAddress, fakeReport);
+
+        (authorized,,,,) = perpPair.autoCloseUsersData(bob);
+        assertFalse(authorized, "the order is retired with the position");
+    }
+
     ///@dev Test the setter functions.
+    ///@dev The unguarded setter must actually STORE what it is given. Five of the eight fields have
+    /// public getters and are read back here; `feeProtocolAddr`, `maxLeverage` and
+    /// `slipLiquidationTh` are internal with no getter, so they are pinned through the
+    /// `ParametersUpdated` event, which carries the first two. Without this the call was only a
+    /// smoke test — it could have stored nothing, or stored the arguments in the wrong order.
     function testSetParameters() public {
+        address newFeeAddr = makeAddr("newFee");
+        uint32 newFrontendFee = 5 * feeFractionDecimals / 100;
+        uint256 newInsuranceCap = uint32(1e2) * 12_345;
+        uint32 newDiscount = uint32(1e6) / 800;
+
+        vm.expectEmit(false, false, false, true, address(perpPair));
+        emit ParametersUpdated(address(oracle), newFrontendFee, newFeeAddr, newInsuranceCap, 12, newDiscount);
         perpPair.setUnguardedParameters(
-            address(oracle),
-            5 * feeFractionDecimals / 100,
-            makeAddr("newFee"),
-            uint32(1e2) * 12_345,
-            12,
-            uint32(1e6) / 800,
-            10,
-            3
+            address(oracle), newFrontendFee, newFeeAddr, newInsuranceCap, 12, newDiscount, 10, 3
         );
+
+        (, address oracle_,,, uint256 feeFrontend_,, uint256 insuranceFundCap_,,,,,,,,,) = perpPair.ReadParameters();
+        assertEq(oracle_, address(oracle), "oracle stored");
+        assertEq(feeFrontend_, newFrontendFee, "frontend fee stored");
+        assertEq(insuranceFundCap_, newInsuranceCap, "insurance cap stored");
+
+        (,,,,,, uint256 liquidationDiscount_,,,,) = perpPair.ReadFees();
+        assertEq(liquidationDiscount_, newDiscount, "liquidation discount stored");
+
+        assertEq(perpPair.maxLpLeverage(), 10, "max LP leverage stored");
     }
 
     function testLeverageBypass() public {
@@ -2941,6 +3033,14 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
 
         console.log(totalPnl, "total");
 
+        // The property this test is named for: the system is CLOSED. Every unit a trader
+        // gains is a unit the LPs, the protocol, the frontend or the insurance fund lose, so
+        // the signed sum over all seven participants must vanish. Measured residual for this
+        // fixed scenario is 212 wei against positions in the 1e22 range — pure fixed-point
+        // rounding. The bound below leaves ten orders of magnitude of headroom over that and
+        // still catches any real leak, which would land at fee or position scale (1e17+).
+        assertLt(totalPnl, 1e12, "value leaked: participant PnL no longer sums to zero");
+
         console.log(alicePnL, alicePnLSign);
         console.log(bobPnL, bobPnLSign);
         console.log(charliePnL, charliePnLSign);
@@ -2964,97 +3064,6 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
             perpPair.userVirtualTraderPosition(charlie);
         (uint256 dStableBalance, uint256 dAssetBalance, uint256 dStableDebt, uint256 dAssetDebt,,,,) =
             perpPair.userVirtualTraderPosition(david);
-
-        /*
-
-
-
-
-        ( alicePnL,  alicePnLSign) = UtilMath.calcPnLNoExit(alice, price, address(perpPair));
-        ( bobPnL,  bobPnLSign) = UtilMath.calcPnLNoExit(bob, price, address(perpPair));
-        ( charliePnL,  charliePnLSign) = UtilMath.calcPnLNoExit(charlie, price, address(perpPair));
-        ( davidPnL,  davidPnLSign) = UtilMath.calcPnLNoExit(david, price, address(perpPair));
-
-        ( totalPnl,  totalPnlSign) = UtilMath.signedSum(alicePnL, alicePnLSign, bobPnL, bobPnLSign);
-        (totalPnl, totalPnlSign) = UtilMath.signedSum(totalPnl, totalPnlSign, charliePnL, charliePnLSign);
-        (totalPnl, totalPnlSign) = UtilMath.signedSum(totalPnl, totalPnlSign, davidPnL, davidPnLSign);
-
-        ( pnl,  pnlSign) = perpPair.calcPnL(feeProtocolAddr, SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()));
-        //console.log("exposition");
-        console.log(pnl, pnlSign, "protocol");
-        (totalPnl, totalPnlSign) = UtilMath.signedSum(pnl, pnlSign, totalPnl, totalPnlSign);
-
-        (pnl, pnlSign) = perpPair.calcPnL(frontendAddress, SafeCast.toUint256(IOracleMiddleware(perpPair.oracle()).getPrice()));
-        //console.log("exposition");
-        console.log(pnl, pnlSign, "frontend");
-        (totalPnl, totalPnlSign) = UtilMath.signedSum(pnl, pnlSign, totalPnl, totalPnlSign);
-
-         insFund = perpPair.insuranceFund();
-         insFundSign = perpPair.insuranceFundSign();
-        console.log(insFund, insFundSign, "insFund");
-        (totalPnl, totalPnlSign) = UtilMath.signedSum(insFund, insFundSign, totalPnl, totalPnlSign);
-
-        console.log(totalPnl, "total");
-
-        console.log(alicePnL, alicePnLSign);
-        console.log(bobPnL, bobPnLSign);
-        console.log(charliePnL, charliePnLSign);
-        console.log(davidPnL, davidPnLSign);
-
-
-
-        (,,,, uint256 fundingFeeAlice, bool fundingFeeSignAlice,,) = perpPair.userVirtualTraderPosition(alice);
-        (,,,, uint256 fundingFeeBob, bool fundingFeeSignBob,,) = perpPair.userVirtualTraderPosition(bob);
-        (,,,, uint256 fundingFeeCharlie, bool fundingFeeSignCharlie,,) = perpPair.userVirtualTraderPosition(charlie);
-        (,,,, uint256 fundingFeeDavid, bool fundingFeeSignDavid,,) = perpPair.userVirtualTraderPosition(david);
-
-        console.log(fundingFeeAlice, fundingFeeSignAlice);
-        console.log(fundingFeeBob, fundingFeeSignBob);
-        console.log(fundingFeeCharlie, fundingFeeSignCharlie);
-        console.log(fundingFeeDavid, fundingFeeSignDavid);
-
-        /*
-        // === Step 7: gather positions ===
-        (
-            uint256 bobBalStable, uint256 bobBalAsset,
-            uint256 bobDebtStable, uint256 bobDebtAsset, , , ,
-        ) = perpPair.userVirtualTraderPosition(bob);
-
-        (
-            uint256 davidBalStable, uint256 davidBalAsset,
-            uint256 davidDebtStable, uint256 davidDebtAsset, , , ,
-        ) = perpPair.userVirtualTraderPosition(david);
-
-        (uint256 charlieBalStable, uint256 charlieBalAsset) = perpPair.getLpLiquidityBalance(charlie);
-
-        // === Step 8: Compute approximate exposures / PnL ===
-        // (placeholder math — you’ll plug in your own tolerance-based asserts)
-        uint256 bobExposure = bobDebtStable + bobDebtAsset;
-        uint256 davidExposure = davidDebtStable + davidDebtAsset;
-
-        uint256 charlieExposure = charlieBalStable + charlieBalAsset;
-        uint256 bobPnl = bobBalStable + bobBalAsset; // simplified placeholder
-        uint256 davidPnl = davidBalStable + davidBalAsset;
-        uint256 charliePnl = charlieBalStable + charlieBalAsset;
-
-        // === Step 9: Assertions (tolerant comparisons) ===
-        assertTrue(
-            inConfidenceInterval(bobExposure, davidExposure + charlieExposure, 100),
-            "Bob exposure not comparable to Charlie+David"
-        );
-        assertTrue(
-            inConfidenceInterval(bobPnl, davidPnl + charliePnl, 100),
-            "Bob PnL not comparable to Charlie+David"
-        );
-
-        // Optionally print debug values for tuning thresholds
-        console.log("Bob exposure:", bobExposure);
-        console.log("Charlie exposure:", charlieExposure);
-        console.log("David exposure:", davidExposure);
-        console.log("Bob PnL:", bobPnl);
-        console.log("Charlie PnL:", charliePnl);
-        console.log("David PnL:", davidPnl);
-        */
     }
 
     //Test matrix math

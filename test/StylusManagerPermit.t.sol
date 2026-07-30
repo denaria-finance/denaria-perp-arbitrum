@@ -200,4 +200,108 @@ contract StylusManagerPermitTest is Test {
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", IERC20Permit(token).DOMAIN_SEPARATOR(), structHash));
         return vm.sign(userPk, digest);
     }
+
+    // --- relayer meta-call authorisation ---------------------------------------------------
+    //
+    // The relayer entry points let ANY caller submit an action on a user's behalf against an
+    // EIP-712 signature. That makes signature binding and nonce consumption the security boundary
+    // of the whole manager, and none of it was exercised: the deployed contract had no test that a
+    // signature cannot be replayed, cannot be produced by a third party, and expires.
+
+    /// @dev Builds the digest exactly as `relayerAddCollateralAddLiquidity` does and signs it with
+    ///      `signerPk`. Note which fields are bound: the permit arrays are NOT part of this
+    ///      typehash (its sibling `relayerAddCollateralOpenTrade` does bind them).
+    function _signAddLiquidityMetaCall(
+        uint256 signerPk,
+        address from,
+        uint256 liquidityStable,
+        uint256 liquidityAsset,
+        uint256 deadline,
+        uint256 nonce
+    )
+        private
+        view
+        returns (bytes memory sig)
+    {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                manager.ADD_COLLATERAL_ADD_LIQUIDITY_TYPEHASH(),
+                from,
+                keccak256(abi.encodePacked(collateral)),
+                liquidityStable,
+                liquidityAsset,
+                uint256(0), // maxFeeValue
+                keccak256(bytes("")), // unverifiedReport
+                deadline,
+                nonce
+            )
+        );
+        (uint8 sv, bytes32 sr, bytes32 ss) = vm.sign(signerPk, manager.hashTypedData(structHash));
+        return abi.encodePacked(sr, ss, sv);
+    }
+
+    function _submitMetaCall(uint256 deadline, uint256 nonce, bytes memory sig) private {
+        vm.prank(makeAddr("relayer"));
+        manager.relayerAddCollateralAddLiquidity(
+            user, collateral, 500e18, 5e18, 0, "", deadlines, v, r, s, deadline, nonce, sig
+        );
+    }
+
+    /// @dev The happy path, and the nonce it must burn. Anyone may submit it — the signature, not
+    ///      the caller, is the authorisation.
+    function testRelayerMetaCallExecutesAndBurnsTheNonce() public {
+        uint256 deadline = block.timestamp + 1000;
+        assertEq(manager.getNonce(user), 0, "fresh signer");
+
+        _submitMetaCall(deadline, 0, _signAddLiquidityMetaCall(userPk, user, 500e18, 5e18, deadline, 0));
+
+        assertEq(manager.getNonce(user), 1, "nonce must advance");
+        assertEq(vault.userCollateral(user), collateral[1], "collateral leg ran");
+        assertEq(engine.calls(), 1, "engine leg ran");
+        assertEq(engine.lastUser(), user, "engine acted for the SIGNER, not the relayer");
+        assertEq(engine.lastStable(), 500e18);
+    }
+
+    /// @dev THE property: a captured signature cannot be replayed. The nonce is bound into the
+    ///      digest and consumed on use, so the second submission of the identical payload fails.
+    function testRelayerMetaCallCannotBeReplayed() public {
+        uint256 deadline = block.timestamp + 1000;
+        bytes memory sig = _signAddLiquidityMetaCall(userPk, user, 500e18, 5e18, deadline, 0);
+        _submitMetaCall(deadline, 0, sig);
+
+        vm.expectRevert(bytes("Invalid/Expired Signature"));
+        _submitMetaCall(deadline, 0, sig);
+        assertEq(engine.calls(), 1, "the replay must not reach the engine");
+    }
+
+    /// @dev A signature from any other key cannot move a user's funds, however well-formed.
+    function testRelayerMetaCallRejectsAForeignSigner() public {
+        (, uint256 attackerPk) = makeAddrAndKey("meta-call-attacker");
+        uint256 deadline = block.timestamp + 1000;
+        // Sign BEFORE arming expectRevert: the signing helper makes an external `hashTypedData`
+        // call, which would otherwise be the call expectRevert latches onto.
+        bytes memory forged = _signAddLiquidityMetaCall(attackerPk, user, 500e18, 5e18, deadline, 0);
+
+        vm.expectRevert(bytes("Invalid/Expired Signature"));
+        _submitMetaCall(deadline, 0, forged);
+        assertEq(manager.getNonce(user), 0, "a rejected signature must not burn the nonce");
+        assertEq(engine.calls(), 0);
+    }
+
+    /// @dev Expiry and nonce ordering are both enforced, so a signature cannot be held indefinitely
+    ///      and cannot be submitted out of sequence.
+    function testRelayerMetaCallRejectsExpiryAndWrongNonce() public {
+        uint256 deadline = block.timestamp + 1000;
+
+        bytes memory futureNonce = _signAddLiquidityMetaCall(userPk, user, 500e18, 5e18, deadline, 7);
+        vm.expectRevert(bytes("Invalid/Expired Signature"));
+        _submitMetaCall(deadline, 7, futureNonce);
+
+        bytes memory expiring = _signAddLiquidityMetaCall(userPk, user, 500e18, 5e18, deadline, 0);
+        skip(1001); // one second past the signed deadline
+        vm.expectRevert(bytes("Invalid/Expired Signature"));
+        _submitMetaCall(deadline, 0, expiring);
+
+        assertEq(manager.getNonce(user), 0, "neither rejection burned the nonce");
+    }
 }

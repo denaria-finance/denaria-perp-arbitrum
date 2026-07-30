@@ -1003,4 +1003,129 @@ contract VaultTest is Test, PerpPairTestDeploymentHelper {
 
         assertTrue(vault.userCollateral(alice) == 0, "perpPair removal should work when paused");
     }
+
+    /// @dev Settling a position's realized PnL must stay available while the vault is paused: the
+    ///      pause guards USER-initiated collateral movement, and a close or liquidation already in
+    ///      flight has to be able to book its result. A pause modifier here would strand every
+    ///      close mid-flight — the engine mutates its own state first and settles the vault last,
+    ///      so a revert on this call would leave the two ledgers disagreeing.
+    function testAddPnlToCollateralWhenPaused() public {
+        uint256[] memory amounts = new uint256[](numStableCoins);
+        amounts[0] = 4000 * 1e6;
+        amounts[1] = 6000 * 1e18;
+        vm.prank(alice);
+        vault.addCollateral(amounts);
+        uint256 before = vault.userCollateral(alice);
+
+        vault.grantRole(vault.MOD_ROLE(), MasterMinter);
+        vm.prank(MasterMinter);
+        vault.pause();
+
+        // Both signs, since each takes a different branch of the settlement.
+        vm.prank(address(perpPair));
+        vault.addPnlToCollateral(alice, 1000 * 1e18, true);
+        assertEq(vault.userCollateral(alice), before + 1000 * 1e18, "profit settles while paused");
+
+        vm.prank(address(perpPair));
+        vault.addPnlToCollateral(alice, 400 * 1e18, false);
+        assertEq(vault.userCollateral(alice), before + 600 * 1e18, "loss settles while paused");
+    }
+
+    /// @dev The pause is a gate, not a one-way latch: the user-facing withdrawal that
+    ///      `whenNotPaused` blocks works again once the pause is lifted.
+    function testRemoveCollateralAfterUnpause() public {
+        uint256[] memory amounts = new uint256[](numStableCoins);
+        amounts[0] = 4000 * 1e6;
+        amounts[1] = 6000 * 1e18;
+        vm.prank(alice);
+        vault.addCollateral(amounts);
+
+        vault.grantRole(vault.MOD_ROLE(), MasterMinter);
+        vm.prank(MasterMinter);
+        vault.pause();
+
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.removeCollateral(100 * 1e18, "");
+
+        vm.prank(MasterMinter);
+        vault.unpause();
+
+        uint256 before = vault.userCollateral(alice);
+        vm.prank(alice);
+        vault.removeCollateral(100 * 1e18, "");
+        assertLt(vault.userCollateral(alice), before, "withdrawal works again once unpaused");
+    }
+
+    // --- governance-only parameter setters on the DEPLOYED vault ---------------------------
+    //
+    // All three ship on-chain and had zero test calls: nothing pinned that they store what they
+    // are given, that they reject an unknown coin, or that they are role-gated at all.
+
+    event ChangedRatioLockTime(uint256 newRatioLockTime);
+
+    /// @dev The deposit-side ratio threshold must land on the NAMED coin and leave the other one
+    ///      alone (the setter walks the array, so an indexing slip would silently move the wrong
+    ///      coin's limit), and an unknown coin must revert rather than no-op.
+    function testModifyDepositRatioThreshold() public {
+        vault.grantRole(vault.MOD_ROLE(), MasterMinter);
+        (, uint256 otherBefore,,) = vault.stableCoins(1);
+
+        vm.prank(MasterMinter);
+        vault.modifyDepositRatioThresholds(stableCoins[0], 42 * ratioDecimals);
+
+        (, uint256 dep0,,) = vault.stableCoins(0);
+        (, uint256 dep1,,) = vault.stableCoins(1);
+        assertEq(dep0, 42 * ratioDecimals, "named coin updated");
+        assertEq(dep1, otherBefore, "the other coin is untouched");
+
+        vm.prank(MasterMinter);
+        vm.expectRevert(bytes("stableCoin not found"));
+        vault.modifyDepositRatioThresholds(makeAddr("notACoin"), 1);
+
+        // Role-gated: a caller without MOD_ROLE cannot move a protocol limit.
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.modifyDepositRatioThresholds(stableCoins[0], 1);
+    }
+
+    /// @dev Same for the withdrawal side, which is a separate field on the same struct — a
+    ///      copy-paste slip between the two would be invisible without reading both back.
+    function testModifyWithdrawalRatioThreshold() public {
+        vault.grantRole(vault.MOD_ROLE(), MasterMinter);
+        (,, uint256 otherBefore,) = vault.stableCoins(1);
+        (, uint256 depBefore,,) = vault.stableCoins(0);
+
+        vm.prank(MasterMinter);
+        vault.modifyWithdrawalRatioThreshold(stableCoins[0], 7 * ratioDecimals);
+
+        (, uint256 dep0, uint256 wd0,) = vault.stableCoins(0);
+        (,, uint256 wd1,) = vault.stableCoins(1);
+        assertEq(wd0, 7 * ratioDecimals, "named coin updated");
+        assertEq(dep0, depBefore, "the deposit-side field on the same coin is untouched");
+        assertEq(wd1, otherBefore, "the other coin is untouched");
+
+        vm.prank(MasterMinter);
+        vm.expectRevert(bytes("stableCoin not found"));
+        vault.modifyWithdrawalRatioThreshold(makeAddr("notACoin"), 1);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.modifyWithdrawalRatioThreshold(stableCoins[0], 1);
+    }
+
+    /// @dev `ratioLockTime` is private with no getter, so the event is the only observable — which
+    ///      makes it the thing to pin, along with the role gate.
+    function testModifyRatioLockTime() public {
+        vault.grantRole(vault.MOD_ROLE(), MasterMinter);
+
+        vm.expectEmit(false, false, false, true, address(vault));
+        emit ChangedRatioLockTime(12 hours);
+        vm.prank(MasterMinter);
+        vault.modifyRatioLockTime(12 hours);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.modifyRatioLockTime(1 hours);
+    }
 }

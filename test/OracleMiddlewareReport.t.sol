@@ -17,6 +17,22 @@ contract MockLinkToken {
     }
 }
 
+/// Minimal balance-tracking token, enough for `withdrawToken`'s `balanceOf` + `safeTransfer`.
+contract MockSweepableToken {
+    mapping(address => uint256) public balanceOf;
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        require(balanceOf[msg.sender] >= amount, "balance");
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+}
+
 contract MockRewardManager { }
 
 contract MockFeeManager {
@@ -135,5 +151,72 @@ contract OracleMiddlewareReportTest is Test {
         });
         verifier.setVerifiedReport(abi.encode(r));
         oracle.verifyReportIfNecessary(_wrapReport(FEED_ID, validFrom));
+    }
+
+    // --- owner-gated surface on the DEPLOYED middleware ------------------------------------
+    //
+    // Both functions below ship on-chain and had no test at all: one moves the owner gate
+    // irreversibly, the other moves tokens out of the contract.
+
+    /// @dev Ownership transfer must actually move the gate: the new owner can call owner-only
+    ///      functions and the old one is rejected with OM1. Deployed and one-step, so the effect
+    ///      is immediate and there is no pending-acceptance step to undo it.
+    function testTransferOwnershipMovesTheOwnerGate() public {
+        address newOwner = makeAddr("newOracleOwner");
+        oracle.transferOwnership(newOwner);
+
+        // The previous owner (this test contract) is now locked out.
+        vm.expectRevert(bytes("OM1"));
+        oracle.transferOwnership(address(this));
+
+        // ...and the new owner holds the gate.
+        vm.prank(newOwner);
+        oracle.transferOwnership(address(this));
+        oracle.transferOwnership(newOwner); // proves the gate came back
+    }
+
+    /// @dev Characterises a real foot-gun rather than a bug: `transferOwnership` has NO
+    ///      zero-address check and no two-step acceptance, so handing it `address(0)` strands
+    ///      every owner-only function permanently — `withdrawToken` included, which means any
+    ///      token balance the middleware holds becomes unrecoverable. Locked here so the
+    ///      behaviour is a deliberate, visible property instead of a surprise; closing it needs
+    ///      a production change (currently frozen).
+    function testTransferOwnershipToZeroStrandsTheOwnerGate() public {
+        oracle.transferOwnership(address(0));
+
+        vm.expectRevert(bytes("OM1"));
+        oracle.transferOwnership(address(this));
+
+        MockSweepableToken token = new MockSweepableToken();
+        token.mint(address(oracle), 1e18);
+        vm.expectRevert(bytes("OM1"));
+        oracle.withdrawToken(address(this), address(token));
+        assertEq(token.balanceOf(address(oracle)), 1e18, "the balance is now unrecoverable");
+    }
+
+    /// @dev The sweep moves the FULL balance to the beneficiary, is owner-only, and rejects a
+    ///      zero balance with OM7 (so an accidental no-op sweep is loud, not silent).
+    function testWithdrawTokenSweepsFullBalanceAndGuardsItsEdges() public {
+        MockSweepableToken token = new MockSweepableToken();
+        address beneficiary = makeAddr("beneficiary");
+
+        // Nothing held yet: the amount guard fires.
+        vm.expectRevert(bytes("OM7"));
+        oracle.withdrawToken(beneficiary, address(token));
+
+        token.mint(address(oracle), 7e18);
+
+        // Owner-only.
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(bytes("OM1"));
+        oracle.withdrawToken(beneficiary, address(token));
+
+        oracle.withdrawToken(beneficiary, address(token));
+        assertEq(token.balanceOf(beneficiary), 7e18, "beneficiary received the whole balance");
+        assertEq(token.balanceOf(address(oracle)), 0, "nothing left behind");
+
+        // A second sweep now has nothing to move.
+        vm.expectRevert(bytes("OM7"));
+        oracle.withdrawToken(beneficiary, address(token));
     }
 }
