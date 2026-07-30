@@ -27,7 +27,7 @@ using SafeERC20 for IERC20;
  * @dev Chainlink Reports V3 (gathered trough Streams Direct API or WebSocket connection) are submitted to the IVerifierProxy for verification and saved locally to this smart contract.
  * When the getPrice function is called, the middlware returns the last verified price if it is sufficiently fresh and it is in line with the time weighted average price of the last period.
  */
-contract TWAPOracleMiddleware {
+contract TWAPOracleMiddlewareMirror {
     /**
      * @dev Represents a data report from a Data Streams stream for v3 schema (crypto streams).
      * The `price`, `bid`, and `ask` values are carried to either 8 or 18 decimal places, depending on the stream.

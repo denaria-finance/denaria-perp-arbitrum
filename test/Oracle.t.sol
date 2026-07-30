@@ -3,7 +3,7 @@ pragma solidity ^0.8.19;
 
 import { Test, console } from "forge-std/Test.sol";
 import { Vm, VmSafe } from "forge-std/Vm.sol";
-import { TWAPOracleMiddleware } from "../src/test_support/TWAPOracleMiddlewareTest.sol";
+import { TWAPOracleMiddlewareMirror as TWAPOracleMiddleware } from "../src/test_support/TWAPOracleMiddlewareMirror.sol";
 
 import "../src/util/UtilMath.sol";
 

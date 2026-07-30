@@ -49,7 +49,7 @@ jobs:
         # the denaria-perp repo — so it is excluded too. The remaining src/ contracts
         # (manager, Vault, oracle, LostAndFound) are the real deployables.
         run: |
-          forge build --sizes --skip 'test/**' 'src/PerpPair.sol'
+          forge build --sizes --skip 'test/**' 'src/PerpPair.sol' 'src/test_support/**' 'src/token/USDCe.sol'
         id: build
 
       - name: Run Forge tests

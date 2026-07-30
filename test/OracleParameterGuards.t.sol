@@ -3,7 +3,7 @@ pragma solidity ^0.8.25;
 
 import { Test } from "forge-std/Test.sol";
 import { TWAPOracleMiddleware } from "../src/CL_oracle_middleware/TWAPOracleMiddleware.sol";
-import { TWAPOracleMiddleware as TWAPOracleMiddlewareMirror } from "../src/test_support/TWAPOracleMiddlewareTest.sol";
+import { TWAPOracleMiddlewareMirror } from "../src/test_support/TWAPOracleMiddlewareMirror.sol";
 import { MockLinkToken, MockRewardManager, MockFeeManager, MockVerifierProxy } from "./OracleMiddlewareReport.t.sol";
 
 /// @title Oracle parameter-guard regressions (OM8)
