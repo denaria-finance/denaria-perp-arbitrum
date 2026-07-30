@@ -34,7 +34,7 @@ impl PerpEngine {
         self.short_curve_parameter_b.set(U256::from(10_000_000u64));
         self.insurance_fund_cap.set(U256::from(500u64) * wad);
         // Liquidation / auto-close / LP-movement config (real PerpStorage defaults).
-        // NOTE (gap-analysis fix): liquidation_discount must be set before liquidation
+        // liquidation_discount must be set before liquidation
         // (it was previously left at ZERO, which `_computeLiquidationDiscount` reads).
         self.liquidation_discount.set(U32::from(7_500u32));
         self.auto_close_fee.set(U256::from(200_000_000_000_000_000u64)); // 2e17
@@ -68,8 +68,9 @@ impl PerpEngine {
 
     /// Common initializer tail: set `MOD_ROLE = keccak256("MOD_ROLE")`, grant
     /// DEFAULT_ADMIN_ROLE (0x0) + MOD_ROLE to `admin`, and flip `initialized`. The admin is
-    /// passed explicitly (not read from `msg_sender()`) so the production `#[constructor]` — where
-    /// `msg_sender()` is the StylusDeployer — grants roles to the intended administrator.
+    /// passed explicitly rather than read from `msg_sender()` here, so both initializers name the
+    /// same role recipient at one place instead of each deciding it. Today both pass their own
+    /// caller; there is no constructor on the deploy path (see `initializeProduction`).
     pub(crate) fn finalize_init(&mut self, admin: Address) {
         let mod_role = keccak256("MOD_ROLE");
         self.mod_role.set(mod_role);

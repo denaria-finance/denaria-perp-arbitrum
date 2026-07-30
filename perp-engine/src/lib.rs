@@ -59,7 +59,7 @@ use alloy_sol_types::{sol, SolEvent};
 
 // Events — ABI/topic-parity with the Solidity perp modules. The `sol!`-derived
 // SIGNATURE_HASH (topic0) is computed from the canonical type signature, so it
-// matches Solidity as long as the parameter type lists match (verified in 9b).
+// matches Solidity as long as the parameter type lists match.
 sol! {
     event ExecutedTrade(address indexed user, bool direction, uint256 tradeSize, uint256 tradeReturn, uint256 currentPrice, uint256 leverage);
     event ClosedPosition(address indexed user, uint256 pnl, bool pnlSign);
@@ -78,7 +78,7 @@ sol! {
     // OpenZeppelin AccessControl and already emits these); the hand-rolled engine AC did not.
     event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
     event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
-    // Emergency breaker (H9c): granular pause of the OPEN-position path only.
+    // Emergency breaker: granular pause of the OPEN-position path only.
     event TradingPaused(bool paused, address indexed account);
 }
 
@@ -97,7 +97,7 @@ sol_storage! {
         bool last_trade_direction;
         bool entered;                // reentrancy guard
         bool initialized;            // one-shot init guard
-        bool trading_paused;         // emergency breaker: blocks OPENING/INCREASING positions (H9c)
+        bool trading_paused;         // emergency breaker: blocks OPENING/INCREASING positions
         uint8 max_leverage;          // <= 255 (15)
         uint8 max_lp_leverage;       // <= 255 (15)
         uint8 ins_fund_fraction;     // <= 255 (6)
@@ -675,7 +675,7 @@ impl PerpEngine {
         Ok(())
     }
 
-    /// Emergency breaker (H9c) — MOD_ROLE-gated. `pauseTrading` blocks the OPEN-position path
+    /// Emergency breaker — MOD_ROLE-gated. `pauseTrading` blocks the OPEN-position path
     /// (`trade`/`tradeFor`) while leaving close, liquidation, removeLiquidity, realizePnL, and
     /// auto-close LIVE, so users can always de-risk and exit. This is a GRANULAR circuit breaker,
     /// deliberately NOT a global pause (disabling close/liquidation can trap users and worsen

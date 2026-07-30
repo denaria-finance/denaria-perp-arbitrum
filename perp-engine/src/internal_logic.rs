@@ -62,7 +62,7 @@ impl PerpEngine {
 
     /// Solidity `UtilMath._calcPnL(...)`. `use_spot_price=true` (the calcMR path)
     /// values the residual asset at spot; `false` (the close path) routes it
-    /// through the curve (`computeShortReturn` / `computeExactAmountInLong`).
+    /// through the curve (`computeShortReturn` / `computeExecutableAmountInLong`).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn calc_pnl(
         &self,
@@ -424,10 +424,15 @@ impl PerpEngine {
         Ok(self.margin_check_core(user, price, collateral, last_op_ts)?.0)
     }
 
-    /// Solidity `Vault._checkMR`'s margin read in ONE WASM frame: the margin ratio plus the raw
-    /// position/LP fields and `maxLpLeverage`/`MMR` its bad-debt override needs, instead of the
-    /// ~12 separate cross-contract reads the Vault used to make. Reads `lastOperationTimestamp`
-    /// internally, exactly as the Vault passed it before.
+    /// Mark-valued margin read in ONE WASM frame: the margin ratio plus the raw position/LP
+    /// fields and the `maxLpLeverage`/`MMR` bounds a bad-debt override needs, instead of the ~12
+    /// separate cross-contract reads the Vault used to make. Reads `lastOperationTimestamp`
+    /// internally.
+    ///
+    /// It has NO production Solidity caller: the Vault's collateral-removal guard moved fully
+    /// engine-side into `withdrawal_check_data`, which prices what LEAVING costs rather than
+    /// valuing the position at its mark. Retained as the legacy-parity margin read (the
+    /// front-end quote path and the differential reference consume the same shape).
     #[allow(clippy::type_complexity)]
     pub(crate) fn margin_check_data(
         &self,

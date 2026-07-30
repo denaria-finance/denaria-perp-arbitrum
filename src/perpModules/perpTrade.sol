@@ -96,8 +96,10 @@ abstract contract PerpTrade is PerpLiquidity {
         marginSafe = calculatedMMR >= MMR;
     }
 
-    ///@dev Aggregates the trader and LP legs, folds in funding accrued to THIS block and the LP
-    ///     removal fee, then prices the exit through the closing curve.
+    ///@dev Aggregates the trader and LP legs, folds in funding as of the last `updateFG` plus the
+    ///     LP removal fee, then prices the exit through the closing curve.
+    ///@dev `Vault.removeCollateral` calls `updateFG` immediately before this read, so on that path
+    ///     the funding is current to the block; a direct caller sees the last settled rate.
     function _withdrawalExitPreview(
         address user,
         uint256 price

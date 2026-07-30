@@ -1759,7 +1759,7 @@ impl CurveMath {
 //   - "coefficients" vectors: checked separately in `coefficient_vectors`
 //     against the extracted inverse-coefficient helpers.
 // -----------------------------------------------------------------------
-// Shrinking property tests (H8) over the pure, fund-critical math. proptest is a
+// Shrinking property tests over the pure, fund-critical math. proptest is a
 // host-only dev-dependency (no wasm impact); minimized counterexamples are the value
 // over the fixed golden vectors. Each property cross-checks an algebraic law or the
 // signed<->unsigned relationship the Q80 adjugate recovery relies on.

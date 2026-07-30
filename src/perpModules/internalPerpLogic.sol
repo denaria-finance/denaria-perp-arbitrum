@@ -194,9 +194,11 @@ abstract contract InternalPerpLogic is PerpFunding, ReentrancyGuardTransient {
         );
     }
 
-    ///@dev Single-call margin data for the Vault's collateral-removal check: the margin ratio plus
-    ///     the raw position/LP fields and maxLpLeverage/MMR its bad-debt override needs. Returns the
-    ///     same values Vault._checkMR used to read one by one; the override stays in the Vault.
+    ///@dev Single-call MARK-VALUED margin data: the margin ratio plus the raw position/LP fields
+    ///     and the maxLpLeverage/MMR bounds a bad-debt override needs, in place of the reads a
+    ///     caller would otherwise make one by one. No production caller remains — the Vault's
+    ///     collateral-removal guard moved engine-side into withdrawalCheckData, which prices the
+    ///     cost of leaving instead of the mark. Retained for legacy parity and the quote path.
     ///@param user Target user.
     ///@param price Oracle price for the asset.
     ///@param collateral Hypothetical collateral covering the position after removal.

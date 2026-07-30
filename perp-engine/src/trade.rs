@@ -382,7 +382,7 @@ impl PerpEngine {
         leverage: u8,
         unverified_report: Bytes,
     ) -> Result<U256, Vec<u8>> {
-        // Emergency breaker (H9c): while paused, block OPENING/INCREASING a position (new risk).
+        // Emergency breaker: while paused, block OPENING/INCREASING a position (new risk).
         // Close, liquidation, removeLiquidity, realizePnL, and auto-close bypass trade_impl (they
         // call execute_trade / close_and_withdraw_inner directly), so those de-risking and exit
         // paths stay LIVE — the granular control the audit asks for, not a blunt global pause.
