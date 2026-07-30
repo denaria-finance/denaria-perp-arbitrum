@@ -1402,26 +1402,28 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
             perpPair.userVirtualTraderPosition(bob);
 
         assertTrue(debtStable == 0 && debtAsset == tradeSize, "debt");
-        assertTrue(balanceAsset == 0 && inConfidenceInterval(balanceStable, tradeSize * 100, 100), "balance");
+        assertEq(balanceAsset, 0, "short leaves no asset balance");
+        assertApproxEqRel(balanceStable, tradeSize * 100, 0.002e18, "short proceeds within 0.2% of notional");
 
-        assertTrue(
-            inConfidenceInterval(perpPair.globalLiquidityStable(), aliceLiquidityStable + tradeSize, 100)
-                && inConfidenceInterval(perpPair.globalLiquidityAsset(), aliceLiquidityAsset - tradeSize / 100, 100),
-            "Global liquidity"
+        // A short SELLS asset to the pool: the asset leg grows by exactly the size traded, and the
+        // stable leg SHRINKS by what the pool paid out. The previous assertions had both signs
+        // inverted (and the stable one off by a factor of the price), and passed only because the
+        // 1% budget was an order of magnitude wider than the effect being measured — they could not
+        // have distinguished a correctly booked short from one booked backwards.
+        assertEq(perpPair.globalLiquidityAsset(), aliceLiquidityAsset + tradeSize, "pool received the shorted asset");
+        assertLt(perpPair.globalLiquidityStable(), aliceLiquidityStable, "pool paid stable out");
+        assertApproxEqRel(
+            aliceLiquidityStable - perpPair.globalLiquidityStable(),
+            tradeSize * 100,
+            0.002e18,
+            "stable paid out within 0.2% of notional"
         );
-        //assertTrue(inConfidenceInterval(perpPair.globalSharesAsset(), aliceLiquidityAsset+tradeSize, 100) &&
-        //        perpPair.globalSharesStable() == aliceLiquidityStable
-        //        , "Global shares");
-        //(uint256 aliceStableShares, uint256 aliceAssetShares) = perpPair.getLpLiquidityShares(alice);
+
+        // Alice is the ONLY LP, so her reconstructed balance is the whole pool leg — exactly on the
+        // stable side, and within the 1-wei floor of the Q80 recovery on the asset side.
         (uint256 aliceStableBalance, uint256 aliceAssetBalance) = perpPair.getLpLiquidityBalance(alice);
-        assertTrue(
-            inConfidenceInterval(aliceStableBalance, aliceLiquidityStable - tradeSize * 100, 100)
-                && inConfidenceInterval(aliceAssetBalance, aliceLiquidityAsset + tradeSize, 100),
-            "Alice liquidity"
-        );
-        //assertTrue(inConfidenceInterval(aliceAssetShares, aliceLiquidityAsset+tradeSize, 100) &&
-        //        aliceStableShares == aliceLiquidityStable
-        //        , "Alice shares");
+        assertEq(aliceStableBalance, perpPair.globalLiquidityStable(), "sole LP owns the whole stable leg");
+        assertApproxEqAbs(aliceAssetBalance, perpPair.globalLiquidityAsset(), 1, "sole LP owns the whole asset leg");
     }
 
     ///@dev Test the liqudity accounting after a trade long happens. 3 lps, 1 long trade.
@@ -1485,10 +1487,14 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
             perpPair.userVirtualTraderPosition(david);
         assertTrue(debtStable == tradeSize && debtAsset == 0, "debt");
         assertTrue(balanceStable == 0 && inConfidenceInterval(balanceAsset, tradeSize / 100, 100), "balance");
-        assertTrue(
-            inConfidenceInterval(perpPair.globalLiquidityStable(), totalLiquidityStable + tradeSize, 100)
-                && inConfidenceInterval(perpPair.globalLiquidityAsset(), totalLiquidityAsset - tradeSize / 100, 100),
-            "Global liquidity"
+        // The 1%-of-value budget these used to carry was four orders of magnitude wider than the
+        // effect. The two legs get different bounds because they absorb different things: the stable
+        // leg is the exact input plus fee dust, while the asset leg carries the curve slippage.
+        assertApproxEqRel(
+            perpPair.globalLiquidityStable(), totalLiquidityStable + tradeSize, 0.0001e18, "long: stable leg in"
+        );
+        assertApproxEqRel(
+            perpPair.globalLiquidityAsset(), totalLiquidityAsset - tradeSize / 100, 0.002e18, "long: asset leg out"
         );
         //assertTrue(inConfidenceInterval(perpPair.globalSharesStable(), totalLiquidityStable+tradeSize, 100) &&
         //        perpPair.globalSharesAsset() == totalLiquidityAsset
@@ -1592,10 +1598,11 @@ contract PerpPairTest is Test, PerpPairTestDeploymentHelper {
             perpPair.userVirtualTraderPosition(david);
         assertTrue(debtStable == 0 && debtAsset == tradeSize, "debt");
         assertTrue(inConfidenceInterval(balanceStable, tradeSize * 100, 100) && balanceAsset == 0, "balance");
-        assertTrue(
-            inConfidenceInterval(perpPair.globalLiquidityStable(), totalLiquidityStable - tradeSize * 100, 100)
-                && inConfidenceInterval(perpPair.globalLiquidityAsset(), totalLiquidityAsset + tradeSize, 100),
-            "Global liquidity"
+        // Signs here were already right; only the budget was loose. The asset leg is exact (the pool
+        // receives precisely what was shorted), the stable leg pays out the notional less fees.
+        assertEq(perpPair.globalLiquidityAsset(), totalLiquidityAsset + tradeSize, "short: asset leg in, exactly");
+        assertApproxEqRel(
+            perpPair.globalLiquidityStable(), totalLiquidityStable - tradeSize * 100, 0.002e18, "short: stable leg out"
         );
         //assertTrue(inConfidenceInterval(perpPair.globalSharesAsset(), totalLiquidityAsset+tradeSize, 100) &&
         //        perpPair.globalSharesStable() == totalLiquidityStable

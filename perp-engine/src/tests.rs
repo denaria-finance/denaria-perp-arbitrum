@@ -1716,7 +1716,7 @@
         );
     }
 
-    // Batch-liquidation bounds + dedup (H9b): the protocol cap and duplicate rejection are checked
+    // Batch-liquidation bounds + dedup: the protocol cap and duplicate rejection are checked
     // BEFORE any liquidation work, so these need no liquidatable setup. Edge lengths: 0 (no-op),
     // MAX (accepted-shape), MAX+1 (BL2). A duplicate target reverts BL3. Atomicity policy: a batch
     // is all-or-nothing (any per-user failure reverts the whole call — see batch_liquidate_impl).
@@ -1759,7 +1759,7 @@
         );
     }
 
-    // item20 batch auto-close: best-effort ONLY for the typed pre-mutation outcome — an eligible
+    // Batch auto-close: best-effort ONLY for the typed pre-mutation outcome — an eligible
     // user is closed, a user that never AUTHORIZED auto-close is SKIPPED (nothing written for it).
     // A threshold miss is no longer skippable: it is discovered after the close executed and must
     // hard-revert the batch (batch_auto_close_post_execution_failure_is_hard). Plus bounds
@@ -2103,7 +2103,7 @@
         );
     }
 
-    // Emergency breaker (H9c) — role gate + event. pause/unpause are MOD_ROLE-gated; each emits one
+    // Emergency breaker — role gate + event. pause/unpause are MOD_ROLE-gated; each emits one
     // TradingPaused(paused, account) with account indexed and the bool in data.
     #[cfg(feature = "stub_boundary")]
     #[test]
@@ -2135,7 +2135,7 @@
         assert_eq!(U256::from_be_slice(&logs[base + 1].1[0..32]), U256::ZERO, "data: paused = false");
     }
 
-    // Emergency breaker LIVENESS (H9c, the audit's key guarantee): while paused, OPENING/INCREASING
+    // Emergency breaker LIVENESS: while paused, OPENING/INCREASING
     // a position is blocked (PAUSED), but every DE-RISK + EXIT path — realizePnL, close, and
     // removeLiquidity — stays LIVE. Mirrors financial_invariants' op vocabulary.
     #[cfg(feature = "stub_boundary")]
@@ -3627,6 +3627,11 @@
         let mut s: u64 = 0x9E3779B97F4A7C15;
         let mut ts: u64 = 1_000;
         let mut lp_added = false;
+        // Count the ops that actually SUCCEED. Every arm below tolerates an Err by design,
+        // so without this the lane would stay green even if every money path had regressed to
+        // reverting — the invariants hold trivially on unchanged state. The seed is fixed, so
+        // these counts are exact and any drift is a real behavioural change.
+        let (mut ok_long, mut ok_short, mut ok_close, mut ok_realize, mut ok_autoclose) = (0, 0, 0, 0, 0);
         for _ in 0..40u64 {
             s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); // LCG
             ts += 1 + (s >> 40) % 7_200; // 1..7200s advance → funding accrues
@@ -3641,20 +3646,20 @@
                 0..=3 => {
                     // long: `size` is the STABLE input — ≥ minimumTradeSize(48e18); 50..99e18.
                     let size = U256::from(50u64 + (s >> 16) % 50) * wad;
-                    let _ = e.trade_for(u, true, size, U256::ZERO, U256::ZERO, Address::ZERO, 1, Bytes::new());
+                    if e.trade_for(u, true, size, U256::ZERO, U256::ZERO, Address::ZERO, 1, Bytes::new()).is_ok() { ok_long += 1; }
                 }
                 4..=5 => {
                     // short: size*3000 ≥ minTradeSize(48e18) → ≥0.016e18; use 0.02..0.1e18
                     let size = wad / U256::from(50u64) + U256::from((s >> 16) % 80) * (wad / U256::from(1_000u64));
-                    let _ = e.trade_for(u, false, size, U256::ZERO, U256::ZERO, Address::ZERO, 1, Bytes::new());
+                    if e.trade_for(u, false, size, U256::ZERO, U256::ZERO, Address::ZERO, 1, Bytes::new()).is_ok() { ok_short += 1; }
                 }
                 6 => {
                     // close: open→close cycles (full close of the user's position).
-                    let _ = e.close_and_withdraw_for(u, U256::from(50_000u64), wad, addr(0xFE), Bytes::new());
+                    if e.close_and_withdraw_for(u, U256::from(50_000u64), wad, addr(0xFE), Bytes::new()).is_ok() { ok_close += 1; }
                 }
                 7 => {
                     // realizePnL: settles the user's funding PnL.
-                    let _ = e.realize_pnl_for(u, Bytes::new());
+                    if e.realize_pnl_for(u, Bytes::new()).is_ok() { ok_realize += 1; }
                 }
                 8 => {
                     if !lp_added
@@ -3680,7 +3685,7 @@
                     // or C1 reverts on-chain; the loop-tail latch reset stands in for that
                     // rollback, and the surviving harness state is an ordinary closed position.
                     let _ = e.enable_auto_close_for(u, U256::from(1u64), U256::from(1u64), U256::from(50_000u64), wad);
-                    let _ = e.auto_close_user_position_impl(addr(0xFE), u, Address::ZERO, Bytes::new());
+                    if e.auto_close_user_position_impl(addr(0xFE), u, Address::ZERO, Bytes::new()).is_ok() { ok_autoclose += 1; }
                 }
             }
             // A tolerated mid-body Err leaves the reentrancy latch set — on-chain the revert
@@ -3689,6 +3694,11 @@
             e.entered.set(false);
             check_financial_invariants(&e, &all, "fuzz");
         }
+        assert_eq!(
+            (ok_long, ok_short, ok_close, ok_realize, ok_autoclose),
+            (11, 10, 5, 4, 4),
+            "fuzz money paths stopped executing (counts are exact under the fixed seed)"
+        );
     }
 
     // addLiquidityFor: confirms the second forwarded variant's wiring (arg order + gate).
@@ -3908,6 +3918,53 @@
         r.expect("feeFrontend == feeFractionsDecimals - feeLP accepted");
         assert_eq!(e.fee_frontend.get(), U32::from(500_000u32), "equality boundary stored");
         assert_eq!(frontend(500_001).1, Err(err(b"C")), "feeFrontend one unit above the bound -> C");
+    }
+
+    // What the two MMR bounds are load-bearing for. The liquidation transfer computes
+    // `liquidation_decimals - discount` (the short branch of `liquidate_position`), and
+    // `compute_liquidation_discount` returns up to TWICE the stored discount at margin ratio 0 —
+    // the deepest bad-debt case. Nothing checks that product directly: it is kept under the scale
+    // by the CONJUNCTION of two bounds living in different functions, the setter's
+    // `discount < MMR / 2` and the timelocked path's `MMR < 1e6`.
+    //
+    // The initializers carry only the LOWER MMR bound, so a deployment can start past that
+    // ceiling, and the setter will then accept a discount that doubles past the scale. On that
+    // input the two implementations disagree: the Solidity reference reverts on checked
+    // arithmetic, while U256 subtraction here wraps and the transfer is sized from a value just
+    // under 2^256. Recorded, not fixed: reaching it needs a maintenance margin above 100%, which
+    // only governance can set and which makes every position instantly liquidatable. Solidity
+    // twin: `testConstructorMmrAboveTheCeilingAdmitsAnUnderflowingDiscount`.
+    #[test]
+    fn liquidation_discount_can_exceed_the_liquidation_scale() {
+        let vm = TestVM::new();
+        let mut e = PerpEngine::from(&vm);
+        let liq_dec = U256::from(1_000_000u64);
+        e.liquidation_decimals.set(liq_dec);
+
+        // Largest configuration the timelocked path admits: the deepest discount stays on-scale,
+        // with four units to spare. The live configuration (MMR 40_000) doubles to 39_998.
+        e.mmr.set(U32::from(999_999u32));
+        e.liquidation_discount.set(U32::from(499_998u32)); // strict `< MMR / 2`
+        assert!(
+            e.compute_liquidation_discount(U256::ZERO) < liq_dec,
+            "under the timelocked MMR ceiling the deepest discount stays on-scale"
+        );
+
+        // Smallest configuration only an initializer can produce that leaves the scale: the
+        // caller's `liquidation_decimals - discount` has no valid result here.
+        e.mmr.set(U32::from(1_000_004u32));
+        e.liquidation_discount.set(U32::from(500_001u32)); // still strict `< MMR / 2`
+        assert!(
+            e.compute_liquidation_discount(U256::ZERO) > liq_dec,
+            "past the ceiling the deepest discount leaves the scale"
+        );
+        // And this is what the caller then computes. U256 subtraction here wraps rather than
+        // trapping — in every profile, not only in the release build — so the transfer would be
+        // sized from a value just under 2^256 instead of reverting the way the reference does.
+        assert!(
+            liq_dec - e.compute_liquidation_discount(U256::ZERO) > liq_dec,
+            "the caller's subtraction wraps on this input instead of trapping"
+        );
     }
 
     // Two configuration states that are reachable BY DESIGN under strict parity with the
@@ -4573,8 +4630,12 @@
     fn short_close_residual_stays_within_the_dust_bound() {
         for (scale, debt) in [(1u64, 10u64), (10u64, 100u64), (100u64, 1_000u64)] {
             let residual = short_close_residual(scale, debt).expect("short close must not revert");
-            // The executable quote searches to a dust tolerance expressed in exactly these units, so
-            // the residual is bounded by construction rather than by pool depth.
+            // At a flat price the executable quote inverts EXACTLY, at every pool depth — assert
+            // that, not merely that the residual fits the bound. The bound is ten orders of
+            // magnitude away, so a `< 1e10` assertion would sit silent through any regression that
+            // reintroduced an inversion residual right up to the C0 brick threshold.
+            assert_eq!(residual, U256::ZERO, "pool x{scale}: flat-price short close must invert exactly");
+            // Kept as the documented secondary ceiling: this is the bound production checks.
             assert!(
                 residual < U256::from(10_000_000_000u64),
                 "pool x{scale}: residual {residual} reached the flat dust bound",

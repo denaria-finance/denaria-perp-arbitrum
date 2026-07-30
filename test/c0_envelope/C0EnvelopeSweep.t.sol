@@ -84,6 +84,10 @@ contract C0EnvelopeSweepTest is Test, PerpPairTestDeploymentHelper {
     uint256 constant P0 = 100 * 1e8; // open price
     uint256 constant DUST_BOUND = 1e10;
 
+    /// @dev Worst short-close residual seen across the cells of one sweep, logged at the end so
+    ///      the grid's utilisation of the dust bound is visible and not merely asserted.
+    uint256 internal maxObservedResidual;
+
     function setUp() public {
         uint256 numStableCoins = 2;
         FiatTokenV2 stablecoin;
@@ -284,12 +288,33 @@ contract C0EnvelopeSweepTest is Test, PerpPairTestDeploymentHelper {
             )
         );
 
-        // consistency check between predicted residual and observed outcome (shorts only)
+        // EVERY cell must close, which is the property the harness exists to hold. This assert
+        // deliberately sits OUTSIDE the short-only block below: it used to be inside it, which
+        // left all 120 LONG cells asserting nothing at all — they only logged, so a long close
+        // that reverted for any reason still passed.
+        assertEq(outcome, "SUCCESS", "close must succeed in every grid cell");
+
+        // The residual is only predictable for shorts (longs never reach the C0 buy-back path),
+        // so the residual-versus-outcome consistency check stays short-only.
         if (!isLong) {
             bool predictedRevert = predictedResidual >= predictedBound;
             bool observedC0 = keccak256(bytes(outcome)) == keccak256(bytes("REVERT(C0)"));
             assertEq(predictedRevert, observedC0, "predicted vs observed C0 outcome diverged");
             assertEq(observedC0, false, "C0 residual envelope outgrew the production bound");
+
+            // Headroom canary. `predictedRevert` above only fires once the residual has ALREADY
+            // reached the bound — by which point real short closes are bricked. The grid's worst
+            // cell currently sits at ~90% of the bound, and the bound is the same constant as the
+            // quote's own search tolerance, so there is no engineered margin to absorb a curve or
+            // fee change. Fail while there is still room to react rather than at the cliff.
+            if (predictedResidual > maxObservedResidual) {
+                maxObservedResidual = predictedResidual;
+            }
+            assertLt(
+                predictedResidual,
+                DUST_BOUND * 95 / 100,
+                "short close residual entered the last 5% of the dust bound - recalibrate before it bricks"
+            );
         }
     }
 

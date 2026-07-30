@@ -274,4 +274,93 @@ contract ConfigInvariantsTest is Test {
         vm.expectRevert(bytes("C"));
         fresh.setTimeLockedParameters(MMR, 0, FLAT_TRADING_FEE, overSum, 0, 5e8, 1e10, 1e6, 10, 1e18);
     }
+
+    // --- liquidation-discount scale: what the MMR bounds are actually load-bearing for -------
+    //
+    // `liquidationDecimals` (1e6, `PerpStorage.Decimals`) is the scale the discount is expressed
+    // in. The liquidation transfer computes `liquidationDecimals - discount`, so a discount above
+    // that scale is an underflow — and `_computeLiquidationDiscount` returns up to TWICE the
+    // stored `liquidationDiscount` (at margin ratio 0, the deepest bad-debt case). The two bounds
+    // that keep the doubled value under the scale live in different functions, and only their
+    // CONJUNCTION is sufficient: `setUnguardedParameters` requires `discount < MMR / 2`, and the
+    // timelocked path requires `MMR < 1e6`.
+    uint256 internal constant LIQUIDATION_DECIMALS = 1e6;
+
+    /// @dev The timelock bound is exactly sufficient — and only just. At the largest MMR the
+    ///      timelocked path accepts, the largest compliant discount still doubles to strictly
+    ///      under the liquidation scale, with four units to spare. This is the property that
+    ///      makes the live configuration safe (MMR 40_000 doubles to 39_998, ~25x of headroom).
+    function testTimelockMmrCeilingKeepsTheDoubledDiscountUnderTheLiquidationScale() public {
+        uint256 maxTimelockedMmr = 1e6 - 1; // prepare requires _MMR < 1e6
+        PerpPair pair = _deploy(maxTimelockedMmr, ORACLE_DECIMALS * 9 / 10);
+
+        uint32 maxCompliantDiscount = uint32(maxTimelockedMmr / 2 - 1); // strict `< MMR / 2`
+        pair.setUnguardedParameters(oracle, FEE_FRONTEND, feeProtocolAddr, 1e8, 15, maxCompliantDiscount, 10, 10);
+
+        (,,,,,, uint256 discount,,,,) = pair.ReadFees();
+        assertEq(discount, maxCompliantDiscount, "discount stored");
+        assertLt(2 * discount, LIQUIDATION_DECIMALS, "doubled discount must stay under the liquidation scale");
+    }
+
+    /// @dev The gap: the `MMR < 1e6` ceiling exists ONLY on the timelocked path. The constructor
+    ///      bounds MMR from below (SET4) and not from above, so a deployment can start beyond the
+    ///      ceiling the same contract later enforces on itself.
+    function testConstructorAcceptsAnMmrTheTimelockedPathRejects() public {
+        PerpPair beyondCeiling = _deploy(1e6, ORACLE_DECIMALS * 9 / 10);
+        assertEq(beyondCeiling.MMR(), 1e6, "constructor accepts an MMR at the timelocked ceiling");
+
+        vm.expectRevert(bytes("C"));
+        beyondCeiling.prepareTimeLockedParameters(1e6, 0, FLAT_TRADING_FEE, FEE_LP, 0, 5e8, 1e10, 1e6, 10, 1e18);
+    }
+
+    /// @dev Consequence of that gap, characterised at its exact threshold: past a constructor MMR
+    ///      of 1_000_004 the largest compliant discount doubles PAST the liquidation scale, so
+    ///      `liquidationDecimals - discount` in `_liquidatePosition` underflows on a deep bad-debt
+    ///      liquidation. The two implementations then disagree: this one reverts on checked
+    ///      arithmetic, while the engine's U256 subtraction wraps and sizes the transfer from a
+    ///      value just under 2^256. Documented, not fixed: reaching it needs a maintenance margin
+    ///      above 100%, which only governance can set and which makes every position instantly
+    ///      liquidatable. See the engine-side twin,
+    ///      `liquidation_discount_can_exceed_the_liquidation_scale`.
+    function testConstructorMmrAboveTheCeilingAdmitsAnUnderflowingDiscount() public {
+        uint256 mmrPastTheThreshold = 1_000_004;
+        PerpPair pair = _deploy(mmrPastTheThreshold, ORACLE_DECIMALS * 9 / 10);
+
+        uint32 compliantDiscount = uint32(mmrPastTheThreshold / 2 - 1); // 500_001, accepted by the setter
+        pair.setUnguardedParameters(oracle, FEE_FRONTEND, feeProtocolAddr, 1e8, 15, compliantDiscount, 10, 10);
+
+        (,,,,,, uint256 discount,,,,) = pair.ReadFees();
+        assertGt(2 * discount, LIQUIDATION_DECIMALS, "the accepted discount doubles past the liquidation scale");
+
+        // One notch lower is still safe, which pins the threshold rather than merely bracketing it.
+        PerpPair belowThreshold = _deploy(mmrPastTheThreshold - 2, ORACLE_DECIMALS * 9 / 10);
+        belowThreshold.setUnguardedParameters(
+            oracle, FEE_FRONTEND, feeProtocolAddr, 1e8, 15, uint32(mmrPastTheThreshold / 2 - 2), 10, 10
+        );
+        (,,,,,, uint256 safeDiscount,,,,) = belowThreshold.ReadFees();
+        assertEq(2 * safeDiscount, LIQUIDATION_DECIMALS, "one notch lower lands exactly on the scale, not past it");
+    }
+
+    /// @dev The residual documented above as the MMR-decrease stranding, stated as the invariant it
+    ///      breaks rather than as the bound it violates: `discount < MMR / 2` exists so that the
+    ///      largest liquidation bonus (twice the stored discount) cannot exceed the maintenance
+    ///      margin that is supposed to cover it. After an MMR decrease the stored discount is
+    ///      unchanged, so that relation inverts — a liquidation near the new threshold hands the
+    ///      liquidator more than the whole margin buffer, and the excess is bad debt.
+    function testMmrDecreaseInvertsTheBonusVersusMarginBufferRelation() public {
+        PerpPair pair = _pair();
+        pair.setUnguardedParameters(oracle, FEE_FRONTEND, feeProtocolAddr, 1e8, 15, uint32(MMR / 2 - 1), 10, 10);
+
+        (,,,,,, uint256 discount,,,,) = pair.ReadFees();
+        assertLt(2 * discount, pair.MMR(), "bonus ceiling sits under the margin buffer while the bound holds");
+
+        uint256 lowerMmr = 100;
+        pair.prepareTimeLockedParameters(lowerMmr, 0, FLAT_TRADING_FEE, FEE_LP, 0, 5e8, 1e10, 1e6, 10, 1e18);
+        skip(11);
+        pair.setTimeLockedParameters(lowerMmr, 0, FLAT_TRADING_FEE, FEE_LP, 0, 5e8, 1e10, 1e6, 10, 1e18);
+
+        (,,,,,, uint256 strandedDiscount,,,,) = pair.ReadFees();
+        assertEq(strandedDiscount, discount, "the decrease leaves the discount untouched");
+        assertGt(2 * strandedDiscount, pair.MMR(), "bonus ceiling now exceeds the entire margin buffer");
+    }
 }

@@ -11,13 +11,12 @@ import "../../src/PerpPair.sol";
 ///         `close_pnl_differential`) and asserts bit-exact. Env mirrors the Stylus stub:
 ///         oracle 3000e8, vault collateral 1000e18.
 ///
-///         Short SELF-close (closeAndWithdraw on a short) is intentionally NOT exercised
-///         here: on the real `PerpPair` it buys back `debtAsset + dx0` and reverts `C0`
-///         unless the post-buyback residual lands within the dust bound
-///         (max(1e10, globalLiquidityStable / 1e10)) — a real-engine property,
-///         not a Stylus divergence. Short CLOSE is covered via the liquidation path
-///         (which closes shorts through `liquidate`) and the C0
-///         envelope harness (test/c0_envelope/).
+///         The lane covers long closes, `realizePnL`, a pair of trades inside ONE curve window
+///         (so the incremental short pricing is exercised rather than degenerating to the
+///         aggregate) and a short SELF-close. The short self-close was long avoided here because
+///         it reverted `C0`; the close path now prices the buy-back by bisecting through
+///         `computeExecutableAmountInLong`, which bounds the residual inside the flat dust bound,
+///         so the case is reachable and is the one that pins that quote cross-language.
 contract MockOracleC {
     function verifyReportIfNecessary(bytes calldata) external { }
 
