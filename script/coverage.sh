@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rust coverage baseline (H8) via cargo-llvm-cov over the deployed logic (the Rust
+# Rust coverage baseline via cargo-llvm-cov over the deployed logic (the Rust
 # engine, run under `stub_boundary` so the oracle-path tests actually execute).
 #
 # Purpose: establish a REALISTIC baseline before enforcing any coverage threshold —

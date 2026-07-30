@@ -7,7 +7,7 @@
 #   bash script/build_deploy_artifact.sh            # build + wasm-opt + validate + report
 #   RPC=https://sepolia-rollup.arbitrum.io/rpc bash script/build_deploy_artifact.sh  # + activation check
 #
-# Requires: the pinned Rust toolchain (rust-toolchain.toml), cargo-stylus 0.10.7, curl/tar.
+# Requires: the pinned Rust toolchain (rust-toolchain.toml), cargo-stylus 0.10.8, curl/tar.
 # wasm-tools and wasm-opt are auto-fetched if missing.
 set -euo pipefail
 

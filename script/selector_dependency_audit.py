@@ -4,10 +4,11 @@
 Motivation: the selector manifest compares the engine's
 OWN ABI against the legacy PerpPair, but never checked who CONSUMES those selectors.
 `UtilMath.calcMR`/`returnTradeInfo`/`_calcPnL` make typed `IPerpPair(...)` callbacks
-into the engine, and `Vault._checkMR -> UtilMath.calcMR` (delegatecalled library)
-inherits them transitively — so a deploy can leave every UtilMath
-read path (and Vault.removeCollateral) reverting on selectors the Stylus engine no
-longer exposes. This audit closes that class of bug, in BOTH directions:
+into the engine, and any caller of those delegatecalled libraries inherits them
+transitively — so a deploy can leave every UtilMath read path reverting on selectors the
+Stylus engine no longer exposes. `Vault.removeCollateral` now calls the engine directly
+(`withdrawalCheckData`), which makes it a first-order consumer rather than a transitive
+one, and its selector must exist on the engine being deployed against. This audit closes that class of bug, in BOTH directions:
 
   A. Solidity stack -> engine    : every typed engine callback in the deployed
      Solidity sources must exist on the Stylus engine surface (extracted from

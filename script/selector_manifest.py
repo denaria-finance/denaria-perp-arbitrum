@@ -146,8 +146,7 @@ DIVERGENT = {}
 
 # Intentionally NOT exposed on the Stylus engine (documented gaps), grouped by reason.
 #
-# Read parity: the binding limit is the cargo-stylus 0.10.7
-# activation-simulation cap (~57.8-58.0 KB brotli in the stable build measurements),
+# Read parity: the binding limit is the activation-simulation cap (~57.8-58.0 KB brotli in the stable build measurements),
 # NOT a 24 KB wall (24,576 B is the per-fragment chunk size). Exposed on the engine:
 # curveParameters,
 # totalTraderExposureSign, computeFundingRate, _computeFundingFee (required by the UtilMath

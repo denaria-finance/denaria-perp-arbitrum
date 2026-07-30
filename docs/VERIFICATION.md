@@ -70,6 +70,23 @@ tree root changes crate-metadata hashes, so the *raw* tree sha differs from a pl
 build while remaining stable across environments — expected and correct). Deploy the artifact
 built **from the tree**, and record both hashes as the verification evidence.
 
+### Tooling caveats
+
+Observed while adopting the current `cargo-stylus` line; none is fixed upstream yet, and each
+can silently produce a false "verified" or a half-deployed engine.
+
+- **The Docker verify runner swallows the child exit status.** The outer runner waits for the
+  inner process but does not propagate its exit code, so a byte MISMATCH inside can still
+  surface as an outer success. Never treat a zero exit as proof: require an explicit positive
+  success marker in the output and reject any failure text.
+- **`--source-files-for-project-hash` is not wired.** The flag exists but the current argument
+  forwarding does not apply it. Do not rely on it to shape the hashed file set — control that
+  by controlling the tree you publish (which is what `generate_verify_tree.sh` is for).
+- **A `#[constructor]` deploy needs the canonical `StylusDeployer` on the target chain.** The
+  CLI routes the atomic deploy+activate+initialize through it. On a chain without that
+  contract the deploy still activates but the constructor does **not** run, leaving the engine
+  uninitialized — always confirm initialization after deploying, whichever path was used.
+
 ### Recorded hashes
 
 The current recorded hashes are baked into `script/generate_verify_tree.sh`

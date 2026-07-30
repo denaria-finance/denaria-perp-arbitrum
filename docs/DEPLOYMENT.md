@@ -43,15 +43,25 @@ Keep `.env` out of Git.
 
 ## Stylus Engine
 
-Build the engine artifact:
+Build the engine artifact with the canonical pipeline — this is the only supported way to
+produce it:
 
 ```bash
-cargo build --release --target wasm32-unknown-unknown -p denaria-perp-engine-stylus
+bash script/build_deploy_artifact.sh
+# or, to also run the read-only on-chain activation simulation:
+RPC="$ARBITRUM_SEPOLIA_RPC_URL" bash script/build_deploy_artifact.sh
 ```
 
-Deploy and activate it with cargo-stylus. The deployed artifact must be produced from the
-pinned toolchain and `.cargo/config.toml`; changing either changes the WASM hash and may
-affect activation size.
+It regenerates the verification tree, builds the raw wasm, applies the pinned `wasm-opt -Oz`
+pass, validates the module, checks the activation cap, and writes `engine.Oz.wasm` — the file
+the deploy step below uploads. Do **not** deploy a plain `cargo build --release` output: it is
+un-optimized, currently well over the activation cap, and will not activate. That command is
+useful only as a compile check during development.
+
+Deploy and activate `engine.Oz.wasm` with cargo-stylus. The deployed artifact must be produced
+from the pinned toolchain, `.cargo/config.toml` and Binaryen version; changing any of them
+changes the WASM hash and may affect activation size. See
+[VERIFICATION.md](VERIFICATION.md) for the provenance chain and the tooling caveats.
 
 After activation, cache the program:
 
@@ -86,8 +96,11 @@ after activation.
 > Target flow: an atomic deploy + activate + initialize via a real `#[constructor]`
 > (StylusDeployer) once cargo-stylus routes a constructor through `--wasm-file`, or once the
 > un-optimized build fits under the activation cap and the native `cargo stylus deploy` path can
-> be used. Until then `initializeProduction` is the supported path; a hardcoded-admin caller
-> check makes the two-step deploy front-run-proof.
+> be used. Until then `initializeProduction` is the supported path, and it is **not**
+> front-run-proof: the initializer grants the admin roles to whoever calls it, so between
+> activation and initialization a third party can claim them. Send it immediately after
+> activation, from the same operator, as the very next transaction, and confirm the roles landed
+> on the intended address before doing anything else.
 
 Order:
 

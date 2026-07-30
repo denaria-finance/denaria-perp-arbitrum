@@ -28,7 +28,11 @@ src/
                                   EIP-712 / ERC2771-style bundler for the Stylus engine
   perpModules/                    Solidity reference-engine modules
   storage/PerpStorage.sol         Shared Solidity reference storage
-  util/                           Solidity CurveMath, MatrixMath, UtilMath, FeeManager
+  util/                           Solidity CurveMath, MatrixMath, UtilMath
+  manager/FeeManager.sol          Liquidity and trading fee curves
+  interfaces/                     Engine, Vault and oracle interfaces
+  test_support/                   Test-only mirrors and price providers (never deployed)
+  token/                          Test stablecoin used by the suites
   rust/CurveMath.rs               Rust CurveMath crate source
 
 perp-engine/
@@ -38,17 +42,22 @@ test/
   differential/                   Solidity-vs-Stylus behavior vectors
   fixtures/                       Golden vectors generated from Solidity
   parity/                         Read-surface and selector parity tests
+  config/  funding/  curve_math/  Golden-vector generators per domain
+  c0_envelope/                    Close dust-bound envelope sweep
+  bench/                          Local gas reference (logged, not asserted)
+  helpers/                        Shared deployment helper for the suites
 
+assertions/                       Credible-layer assertions (external tool lane, not in CI)
 abis/                             Front-end ABIs and latest address map
 docs/                             Stable architecture, deployment, verification, and test docs
-script/                           Deploy, smoke, audit, and parity helper scripts
+script/                           Deploy, smoke, audit, and artifact helper scripts
 ```
 
 ## Prerequisites
 
 - Foundry / Forge
 - Rust with the pinned toolchain in `rust-toolchain.toml`
-- `cargo-stylus` 0.10.7 for Stylus build/deploy work
+- `cargo-stylus` 0.10.8 for Stylus build/deploy work
 - Git submodules
 
 Initialize dependencies after cloning:
@@ -100,12 +109,6 @@ cargo test
 cargo test -p denaria-perp-engine-stylus --features stub_boundary
 ```
 
-Run the standalone CurveMath parity harness:
-
-```bash
-script/test-curve-math-parity.sh
-```
-
 More detail is in [docs/TESTING.md](docs/TESTING.md).
 
 ## Deployment
@@ -133,6 +136,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 - [Verification](docs/VERIFICATION.md)
 - [Testing](docs/TESTING.md)
 - [ABIs and latest addresses](abis/README.md)
+- [Whitepaper](docs/whitepaper.pdf) ([source](docs/whitepaper.tex))
 
 ## License
 

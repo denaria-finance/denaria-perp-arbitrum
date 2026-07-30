@@ -60,20 +60,20 @@ They lock:
 - event selectors;
 - parameter hashes.
 
-Run the standalone CurveMath parity helper:
-
-```bash
-script/test-curve-math-parity.sh
-```
+The Rust port is compared against these vectors by the `parity` module inside the curve-math
+crate, which the `cargo test -p denaria-curve-math-stylus` gate runs.
 
 ## Dust-Bound Envelope Harness
 
-`test/c0_envelope/C0EnvelopeSweep.t.sol` is a 240-cell regression harness for the
-pool-relative close dust bound (`max(1e10, globalLiquidityStable / 1e10)` on the
-post-buy-back residual). The curve inversion residual grows with pool depth, not
-position size; every cell asserts both prediction/outcome consistency and zero `C0`
-reverts. If this harness fails after a curve or solver change, the bound envelope
-analysis must be redone before deploying.
+`test/c0_envelope/C0EnvelopeSweep.t.sol` is a 240-cell regression harness for the flat
+close dust bound (`1e10` on the value of the post-buy-back residual). The bound was
+briefly pool-relative, because the analytic curve inversion left a residual that grew
+with pool depth; the close path now prices the buy-back by bisecting through
+`computeExecutableAmountInLong` to a tolerance expressed in exactly those units, so the
+residual is bounded by the QUOTE rather than by the pool and a flat bound holds at every
+depth. Every cell asserts both prediction/outcome consistency and zero `C0` reverts. If
+this harness fails after a curve or solver change, the bound envelope analysis must be
+redone before deploying.
 
 `test/bench/DemoScenarioGasBench.t.sol` is the local pure-Solidity gas reference for
 the live-deployment comparison in [GAS_BENCHMARKS.md](GAS_BENCHMARKS.md) (not part of

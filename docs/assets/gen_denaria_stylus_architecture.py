@@ -16,6 +16,15 @@
 Reproducible: edit and re-run.
 """
 import html
+import json
+import pathlib
+
+# Read the golden-vector count from the fixture itself: a hardcoded figure here rots
+# silently every time a vector is added.
+_VEC = json.loads(
+    (pathlib.Path(__file__).resolve().parents[2] / "test/fixtures/curve_math_solidity_vectors.json").read_text()
+)
+VECTOR_COUNT = _VEC.get("vectorCount") or len(_VEC["vectors"])
 
 W, H = 2300, 1480
 FONT = "DejaVu Sans, Arial, Helvetica, sans-serif"
@@ -164,7 +173,7 @@ node(782, 1036, 376, 96, "Cubic curve solver", [
 node(1182, 1036, 360, 96, "MatrixMath + UtilMath", [
     "2×2 matMul/inverse · clamp",
     "signedSum · calcEMA · divCeil · _calcPnL",
-    "73 golden vectors — bit-exact"], stroke=GROUPS["rust"][0])
+    f"{VECTOR_COUNT} golden vectors — bit-exact"], stroke=GROUPS["rust"][0])
 txt(782, 1170, "Same math as the deployed Solidity libraries (right) — golden-vector-locked, so quotes and execution agree bit-exactly.",
     size=13, fill=SUB, italic=True)
 txt(782, 1196, "Engine ↔ crate: a normal in-WASM call (the standalone crate also deploys on its own with its own #[entrypoint]).",
@@ -177,8 +186,8 @@ node(1662, 214, 566, 132, "Collateral accounting", [
     "userCollateral · ratio snapshots · LostAndFound",
     "_msgSender() = trustedForwarder (the manager)"], stroke=GROUPS["vault"][0])
 node(1662, 360, 566, 146, "reads the engine (cross-calls):", [
-    "lastOperationTimestamp · calcPnL · updateFG",
-    "MMR · maxLpLeverage · user/liquidityPosition",
+    "lastOperationTimestamp · oracle · updateFG",
+    "withdrawalCheckData — the whole exit check in one call",
     "→ each crosses the WASM boundary (≈+24k pedestal)"], stroke=GROUPS["vault"][0], accent=SEAM)
 
 panel(1640, 568, 610, 168, "oracle", "TWAP Oracle Middleware", "Solidity")
@@ -196,7 +205,7 @@ node(1662, 946, 566, 110, "FE quoting layer — UtilMath · CurveMath", [
     "reads engine state via the read-parity getters",
     "same ABI as the legacy system — FE migration = address swap"], stroke=GROUPS["libs"][0])
 node(1662, 1066, 566, 104, "Vault-linked — UtilMath (+ MatrixMath · FeeManager)", [
-    "DELEGATECALL: calcMR inside removeCollateral's margin guard",
+    "DELEGATECALL: quote-path math (the exit check moved into the engine)",
     "EVM linked-library mechanism — not available to a Stylus program",
     "bit-exact twins of the engine's embedded Rust crate"], stroke=GROUPS["libs"][0], accent=GROUPS["libs"][0])
 

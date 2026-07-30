@@ -98,7 +98,7 @@
 <text x="1198" y="1060" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">MatrixMath + UtilMath</text>
 <text x="1198" y="1080" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">2×2 matMul/inverse · clamp</text>
 <text x="1198" y="1098" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">signedSum · calcEMA · divCeil · _calcPnL</text>
-<text x="1198" y="1116" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">73 golden vectors — bit-exact</text>
+<text x="1198" y="1116" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">98 golden vectors — bit-exact</text>
 <text x="782" y="1170" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#5b6b82" text-anchor="start" font-style="italic">Same math as the deployed Solidity libraries (right) — golden-vector-locked, so quotes and execution agree bit-exactly.</text>
 <text x="782" y="1196" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13" font-weight="normal" fill="#5b6b82" text-anchor="start" font-style="italic">Engine ↔ crate: a normal in-WASM call (the standalone crate also deploys on its own with its own #[entrypoint]).</text>
 <rect x="1640" y="168" width="610" height="360" rx="14" ry="14" fill="#ecfbf7" stroke="#0d9488" stroke-width="2.2"/>
@@ -114,8 +114,8 @@
 <rect x="1662" y="360" width="566" height="146" rx="9" ry="9" fill="#ffffff" stroke="#0d9488" stroke-width="1.8"/>
 <rect x="1662" y="360" width="6" height="146" rx="3" fill="#db2777"/>
 <text x="1684" y="384" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">reads the engine (cross-calls):</text>
-<text x="1684" y="404" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">lastOperationTimestamp · calcPnL · updateFG</text>
-<text x="1684" y="422" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">MMR · maxLpLeverage · user/liquidityPosition</text>
+<text x="1684" y="404" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">lastOperationTimestamp · oracle · updateFG</text>
+<text x="1684" y="422" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">withdrawalCheckData — the whole exit check in one call</text>
 <text x="1684" y="440" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">→ each crosses the WASM boundary (≈+24k pedestal)</text>
 <rect x="1640" y="568" width="610" height="168" rx="14" ry="14" fill="#fff7ec" stroke="#d97706" stroke-width="2.2"/>
 <rect x="1640" y="568" width="610" height="36" rx="14" ry="14" fill="#d97706"/>
@@ -144,7 +144,7 @@
 <rect x="1662" y="1066" width="566" height="104" rx="9" ry="9" fill="#ffffff" stroke="#475569" stroke-width="1.8"/>
 <rect x="1662" y="1066" width="6" height="104" rx="3" fill="#475569"/>
 <text x="1684" y="1090" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" font-weight="bold" fill="#1e293b" text-anchor="start">Vault-linked — UtilMath (+ MatrixMath · FeeManager)</text>
-<text x="1684" y="1110" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">DELEGATECALL: calcMR inside removeCollateral&#x27;s margin guard</text>
+<text x="1684" y="1110" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">DELEGATECALL: quote-path math (the exit check moved into the engine)</text>
 <text x="1684" y="1128" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">EVM linked-library mechanism — not available to a Stylus program</text>
 <text x="1684" y="1146" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12.5" font-weight="normal" fill="#5b6b82" text-anchor="start">bit-exact twins of the engine&#x27;s embedded Rust crate</text>
 <polyline points="298,196 360,200" fill="none" stroke="#334155" stroke-width="2.4" marker-end="url(#ad)" stroke-linejoin="round"/>

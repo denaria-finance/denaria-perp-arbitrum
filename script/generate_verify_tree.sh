@@ -34,12 +34,13 @@ set -euo pipefail
 # Expected raw wasm from building THIS tree. The size matches a plain repo build
 # of the engine, but the sha256 differs on purpose: promoting the engine to the
 # workspace root changes Rust's crate-metadata hashes, so the tree has its own
-# deterministic, path-independent hash. NOTE: this ~307 KB tree wasm is NOT the
-# deployed artifact and is OVER the ~283 KB activation cap by design — the deploy
-# artifact is this wasm run through `wasm-opt -Oz` (binaryen v119) to ~254 KB,
-# which activates. Because cargo-stylus does not wasm-opt, `cargo stylus verify`
-# rebuilds to this ~319 KB tree and cannot reproduce the deployed ~254 KB artifact;
-# re-derive the deployed bytes deterministically via the documented wasm-opt step.
+# deterministic, path-independent hash. NOTE: this tree wasm is NOT the deployed
+# artifact and is OVER the activation cap by design — the deploy artifact is this
+# wasm run through `wasm-opt -Oz` (see BINARYEN_VERSION below), which activates.
+# Sizes are deliberately not quoted in prose here: EXPECT_SIZE below and the
+# deploy-artifact report are the source of truth. Because cargo-stylus does not
+# wasm-opt, `cargo stylus verify` rebuilds this tree and cannot reproduce the
+# deployed bytes; re-derive them via the documented wasm-opt step.
 EXPECT_SIZE=326426
 EXPECT_SHA256=ef021c78379042407cdd4edb6298951027b1fd139f84af12db11e5cb6cb997d2
 
@@ -129,10 +130,9 @@ awk '
 ' "$REPO_ROOT/perp-engine/src/lib.rs" > "$OUT_DIR/src/lib.rs" || die "lib.rs test-module pair not found (source drifted)"
 ! grep -q '^mod tests;' "$OUT_DIR/src/lib.rs" || die "mod tests; not stripped from lib.rs"
 
-# 3) Curve crate: copy ONLY Cargo.toml + CurveMath.rs. The rest of src/rust/ holds
-#    a script-driven parity fixture (curve_math_parity.inc) that must stay in the
-#    main repo but out of the hashed tree. Strip the inline `#[cfg(test)] mod
-#    parity` block (to EOF) from the copied CurveMath.rs.
+# 3) Curve crate: copy ONLY Cargo.toml + CurveMath.rs, then strip the inline
+#    `#[cfg(test)] mod parity` block (to EOF) from the copy, so no test code
+#    reaches the hashed tree.
 CM_SRC="$REPO_ROOT/src/rust/CurveMath.rs"
 cut_at=$(awk 'prev == "#[cfg(test)]" && $0 ~ /^mod parity[[:space:]]*\{/ { print NR - 1; exit } { prev = $0 }' "$CM_SRC")
 [ -n "$cut_at" ] || die "parity test module not found in CurveMath.rs (source drifted)"

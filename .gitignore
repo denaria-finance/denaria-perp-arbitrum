@@ -44,3 +44,6 @@ nitro-addresses.json
 
 # Coverage output (script/coverage.sh --lcov / --html)
 lcov.info
+
+# Generated alongside the SVG when cairosvg is present; the SVG is the canonical asset.
+docs/assets/denaria_stylus_architecture.png

@@ -13,7 +13,7 @@
 # message rather than a false pass. (The money-path logic itself was validated on Nitro during the
 # wasm-opt differential; this lane codifies the production constructor deploy path.)
 #
-# Requires: docker, the pinned Rust toolchain + wasm32 target, cargo-stylus 0.10.7, foundry, binaryen.
+# Requires: docker, the pinned Rust toolchain + wasm32 target, cargo-stylus 0.10.8, foundry, binaryen.
 # Heavy: pulls a ~3.5 GB Nitro image on first run.
 set -euo pipefail
 

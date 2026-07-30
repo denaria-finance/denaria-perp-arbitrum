@@ -163,13 +163,17 @@ entries a periphery operation makes, each paying the fixed ~22–25k entry cost 
   ratio snapshot that cannot flip until a fixed time window elapses. The read is now skipped
   while the operation lands inside that window (the common case) and taken only when a flip
   is actually possible. On a deposit this removes the operation's only engine round-trip.
-- **The margin check is one engine call.** `Vault._checkMR` orchestrated the margin
+- **The withdrawal check is one engine call.** `Vault._checkMR` orchestrated the margin
   computation as roughly a dozen separate reads into the engine (through `UtilMath.calcMR`,
-  with several position/liquidity reads duplicated). A single engine view, `marginCheckData`,
-  now returns the margin ratio together with the raw position/liquidity fields and the
-  leverage/MMR bounds the Vault's bad-debt guard needs, all computed in one WASM frame; the
-  guard itself stays in the Vault. `UtilMath.calcMR` is retained for the front-end quote path
-  and remains the differential reference.
+  with several position/liquidity reads duplicated). A single engine view,
+  `withdrawalCheckData`, now returns the fee-inclusive exit PnL together with the margin
+  verdict itself, all computed in one WASM frame — the whole guard moved engine-side and
+  `_checkMR` is gone. Note this is a correctness fix first and a gas win second: the old check
+  valued the position at its mark and ignored what leaving actually costs (trade exit fee, LP
+  removal fee, closing-curve slippage), so a position could pass it and still be unable to
+  exit without going into bad debt. `UtilMath.calcMR` is retained for the front-end quote path
+  and remains the differential reference; the engine's `marginCheckData` remains as the
+  mark-valued margin read, with no production Solidity caller.
 
 Each eliminated engine entry removes the fixed ~22–25k L2 WASM-entry cost (§2.1). The
 consolidated margin call is the largest of these: it collapses the multi-read fan-out on the
