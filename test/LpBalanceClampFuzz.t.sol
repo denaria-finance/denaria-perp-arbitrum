@@ -163,3 +163,184 @@ contract LpBalanceClampFuzzTest is Test {
         harness.getLpLiquidityBalance(LP);
     }
 }
+
+import { console } from "forge-std/Test.sol";
+import { Vault } from "../src/Vault.sol";
+import { LostAndFound } from "../src/LostAndFound.sol";
+import { FiatTokenV2 } from "../src/token/USDCe.sol";
+import { TestPriceProvider } from "../src/test_support/TestPriceProvider.sol";
+import { PerpMultiCalls } from "../src/manager/multiCallManager.sol";
+import { PerpPairTestDeploymentHelper } from "./helpers/PerpPairTestDeploymentHelper.sol";
+
+/// @dev End-to-end counterpart to the clamp fuzz above: the fuzz drives the recovery through a
+///      harness and compares against the same recovery, so it cannot show that the clamp is what
+///      keeps the pool solvent. This suite reproduces the stable-only-LP drain on the real
+///      contracts (real Vault, real curve, real trades) and asserts the ECONOMIC outcome.
+contract LpNegativeLegDrainTest is Test, PerpPairTestDeploymentHelper {
+    Vault internal vault;
+    PerpPair internal perpPair;
+    PerpMultiCalls internal multiCallManager;
+    LostAndFound internal lostAndFound;
+    TestPriceProvider internal oracle;
+    FiatTokenV2 internal stable;
+
+    uint256 internal constant ORACLE_DECIMALS = 1e8;
+    uint256 internal constant MMR = 38 * 1e6 / 1000;
+    uint32 internal constant FEE_FRONTEND = 5 * uint32(1e6) / 100;
+    uint32 internal constant FEE_LP = 5 * uint32(1e6) / 10;
+    uint256 internal constant TRADING_FEE = 1e18 / 1000;
+    uint256 internal constant FLAT_TRADING_FEE = 1e17;
+    uint256 internal constant MAX_USER_LIQUIDITY_FEE = 1e30;
+
+    address internal feeProtocolAddr = makeAddr("denaria");
+    address internal frontendAddress = makeAddr("frontend");
+    address internal minter = makeAddr("minter");
+    bytes internal fakeReport;
+
+    address internal victimLp = makeAddr("alice");
+    address internal attackerLp = makeAddr("bob");
+    address internal attackerTrader = makeAddr("charlie");
+    address internal churnLong = makeAddr("david");
+    address internal churnShort = makeAddr("eve");
+
+    function setUp() public {
+        stable = new FiatTokenV2();
+        stable.initialize("USDCe", "USDC.e", "USD", 18, minter, minter, minter, minter);
+        vm.prank(minter);
+        stable.configureMinter(minter, 1e40);
+
+        address[] memory coins = new address[](1);
+        coins[0] = address(stable);
+        uint256[] memory depositThresholds = new uint256[](1);
+        depositThresholds[0] = 1e8;
+        uint256[] memory withdrawalThresholds = new uint256[](1);
+        withdrawalThresholds[0] = 1e8;
+        uint256[] memory stableDecimals = new uint256[](1);
+        stableDecimals[0] = 1e18;
+
+        oracle = new TestPriceProvider();
+        multiCallManager = new PerpMultiCalls();
+        vault =
+            new Vault(address(multiCallManager), 100, coins, depositThresholds, withdrawalThresholds, stableDecimals);
+        perpPair = _deployPerpPairForTest(
+            address(oracle),
+            address(vault),
+            address(multiCallManager),
+            MMR,
+            bytes32("BTC"),
+            FEE_FRONTEND,
+            FEE_LP,
+            feeProtocolAddr,
+            TRADING_FEE,
+            FLAT_TRADING_FEE,
+            ORACLE_DECIMALS * 9 / 10
+        );
+        multiCallManager.initializeAddresses(address(perpPair), address(vault));
+        lostAndFound = new LostAndFound();
+        vault.initializeParameters(address(perpPair), address(lostAndFound));
+        _restoreTestEraParameters(
+            perpPair, address(oracle), FEE_FRONTEND, feeProtocolAddr, MMR, TRADING_FEE, FLAT_TRADING_FEE, FEE_LP
+        );
+
+        address[5] memory users = [victimLp, attackerLp, attackerTrader, churnLong, churnShort];
+        uint256[] memory collateral = new uint256[](1);
+        collateral[0] = 10_000_000 * 1e18;
+        for (uint256 i; i < users.length; i++) {
+            vm.prank(minter);
+            stable.mint(users[i], 20_000_000 * 1e18);
+            vm.prank(users[i]);
+            stable.approve(address(vault), type(uint256).max);
+            vm.prank(users[i]);
+            vault.addCollateral(collateral);
+        }
+    }
+
+    /// @dev A stable-only LP deposit into a worn-down pool, followed by a long that perturbs M(t),
+    ///      drives the attacker's recovered ASSET leg negative. Without the clamp the unsafe
+    ///      uint256 cast wraps it and the global cap hands the attacker the pool's whole asset
+    ///      side, which realizePnL then mints into their vault collateral. The assertions here are
+    ///      economic: LP claims must stay within pool inventory, and a stable-only LP must not be
+    ///      able to walk away with more than it deposited.
+    function testStableOnlyLpCannotDrainPoolEndToEnd() public {
+        uint256 price = 6_689_150_000_000; // ~$66,891.50, 8 decimals
+        oracle.setPrice(price);
+
+        // 1. Victim LP seeds a balanced pool.
+        uint256 victimStable = 1_000_000 * 1e18;
+        vm.prank(victimLp);
+        perpPair.addLiquidity(victimStable, victimStable * ORACLE_DECIMALS / price, MAX_USER_LIQUIDITY_FEE, fakeReport);
+
+        // 2. Trade churn wears the liquidity matrix down into the ill-conditioned regime.
+        for (uint256 i; i < 80; i++) {
+            skip(120);
+            // Reads are hoisted: an inline external call would consume the prank below.
+            uint256 assetGuess = perpPair.globalLiquidityAsset();
+            vm.prank(churnLong);
+            try perpPair.trade(true, 20_000 * 1e18, 1, assetGuess, frontendAddress, 1, fakeReport) { } catch { }
+
+            skip(120);
+            uint256 stableGuess = perpPair.globalLiquidityStable();
+            uint256 shortSize = (20_000 * 1e18 * ORACLE_DECIMALS) / price;
+            vm.prank(churnShort);
+            try perpPair.trade(false, shortSize, 1, stableGuess, frontendAddress, 1, fakeReport) { } catch { }
+        }
+        skip(120);
+
+        // 3. Attacker joins as a STABLE-ONLY LP: zero asset leg at the snapshot.
+        uint256 attackerDeposit = 19_980 * 1e18;
+        vm.prank(attackerLp);
+        perpPair.addLiquidity(attackerDeposit, 0, MAX_USER_LIQUIDITY_FEE, fakeReport);
+        (, uint256 attackerAssetAtEntry) = perpPair.getLpLiquidityBalance(attackerLp);
+        assertEq(attackerAssetAtEntry, 0, "stable-only deposit must start with a zero asset leg");
+        uint256 attackerCollateralBefore = vault.userCollateral(attackerLp);
+
+        // 4. Attacker's own long perturbs M(t) so the recovered asset leg goes negative.
+        uint256 attackGuess = perpPair.globalLiquidityAsset();
+        vm.prank(attackerTrader);
+        perpPair.trade(true, 15_000 * 1e18, 1, attackGuess, frontendAddress, 1, fakeReport);
+
+        // 5. Pool inventory must still cover the sum of the LP claims. Unclamped, the attacker's
+        //    wrapped asset leg alone equals globalLiquidityAsset, so the two LPs together claim
+        //    ~2x the asset side (measured: 29.518e18 claimed vs 14.759e18 in the pool).
+        (uint256 victimStableLeg, uint256 victimAssetLeg) = perpPair.getLpLiquidityBalance(victimLp);
+        (uint256 attackerStableLeg, uint256 attackerAssetLeg) = perpPair.getLpLiquidityBalance(attackerLp);
+        console.log("attacker legs after attack:", attackerStableLeg, attackerAssetLeg);
+        assertLe(
+            victimAssetLeg + attackerAssetLeg,
+            perpPair.globalLiquidityAsset(),
+            "LP asset claims exceed pool asset inventory"
+        );
+        assertLe(
+            victimStableLeg + attackerStableLeg,
+            perpPair.globalLiquidityStable(),
+            "LP stable claims exceed pool stable inventory"
+        );
+
+        // 6. Realize the claim into vault collateral: a stable-only LP that only paid the deposit
+        //    fee cannot come out ahead. Measured on the fixed code the attacker LOSES the
+        //    ~0.32e18 liquidity fee; unclamped they gain ~705,922e18 (35x their deposit, ~70% of
+        //    the pool's asset-side value).
+        vm.prank(attackerLp);
+        perpPair.realizePnL(fakeReport);
+        uint256 attackerCollateralAfter = vault.userCollateral(attackerLp);
+        console.log("attacker collateral before/after:", attackerCollateralBefore, attackerCollateralAfter);
+        assertLe(
+            attackerCollateralAfter,
+            attackerCollateralBefore + attackerDeposit / 100,
+            "stable-only LP realized more collateral than it could ever be owed"
+        );
+
+        // 7. And the value the attacker can still walk out with (remaining LP claim) plus what it
+        //    already realized stays at or below what it put in.
+        (uint256 finalStableLeg, uint256 finalAssetLeg) = perpPair.getLpLiquidityBalance(attackerLp);
+        uint256 realizedGain =
+            attackerCollateralAfter > attackerCollateralBefore ? attackerCollateralAfter - attackerCollateralBefore : 0;
+        uint256 realizedLoss =
+            attackerCollateralBefore > attackerCollateralAfter ? attackerCollateralBefore - attackerCollateralAfter : 0;
+        uint256 valueOut = finalStableLeg + (finalAssetLeg * price) / ORACLE_DECIMALS + realizedGain;
+        uint256 valueIn = attackerDeposit + realizedLoss;
+        console.log("attacker value out / in:", valueOut, valueIn);
+        assertLe(valueOut, valueIn, "stable-only LP extracted more value than it deposited");
+    }
+}
+

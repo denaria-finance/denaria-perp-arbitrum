@@ -1574,6 +1574,69 @@
     // side at spot, so the old PNL1 revert — which bricked every read that touched such a position,
     // including its own liquidation eligibility — is gone. The liquidation-safe path still differs
     // from the close path in WHICH spot rule it applies, and an in-range short is unaffected.
+    // The boundary the neighbouring test skips: a net short exactly equal to the pool's asset leg.
+    // It sits between a short far above the pool and one far below, and it is the input on which
+    // three separate comparisons must agree — the caller's oversized-short fallback, the executable
+    // quote's own guard, and the quote's thin-pool guard.
+    //
+    // Measured, not assumed: the spot outcome here is OVER-DETERMINED. Relaxing any one of those
+    // comparisons from `>=` to `>`, or even two of them together, leaves the result unchanged,
+    // because the thin-pool guard fires unconditionally once the residual pool leg is zero. So this
+    // is a behavioural guard — the boundary must yield the spot valuation on both public paths and
+    // must neither revert nor wrap — and not an attribution test for any single operator.
+    #[test]
+    fn net_short_exactly_at_pool_liquidity_is_valued_at_spot_by_every_path() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.global_liquidity_stable.set(U256::from(10_000u64) * wad);
+        let pool_asset = U256::from(3u64) * wad;
+        e.global_liquidity_asset.set(pool_asset);
+        let price = U256::from(300_000_000_000u64);
+        let collateral = U256::from(1_000_000u64) * wad;
+
+        // Net short EXACTLY equal to the pool's asset leg.
+        let at_boundary = addr(0xB1);
+        {
+            let mut up = e.user_virtual_trader_position.setter(at_boundary);
+            up.debt_asset.set(pool_asset);
+            up.balance_stable.set(collateral);
+        }
+        // Spot value of the residual: 3e18 asset at 3000 = 9_000e18, leaving 991_000e18.
+        let spot_pnl = (collateral - U256::from(9_000u64) * wad, true);
+        assert_eq!(
+            e.calc_pnl_user(at_boundary, price).expect("close path must not revert at the boundary"),
+            spot_pnl,
+            "close path values the boundary short at spot"
+        );
+        assert_eq!(
+            e.calc_pnl_user_liquidation_safe(at_boundary, price).expect("liquidation path must not revert"),
+            spot_pnl,
+            "liquidation path agrees with the close path at exact equality"
+        );
+
+        // One notch inside the pool, with enough asset left that the quote actually bisects rather
+        // than taking its thin-pool short circuit. Buying the asset back costs MORE than spot, so
+        // the reported PnL must be strictly worse than the spot-valued one.
+        let inside = addr(0xB2);
+        let inside_debt = pool_asset - U256::from(1_000_000_000_000_000u64); // 1e15 of asset left
+        {
+            let mut up = e.user_virtual_trader_position.setter(inside);
+            up.debt_asset.set(inside_debt);
+            up.balance_stable.set(collateral);
+        }
+        let inside_spot = collateral - cm::md(inside_debt, price, U256::from(100_000_000u64));
+        let (inside_pnl, inside_sign) = e.calc_pnl_user(inside, price).expect("in-range short");
+        assert!(inside_sign, "still a net gain on this fixture");
+        assert!(
+            inside_pnl < inside_spot,
+            "inside the pool the buy-back is priced on the curve, so it costs more than spot \
+             (got {inside_pnl}, spot would be {inside_spot})"
+        );
+    }
+
     #[test]
     fn calc_pnl_liquidation_safe_uses_spot_only_for_oversized_short() {
         let wad = U256::from(WAD_U64);
@@ -1756,6 +1819,133 @@
             e.batch_liquidate_impl(liquidator, vec![dup, addr(0x52), dup], vec![wad, wad, wad], Bytes::new()),
             Err(err(b"BL3")),
             "duplicate target -> BL3",
+        );
+    }
+
+    // The FORWARDED entrypoints of both batch paths had no direct test: the shared bodies were
+    // covered, but nothing exercised the wrappers, so the forwarder gate and the argument order
+    // they impose were unpinned. A wrapper that dropped the gate, or passed the caller where the
+    // explicit actor belongs, would have gone unnoticed.
+    #[cfg(feature = "stub_boundary")]
+    #[test]
+    fn forwarded_batch_entrypoints_gate_and_forward() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+
+        let liquidator = addr(0x81);
+        let victim = addr(0x82);
+        {
+            // Underwater long: bad debt, so the margin ratio is 0 and it is liquidatable.
+            let mut up = e.user_virtual_trader_position.setter(victim);
+            up.balance_asset.set(wad);
+            up.debt_stable.set(U256::from(100_000u64) * wad);
+        }
+        {
+            let mut lq = e.user_virtual_trader_position.setter(liquidator);
+            lq.balance_stable.set(U256::from(1_000_000_000u64) * wad);
+        }
+
+        // Neither wrapper may run for a caller that is not the trusted forwarder.
+        assert_eq!(
+            e.batch_liquidate_for(liquidator, vec![victim], vec![wad / U256::from(2u64)], Bytes::new()),
+            Err(err(b"F")),
+            "batchLiquidateFor must reject a non-forwarder"
+        );
+        assert_eq!(
+            e.batch_auto_close_user_position_for(addr(0xFE), vec![victim], vec![Address::ZERO], Bytes::new()),
+            Err(err(b"F")),
+            "batchAutoCloseUserPositionFor must reject a non-forwarder"
+        );
+
+        // With the gate satisfied, the liquidation is credited to the EXPLICIT liquidator rather
+        // than to the forwarder that relayed it.
+        e.trusted_forwarder.set(e.vm().msg_sender());
+        let forwarder = e.vm().msg_sender();
+        e.batch_liquidate_for(liquidator, vec![victim], vec![wad / U256::from(2u64)], Bytes::new())
+            .expect("forwarded batch liquidate");
+        assert!(
+            e.user_virtual_trader_position.getter(liquidator).balance_asset.get() > U256::ZERO,
+            "the explicit liquidator absorbed the position"
+        );
+        assert_eq!(
+            e.user_virtual_trader_position.getter(forwarder).balance_asset.get(),
+            U256::ZERO,
+            "the forwarder must not absorb anything itself"
+        );
+    }
+
+    // The read wrappers on the public surface are what the periphery and the front end call. Each
+    // is a thin view over an internal helper or over storage, and none had a direct test: a wrapper
+    // returning a field in the wrong tuple position, or delegating to the wrong helper, would have
+    // been invisible here and visible only on-chain.
+    #[cfg(feature = "stub_boundary")]
+    #[test]
+    fn public_read_wrappers_agree_with_their_internals() {
+        let wad = U256::from(WAD_U64);
+        let vm = TestVM::new();
+        vm.set_block_timestamp(1_700_000_000);
+        let mut e = PerpEngine::from(&vm);
+        seed_trade_engine(&mut e);
+        e.last_operation_timestamp.set(U64::from(1_699_990_000u64));
+
+        let user = addr(0x91);
+        {
+            let mut up = e.user_virtual_trader_position.setter(user);
+            up.balance_asset.set(wad);
+            up.debt_stable.set(U256::from(2_000u64) * wad);
+        }
+        // Distinct values in every curve field, so a transposed tuple position cannot pass.
+        e.last_curve_update.set(U64::from(1_700_000_123u64));
+        e.last_trade_direction.set(true);
+        e.last_validated_price.set(U256::from(300_000_000_001u64));
+
+        let (sa, sb, la, lb, upd, interval, dir, validated) = e.curve_parameters().expect("curveParameters");
+        assert_eq!(sa, e.short_curve_parameter_a.get(), "short A");
+        assert_eq!(sb, e.short_curve_parameter_b.get(), "short B");
+        assert_eq!(la, e.long_curve_parameter_a.get(), "long A");
+        assert_eq!(lb, e.long_curve_parameter_b.get(), "long B");
+        assert_eq!(upd, U256::from(1_700_000_123u64), "lastCurveUpdate widened from u64");
+        assert_eq!(interval, U256::from(e.curve_update_interval.get()), "interval");
+        assert!(dir, "lastTradeDirection");
+        assert_eq!(validated, U256::from(300_000_000_001u64), "lastValidatedPrice");
+
+        let price = U256::from(300_000_000_000u64);
+        let last_op = U256::from(e.last_operation_timestamp.get());
+        assert_eq!(
+            e.compute_funding_rate_public(price, last_op).expect("public rate"),
+            e.compute_funding_rate(price, last_op).expect("internal rate"),
+            "computeFundingRate must delegate unchanged"
+        );
+
+        let (rate, rate_sign) = e.compute_funding_rate(price, last_op).expect("rate");
+        assert_eq!(
+            e.compute_funding_fee_with_public(user, rate, rate_sign).expect("public fee"),
+            e.compute_funding_fee_with(user, rate, rate_sign).expect("internal fee"),
+            "_computeFundingFee must delegate unchanged"
+        );
+
+        assert_eq!(
+            e.calc_pnl_public(user, price).expect("public pnl"),
+            e.calc_pnl_user(user, price).expect("internal pnl"),
+            "calcPnL must take the close-path valuation"
+        );
+
+        // Five distinct values, so the auto-close tuple cannot be reordered undetected.
+        e.trusted_forwarder.set(e.vm().msg_sender());
+        e.enable_auto_close_for(user, U256::from(11u64), U256::from(22u64), U256::from(33u64), U256::from(44u64))
+            .expect("enable");
+        assert_eq!(
+            e.auto_close_users_data_public(user).expect("config"),
+            (true, U256::from(11u64), U256::from(22u64), U256::from(33u64), U256::from(44u64)),
+            "autoCloseUsersData tuple order"
+        );
+        assert_eq!(
+            e.auto_close_users_data_public(addr(0x92)).expect("unset config"),
+            (false, U256::ZERO, U256::ZERO, U256::ZERO, U256::ZERO),
+            "an unset user reads back cleared"
         );
     }
 

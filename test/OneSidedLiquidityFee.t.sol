@@ -204,4 +204,76 @@ contract OneSidedLiquidityFeeTest is PerpPairTest {
             "remaining stable LP must receive the forced-removal fee"
         );
     }
+
+    ///@dev Follow-on to the asset-side case: once the asset leg is gone the pool is stable-only, and
+    ///     the LPs left behind must still be able to get out — through `removeLiquidity` and through
+    ///     `closeAndWithdraw`. Both go through the removal-fee formula with an empty asset leg, which
+    ///     `computeLiquidityRemovalFee` waives: without that waiver the fee curve divides by the empty
+    ///     leg and every remaining LP is bricked in the pool.
+    function testStableOnlyPoolStillLetsRemainingLpsExit() public {
+        uint256 price = 100 * oracleDecimals;
+        oracle.setPrice(price);
+
+        address remover = makeAddr("alice");
+        address closer = makeAddr("bob");
+        address assetLp = makeAddr("charlie");
+
+        vm.prank(remover);
+        perpPair.addLiquidity(1000 * 1e18, 0, maxUserLiquidityFee, fakeReport);
+        vm.prank(closer);
+        perpPair.addLiquidity(500 * 1e18, 0, maxUserLiquidityFee, fakeReport);
+        vm.prank(assetLp);
+        perpPair.addLiquidity(0, 2 * 1e18 * oracleDecimals / price, maxUserLiquidityFee, fakeReport);
+
+        // Drain the asset leg: its removal fee is stable-denominated and routed to the two stable LPs.
+        (, uint256 assetLpAsset) = perpPair.getLpLiquidityBalance(assetLp);
+        assertGt(_liquidityRemovalFeeValue(0, assetLpAsset, price), 0, "setup must charge a removal fee");
+
+        vm.prank(assetLp);
+        perpPair.removeLiquidity(0, assetLpAsset, maxUserLiquidityFee, fakeReport);
+
+        assertEq(perpPair.globalLiquidityAsset(), 0, "pool must be stable-only");
+
+        // Exit #1: voluntary removal out of the one-sided pool, fee waived by the empty asset leg.
+        (uint256 removerStable, uint256 removerAsset) = perpPair.getLpLiquidityBalance(remover);
+        uint256 poolStable = perpPair.globalLiquidityStable();
+        (,, uint256 removerLpDebtStable,) = perpPair.liquidityPosition(remover);
+        assertEq(removerAsset, 0, "remover holds no asset claim");
+        assertGt(removerStable, 1000 * 1e18, "remover must have been credited the routed fee");
+        assertEq(_liquidityRemovalFeeValue(removerStable, 0, price), 0, "one-sided pool must waive the removal fee");
+
+        vm.prank(remover);
+        perpPair.removeLiquidity(removerStable, 0, maxUserLiquidityFee, fakeReport);
+
+        (uint256 removerStableAfter, uint256 removerAssetAfter) = perpPair.getLpLiquidityBalance(remover);
+        (uint256 removerBalanceStable,, uint256 removerDebtStable,,,,,) = perpPair.userVirtualTraderPosition(remover);
+        assertEq(removerStableAfter, 0, "remover claim must be cleared");
+        assertEq(removerAssetAfter, 0, "remover asset claim must be cleared");
+        assertEq(removerDebtStable, 0, "a waived fee must create no stable debt");
+        assertEq(
+            removerBalanceStable,
+            removerStable - removerLpDebtStable,
+            "the whole claim net of LP debt must land in the balance, unfeed"
+        );
+        assertEq(perpPair.globalLiquidityStable(), poolStable - removerStable, "pool must shed exactly the claim");
+
+        // Exit #2: the last LP leaves through the close path, which drains its LP legs internally.
+        (,, uint256 closerLpDebtStable,) = perpPair.liquidityPosition(closer);
+        uint256 closerCollateralBefore = vault.userCollateral(closer);
+        (uint256 closerStable, uint256 closerAsset) = perpPair.getLpLiquidityBalance(closer);
+        assertGt(closerStable, 500 * 1e18, "closer must still hold its claim plus the routed fee");
+        assertEq(closerAsset, 0, "closer holds no asset claim");
+
+        vm.prank(closer);
+        perpPair.closeAndWithdraw(1e5, maxUserLiquidityFee, frontendAddress, fakeReport);
+
+        (uint256 closerStableAfter, uint256 closerAssetAfter) = perpPair.getLpLiquidityBalance(closer);
+        assertEq(closerStableAfter, 0, "closer claim must be cleared");
+        assertEq(closerAssetAfter, 0, "closer asset claim must be cleared");
+        assertEq(
+            vault.userCollateral(closer),
+            closerCollateralBefore + closerStable - closerLpDebtStable,
+            "closer must bank its claim net of LP debt, with no fee withheld"
+        );
+    }
 }

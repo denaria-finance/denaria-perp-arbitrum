@@ -142,4 +142,130 @@ contract WithdrawalSafetyTest is PerpPairTest {
         assertFalse(justBelow, "one unit below the boundary must be refused");
         assertTrue(atBoundary, "the boundary itself must be accepted");
     }
+
+    /// @dev The least collateral the fee-inclusive gate still calls safe, found by bisection so the
+    ///      cases below never hardcode a magnitude: the verdict is monotone in the collateral, the
+    ///      whole position value being fixed at the point of the search.
+    function _minSafeCollateral(address user) internal view returns (uint256) {
+        uint256 low;
+        uint256 high = vault.userCollateral(user);
+        (,, bool safeAtTop) = perpPair.withdrawalCheckData(user, PRICE, high);
+        assertTrue(safeAtTop, "full collateral must be safe");
+        (,, bool safeAtZero) = perpPair.withdrawalCheckData(user, PRICE, low);
+        assertFalse(safeAtZero, "zero collateral must not be safe");
+        while (high - low > 1) {
+            uint256 mid = (low + high) / 2;
+            (,, bool safe) = perpPair.withdrawalCheckData(user, PRICE, mid);
+            if (safe) high = mid;
+            else low = mid;
+        }
+        return high;
+    }
+
+    /// @dev The curve window is a shared resource: whoever traded last leaves it open for their own
+    ///      direction, and the next quote in that direction is priced as a CONTINUATION of it. A
+    ///      short's buy-back therefore costs more while a third party's long window is still open,
+    ///      and the withdrawal gate has to charge the trader that price — the one the close would
+    ///      actually pay — rather than the mark. This runs the whole decision through
+    ///      `Vault.removeCollateral`, so it pins the preview as the value the Vault acts on, not
+    ///      just a read that happens to agree with it.
+    function testShortWithdrawalRefusedWhileAThirdPartyLongWindowIsArmed() public {
+        oracle.setPrice(PRICE);
+
+        address alice = makeAddr("alice");
+        vm.prank(alice);
+        perpPair.addLiquidity(100_000 * 1e18, 1000 * 1e18, maxUserLiquidityFee, fakeReport);
+
+        address bob = makeAddr("bob");
+        _fundTrader(bob);
+        uint256 shortGuess = perpPair.globalLiquidityStable();
+        vm.prank(bob);
+        perpPair.trade(false, 100 * 1e18, 1, shortGuess, frontendAddress, 1, fakeReport);
+
+        // A third party arms the LONG window. Bob's buy-back now has to unwind it first.
+        address charlie = makeAddr("charlie");
+        _fundTrader(charlie);
+        uint256 longGuess = perpPair.globalLiquidityAsset();
+        vm.prank(charlie);
+        perpPair.trade(true, 20_000 * 1e18, 1, longGuess, frontendAddress, 1, fakeReport);
+
+        (uint256 armedDx, uint256 armedDy) = perpPair.readCurveMemory(1, PRICE);
+        assertGt(armedDx, 0, "the long must have armed the curve window");
+        assertGt(armedDy, 0, "the long must have armed the curve window");
+        (,,,,,, bool lastDirection, uint256 lastValidatedPrice) = perpPair.curveParameters();
+        assertTrue(lastDirection, "the open window must belong to the long side");
+        assertEq(lastValidatedPrice, PRICE, "the window must be open at the price the gate reads");
+
+        uint256 hypothetical = _minSafeCollateral(bob) - 1;
+        uint256 amount = vault.userCollateral(bob) - hypothetical;
+
+        assertTrue(_markValuedSafe(bob, hypothetical), "mark-valued gate would have allowed this withdrawal");
+        (,, bool marginSafe) = perpPair.withdrawalCheckData(bob, PRICE, hypothetical);
+        assertFalse(marginSafe, "the armed window makes the buy-back unaffordable at this collateral");
+
+        vm.expectRevert(bytes("RC4"));
+        vm.prank(bob);
+        vault.removeCollateral(amount, fakeReport);
+
+        // Same position, same pool, same price: only the window is gone. The identical withdrawal
+        // now goes through, which is what shows the Vault acted on the window-aware quote and not
+        // merely on some fee the pool state alone would have implied.
+        (,,,,, uint256 curveUpdateInterval,,) = perpPair.curveParameters();
+        vm.warp(block.timestamp + curveUpdateInterval + 1);
+        (uint256 staleDx, uint256 staleDy) = perpPair.readCurveMemory(1, PRICE);
+        assertEq(staleDx | staleDy, 0, "an expired window must not be readable");
+
+        (,, bool safeOnceExpired) = perpPair.withdrawalCheckData(bob, PRICE, hypothetical);
+        assertTrue(safeOnceExpired, "with no window to unwind the same withdrawal must be safe");
+        vm.prank(bob);
+        vault.removeCollateral(amount, fakeReport);
+        assertEq(vault.userCollateral(bob), hypothetical, "withdrawal did not go through");
+    }
+
+    /// @dev The long side of the same reservation: closing a net-long leg SELLS it, so the gate must
+    ///     hold back that sale's slippage and trading fee — here on top of a third party's open
+    ///     short window, which the sale is priced as a continuation of. Typed revert, so the refusal
+    ///     is the margin gate and not one of the other removeCollateral guards.
+    function testLongWithdrawalRefusedWhileAThirdPartyShortWindowIsArmed() public {
+        oracle.setPrice(PRICE);
+
+        address alice = makeAddr("alice");
+        vm.prank(alice);
+        perpPair.addLiquidity(100_000 * 1e18, 1000 * 1e18, maxUserLiquidityFee, fakeReport);
+
+        address bob = makeAddr("bob");
+        _fundTrader(bob);
+        uint256 longGuess = perpPair.globalLiquidityAsset();
+        vm.prank(bob);
+        perpPair.trade(true, 10_000 * 1e18, 1, longGuess, frontendAddress, 1, fakeReport);
+
+        address charlie = makeAddr("charlie");
+        _fundTrader(charlie);
+        uint256 shortGuess = perpPair.globalLiquidityStable();
+        vm.prank(charlie);
+        perpPair.trade(false, 100 * 1e18, 1, shortGuess, frontendAddress, 1, fakeReport);
+
+        (uint256 armedDx, uint256 armedDy) = perpPair.readCurveMemory(0, PRICE);
+        assertGt(armedDx, 0, "the short must have armed the curve window");
+        assertGt(armedDy, 0, "the short must have armed the curve window");
+
+        uint256 hypothetical = _minSafeCollateral(bob) - 1;
+        uint256 amount = vault.userCollateral(bob) - hypothetical;
+
+        assertTrue(_markValuedSafe(bob, hypothetical), "mark-valued gate would have allowed this withdrawal");
+        (,, bool marginSafe) = perpPair.withdrawalCheckData(bob, PRICE, hypothetical);
+        assertFalse(marginSafe, "selling the long leg at this collateral must be refused");
+
+        vm.expectRevert(bytes("RC4"));
+        vm.prank(bob);
+        vault.removeCollateral(amount, fakeReport);
+
+        (,,,,, uint256 curveUpdateInterval,,) = perpPair.curveParameters();
+        vm.warp(block.timestamp + curveUpdateInterval + 1);
+        (,, bool safeOnceExpired) = perpPair.withdrawalCheckData(bob, PRICE, hypothetical);
+        assertTrue(safeOnceExpired, "with no window to continue the same withdrawal must be safe");
+        vm.prank(bob);
+        vault.removeCollateral(amount, fakeReport);
+        assertEq(vault.userCollateral(bob), hypothetical, "withdrawal did not go through");
+    }
 }

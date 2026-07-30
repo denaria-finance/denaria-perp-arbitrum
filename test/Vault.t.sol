@@ -1057,6 +1057,39 @@ contract VaultTest is Test, PerpPairTestDeploymentHelper {
         assertLt(vault.userCollateral(alice), before, "withdrawal works again once unpaused");
     }
 
+    ///@dev The engine-triggered full sweep must not be blockable by the recipient. A blacklisted
+    /// user makes the ERC20 transfer fail, and the vault has to route that leg to the recovery
+    /// contract instead of reverting: a revert here would strand the liquidation that called it,
+    /// leaving engine and vault ledgers disagreeing. The existing coverage of this entry point
+    /// asserted only that the balance reached zero on the happy path.
+    function testRemoveAllCollateralForUserRoutesABlockedTransfer() public {
+        uint256[] memory amounts = new uint256[](numStableCoins);
+        (ERC20 coinA,,,) = vault.stableCoins(0);
+        (ERC20 coinB,,,) = vault.stableCoins(1);
+        amounts[0] = 4000 * 1e6;
+        amounts[1] = 6000 * 1e18;
+        vm.prank(alice);
+        vault.addCollateral(amounts);
+
+        // Only the first leg is blocked, so the same call must both recover and pay out.
+        vm.prank(Blacklister);
+        FiatTokenV2(address(coinA)).blacklist(alice);
+
+        uint256 aliceCoinB = coinB.balanceOf(alice);
+        uint256 recoveredBefore = coinA.balanceOf(address(lostAndFound));
+
+        vm.prank(address(perpPair));
+        vault.removeAllCollateralForUser(alice);
+
+        assertEq(vault.userCollateral(alice), 0, "the sweep completed despite the blocked leg");
+        assertEq(
+            coinA.balanceOf(address(lostAndFound)) - recoveredBefore,
+            4000 * 1e6,
+            "the blocked leg went to recovery, not nowhere"
+        );
+        assertEq(coinB.balanceOf(alice) - aliceCoinB, 6000 * 1e18, "the unblocked leg still paid out");
+    }
+
     // --- governance-only parameter setters on the DEPLOYED vault ---------------------------
     //
     // All three ship on-chain and had zero test calls: nothing pinned that they store what they

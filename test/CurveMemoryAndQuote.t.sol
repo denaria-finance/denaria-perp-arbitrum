@@ -247,4 +247,174 @@ contract CurveMemoryAndQuoteTest is PerpPairTest {
 
         assertLe(split, whole, "splitting a short inside one window must not pay better than trading it whole");
     }
+
+    ///@dev The LOSS side of the boundary. A net short that leaves less than one stable unit of asset
+    ///     in the pool is valued at SPOT, not on the curve whose price asymptotes there: the marked
+    ///     loss stays a handful of stable below the trader's collateral instead of exploding past it,
+    ///     so the position is neither fake bad debt nor fake liquidatable, and it still closes.
+    function testNearBoundaryShortAtLossIsMarkedAtSpot() public {
+        uint256 price = 100 * oracleDecimals;
+        address lp = _seedPool();
+        address bob = makeAddr("bob");
+
+        vm.prank(bob);
+        vault.removeAllCollateral(fakeReport);
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 0;
+        amounts[1] = 200 * 1e18;
+        vm.prank(bob);
+        vault.addCollateral(amounts);
+
+        uint256 guess = perpPair.globalLiquidityStable();
+        vm.prank(bob);
+        perpPair.trade(false, 10 * 1e18, 1, guess, frontendAddress, 1, fakeReport);
+
+        (, uint256 balanceAsset,, uint256 debtAsset,,,,) = perpPair.userVirtualTraderPosition(bob);
+        uint256 netShort = debtAsset - balanceAsset;
+
+        uint256 residual = 1e15;
+        uint256 assetToRemove = perpPair.globalLiquidityAsset() - netShort - residual;
+        vm.prank(lp);
+        perpPair.removeLiquidity(0, assetToRemove, maxUserLiquidityFee, fakeReport);
+
+        (uint256 markedLoss, bool pnlSign) = perpPair.calcPnL(bob, price);
+
+        assertFalse(pnlSign, "short must be at a loss after fees and opening slippage");
+        assertEq(
+            markedLoss + _balanceStable(bob),
+            netShort * price / oracleDecimals,
+            "near-boundary short was not valued at spot"
+        );
+        assertLt(markedLoss, perpPair.getCollateral(bob), "near-boundary short was overmarked into bad debt");
+        assertGt(
+            UtilMath.calcMR(
+                bob, price, address(perpPair), perpPair.getCollateral(bob), perpPair.lastOperationTimestamp()
+            ),
+            perpPair.MMR(),
+            "overmark made a solvent short look liquidatable"
+        );
+
+        vm.prank(bob);
+        perpPair.closeAndWithdraw(1e5, maxUserLiquidityFee, frontendAddress, fakeReport);
+        (uint256 bs, uint256 ba, uint256 ds, uint256 da,,,,) = perpPair.userVirtualTraderPosition(bob);
+        assertEq(bs | ba | ds | da, 0, "position not cleared");
+    }
+
+    ///@dev A solvent short beyond the pool's asset side must keep EVERY exit, not just the close:
+    ///     the margin ratio has to clear MMR, `realizePnL` has to settle the spot-valued profit into
+    ///     collateral, and the Vault's withdrawal check has to price the exit without reverting.
+    function testOversizedHealthyShortKeepsEveryExitPath() public {
+        uint256 price = 100 * oracleDecimals;
+        oracle.setPrice(price);
+        address bob = makeAddr("bob");
+
+        uint256 debtAsset = 200 * 1e18;
+        _h().seedOversizedNetShort(bob, debtAsset, 30_000 * 1e18, 100_000 * 1e18, 100 * 1e18);
+        assertGt(debtAsset, perpPair.globalLiquidityAsset(), "fixture must sit beyond the pool's asset side");
+
+        assertGt(
+            UtilMath.calcMR(
+                bob, price, address(perpPair), perpPair.getCollateral(bob), perpPair.lastOperationTimestamp()
+            ),
+            perpPair.MMR(),
+            "oversized short valued at spot is solvent and must not read as liquidatable"
+        );
+
+        uint256 collateralBefore = perpPair.getCollateral(bob);
+        vm.prank(bob);
+        (uint256 realized, bool realizedSign) = perpPair.realizePnL(fakeReport);
+        assertTrue(realizedSign, "spot-valued oversized short is in profit here");
+        assertEq(perpPair.getCollateral(bob), collateralBefore + realized, "realized profit did not reach collateral");
+
+        vm.prank(bob);
+        vault.removeCollateral(100, fakeReport);
+
+        vm.prank(bob);
+        perpPair.closeAndWithdraw(1e5, maxUserLiquidityFee, frontendAddress, fakeReport);
+        (uint256 bs2, uint256 ba2, uint256 ds2, uint256 da2,,,,) = perpPair.userVirtualTraderPosition(bob);
+        assertEq(bs2 | ba2 | ds2 | da2, 0, "position not cleared");
+    }
+
+    ///@dev DEBT-ONLY LP CLOSE. An LP that has withdrawn every visible balance can still owe LP
+    ///     debt, with its snapshot already dropped, so the close path drains "nothing" out of the
+    ///     pool on its way to settling that debt. That zero-sized drain must neither move the pool
+    ///     globals nor reset an open curve window — the 1/64 significance rule is what makes it a
+    ///     no-op instead of a free window reset — and the debt itself must still be charged.
+    function testDebtOnlyLpCloseKeepsPoolAndCurveMemory() public {
+        oracle.setPrice(100 * oracleDecimals);
+        address backstopLp = makeAddr("alice");
+        address sacrificeLp = makeAddr("bob");
+        address shortMaker = makeAddr("charlie");
+        address primer = makeAddr("david");
+
+        vm.prank(backstopLp);
+        perpPair.addLiquidity(1_000_000 * 1e18, 10_000 * 1e18, maxUserLiquidityFee, fakeReport);
+        vm.prank(sacrificeLp);
+        perpPair.addLiquidity(200_000 * 1e18, 0, maxUserLiquidityFee, fakeReport);
+
+        // A short marks the stable-only LP down, so what it can withdraw is worth less than the
+        // stable it deposited: the shortfall is exactly the LP debt that survives the exit.
+        uint256 guess = perpPair.globalLiquidityStable();
+        vm.prank(shortMaker);
+        perpPair.trade(false, 1000 * 1e18, 0, guess, frontendAddress, 1, fakeReport);
+
+        (uint256 lpStable, uint256 lpAsset) = perpPair.getLpLiquidityBalance(sacrificeLp);
+        vm.prank(sacrificeLp);
+        perpPair.removeLiquidity(lpStable, lpAsset, maxUserLiquidityFee, fakeReport);
+
+        // Sell the asset leg the exit handed back, so the trader side is flat too and the close
+        // has no buy-back of its own to run.
+        (, uint256 assetBalance,,,,,,) = perpPair.userVirtualTraderPosition(sacrificeLp);
+        guess = perpPair.globalLiquidityStable();
+        vm.prank(sacrificeLp);
+        perpPair.trade(false, assetBalance, 0, guess, frontendAddress, 1, fakeReport);
+
+        (lpStable, lpAsset) = perpPair.getLpLiquidityBalance(sacrificeLp);
+        (,, uint256 lpDebtStable, uint256 lpDebtAsset) = perpPair.liquidityPosition(sacrificeLp);
+        uint256 balanceStable;
+        uint256 debtAsset;
+        (balanceStable, assetBalance,, debtAsset,,,,) = perpPair.userVirtualTraderPosition(sacrificeLp);
+        assertEq(lpStable | lpAsset | lpDebtAsset | assetBalance | debtAsset, 0, "fixture is not debt-only");
+        assertGt(lpDebtStable, 0, "fixture left no LP debt to settle");
+        assertLt(balanceStable, lpDebtStable, "fixture must close at a loss for the debt charge to be visible");
+        uint256 expectedLoss = lpDebtStable - balanceStable;
+
+        // Arm a long curve window that the close must leave alone.
+        guess = perpPair.globalLiquidityAsset();
+        vm.prank(primer);
+        perpPair.trade(true, 120_000 * 1e18, 0, guess, frontendAddress, 1, fakeReport);
+
+        uint256 dxBefore = _h().exposedDx0();
+        uint256 dyBefore = _h().exposedDy0();
+        uint256 stableBefore = perpPair.globalLiquidityStable();
+        uint256 assetBefore = perpPair.globalLiquidityAsset();
+        uint256 collateralBefore = vault.userCollateral(sacrificeLp);
+        assertGt(dxBefore, 0, "primer did not arm dx0");
+        assertGt(dyBefore, 0, "primer did not arm dy0");
+
+        skip(1);
+        vm.prank(sacrificeLp);
+        perpPair.closeAndWithdraw(1e5, maxUserLiquidityFee, frontendAddress, fakeReport);
+
+        assertEq(perpPair.globalLiquidityStable(), stableBefore, "debt-only close moved stable liquidity");
+        assertEq(perpPair.globalLiquidityAsset(), assetBefore, "debt-only close moved asset liquidity");
+        assertEq(_h().exposedDx0(), dxBefore, "debt-only close reset dx0");
+        assertEq(_h().exposedDy0(), dyBefore, "debt-only close reset dy0");
+
+        // The no-op drain must not become a free pass: the LP debt is still settled against
+        // collateral, and no debt-only remnant is left behind.
+        (,, uint256 lpDebtStableAfter, uint256 lpDebtAssetAfter) = perpPair.liquidityPosition(sacrificeLp);
+        uint256 debtStableAfter;
+        (balanceStable, assetBalance, debtStableAfter, debtAsset,,,,) = perpPair.userVirtualTraderPosition(sacrificeLp);
+        assertEq(
+            lpDebtStableAfter | lpDebtAssetAfter | balanceStable | assetBalance | debtStableAfter | debtAsset,
+            0,
+            "debt-only close left position state behind"
+        );
+        uint256 collateralAfter = vault.userCollateral(sacrificeLp);
+        assertLt(collateralAfter, collateralBefore, "debt-only close forgave the surviving LP debt");
+        assertEq(
+            collateralBefore - collateralAfter, expectedLoss, "debt-only close did not charge the surviving LP debt"
+        );
+    }
 }

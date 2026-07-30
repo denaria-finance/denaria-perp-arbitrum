@@ -10,6 +10,13 @@ import { IERC20Permit } from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ShortPermitToken } from "./helpers/ShortPermitToken.sol";
 
+/// @dev Minimal price source, so the vault's withdrawal path has an oracle to read.
+contract ManagerPriceMock {
+    function getPrice() external pure returns (int192) {
+        return 300_000_000_000; // 3000 * 1e8
+    }
+}
+
 /// @dev Records the forwarded engine call so the collateral leg can be exercised without the
 ///      Stylus engine, which Foundry cannot deploy or call.
 contract EngineLiquidityRecorderMock {
@@ -31,6 +38,68 @@ contract EngineLiquidityRecorderMock {
         lastStable = liquidityStable;
         lastAsset = liquidityAsset;
         calls += 1;
+    }
+
+    // The two other forwarded legs the manager's DIRECT (non-relayer) entry points drive. Recorded
+    // the same way, so a test can check which address the manager acted for.
+    bool public lastDirection;
+    uint8 public lastLeverage;
+    uint256 public tradeCalls;
+    uint256 public closeCalls;
+    uint256 public lastMaxSlippage;
+    address public lastFrontend;
+
+    function tradeFor(
+        address user,
+        bool direction,
+        uint256 size,
+        uint256,
+        uint256,
+        address frontendAddress,
+        uint8 leverage,
+        bytes calldata
+    )
+        external
+        returns (uint256)
+    {
+        lastUser = user;
+        lastStable = size;
+        lastDirection = direction;
+        lastLeverage = leverage;
+        lastFrontend = frontendAddress;
+        tradeCalls += 1;
+        // The interface declares a uint256 return; omitting it makes the caller's decode revert.
+        return size;
+    }
+
+    function closeAndWithdrawFor(
+        address user,
+        uint256 maxSlippage,
+        uint256,
+        address frontendAddress,
+        bytes calldata
+    )
+        external
+    {
+        lastUser = user;
+        lastMaxSlippage = maxSlippage;
+        lastFrontend = frontendAddress;
+        closeCalls += 1;
+    }
+
+    // The engine surface the VAULT reads during a withdrawal. Stubbed permissively — the withdrawal
+    // decision itself is covered end-to-end against the real PerpPair in test/WithdrawalSafety.t.sol
+    // and test/Vault.t.sol; what matters here is only that the manager drives both legs.
+    ManagerPriceMock public immutable priceSource = new ManagerPriceMock();
+
+    function updateFG(bytes calldata) external { }
+
+    function oracle() external view returns (address) {
+        return address(priceSource);
+    }
+
+    function withdrawalCheckData(address, uint256, uint256) external pure returns (uint256, bool, bool) {
+        return (0, true, true);
     }
 }
 
@@ -199,6 +268,45 @@ contract StylusManagerPermitTest is Test {
         );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", IERC20Permit(token).DOMAIN_SEPARATOR(), structHash));
         return vm.sign(userPk, digest);
+    }
+
+    // --- direct (non-relayer) entry points -------------------------------------------------
+    //
+    // The bundles a user submits for themselves. Their shared internals are covered through the
+    // relayer variants, but nothing exercised the direct wrappers, so the identity they forward and
+    // the composition of the two legs were unpinned.
+
+    /// @dev Deposit-and-open in one call: the collateral must land in the vault and the engine leg
+    ///      must be attributed to the CALLER, not to the manager relaying it. A wrapper passing
+    ///      address(this) instead of msg.sender would open the position against the manager.
+    function testAddCollateralOpenTradeForwardsTheCaller() public {
+        vm.prank(user);
+        manager.addCollateralOpenTrade(collateral, 750e18, true, 1, 0, makeAddr("frontend"), 3, "", deadlines, v, r, s);
+
+        assertEq(vault.userCollateral(user), collateral[1], "collateral leg ran for the caller");
+        assertEq(engine.tradeCalls(), 1, "engine leg ran exactly once");
+        assertEq(engine.lastUser(), user, "the trade is attributed to the caller");
+        assertEq(engine.lastStable(), 750e18, "trade size forwarded");
+        assertTrue(engine.lastDirection(), "direction forwarded");
+        assertEq(engine.lastLeverage(), 3, "leverage forwarded");
+        assertEq(engine.lastFrontend(), makeAddr("frontend"), "frontend forwarded");
+    }
+
+    /// @dev The exit bundle: close on the engine, then withdraw everything from the vault. Both legs
+    ///      must run for the caller, and the vault balance must be gone by the end — a wrapper that
+    ///      only closed would leave the collateral stranded.
+    function testCloseAndRemoveAllCollateralRunsBothLegs() public {
+        vm.prank(user);
+        manager.addCollateralAddLiquidity(collateral, 0, 0, 0, "", deadlines, v, r, s);
+        assertEq(vault.userCollateral(user), collateral[1], "precondition: collateral deposited");
+
+        vm.prank(user);
+        manager.closeAndRemoveAllCollateral(1e5, 1e10, makeAddr("frontend"), "");
+
+        assertEq(engine.closeCalls(), 1, "engine close ran exactly once");
+        assertEq(engine.lastUser(), user, "the close is attributed to the caller");
+        assertEq(engine.lastMaxSlippage(), 1e5, "slippage cap forwarded");
+        assertEq(vault.userCollateral(user), 0, "the vault leg withdrew everything");
     }
 
     // --- relayer meta-call authorisation ---------------------------------------------------
