@@ -21,10 +21,10 @@
 #   ./script/generate_verify_tree.sh [OUT_DIR]             # generate (default: ./verify-tree)
 #   ./script/generate_verify_tree.sh --build [OUT_DIR]     # generate, then build and
 #                                                          # check the wasm size + sha256
-#   ./script/generate_verify_tree.sh --opt-check [OUT_DIR] # --build, then wasm-opt with the
-#                                                          # pinned binaryen and fail if the
-#                                                          # deploy artifact exceeds the
-#                                                          # activation budget
+#   ./script/generate_verify_tree.sh --opt-check [OUT_DIR] # --build, then apply the pinned
+#                                                          # wasm-opt recipe and fail if the
+#                                                          # deploy artifact exceeds either
+#                                                          # activation budget (size, opcodes)
 #
 # The emitted tree is a build artifact (gitignored). Publish it as the dedicated
 # public verification repo, run the throwaway managed deploy + `cargo stylus
@@ -36,22 +36,23 @@ set -euo pipefail
 # workspace root changes Rust's crate-metadata hashes, so the tree has its own
 # deterministic, path-independent hash. NOTE: this tree wasm is NOT the deployed
 # artifact and is OVER the activation cap by design — the deploy artifact is this
-# wasm run through `wasm-opt -Oz` (see BINARYEN_VERSION below), which activates.
+# wasm run through the pinned recipe in script/wasm_opt_recipe.sh, which activates.
 # Sizes are deliberately not quoted in prose here: EXPECT_SIZE below and the
-# deploy-artifact report are the source of truth. Because cargo-stylus does not
-# wasm-opt, `cargo stylus verify` rebuilds this tree and cannot reproduce the
-# deployed bytes; re-derive them via the documented wasm-opt step.
+# deploy-artifact report are the source of truth. Because the deploy path does
+# not replay that recipe, `cargo stylus verify` rebuilds this tree and cannot
+# reproduce the deployed bytes; re-derive them via the documented wasm-opt step.
 EXPECT_SIZE=326426
 EXPECT_SHA256=ef021c78379042407cdd4edb6298951027b1fd139f84af12db11e5cb6cb997d2
 
-# --opt-check: the activation cap binds on the DEPLOYED artifact = this wasm after the pinned
-# `wasm-opt -Oz` post-pass. Fail when the optimized size exceeds the cap minus a safety margin,
-# so a change that eats the activation budget fails ordinary CI instead of surfacing at deploy.
-BINARYEN_VERSION=version_119
-ACTIVATION_CAP=282900
-OPT_SIZE_LIMIT=278900 # cap minus a 4 KB safety margin
+# --opt-check: activation binds on the DEPLOYED artifact = this wasm after the pinned wasm-opt
+# post-pass, on two independent counts — total size, and opcodes in any single function body.
+# Both are checked here (against the budgets in script/wasm_opt_recipe.sh) so a change that eats
+# either one fails ordinary CI instead of surfacing at deploy.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# shellcheck source=script/wasm_opt_recipe.sh
+. "$REPO_ROOT/script/wasm_opt_recipe.sh"
 
 DO_BUILD=0
 DO_OPT_CHECK=0
@@ -215,29 +216,27 @@ fi
 
 if [ "$DO_OPT_CHECK" = 1 ]; then
     echo
-    echo "== activation-budget check (wasm-opt -Oz, binaryen $BINARYEN_VERSION, pinned) =="
-    # The optimized size depends on the binaryen version, so only accept the pinned one —
-    # ANCHORED match ("wasm-opt version 119 (...)"): a bare substring would false-accept any
-    # build whose version line merely contains the digits (git-describe hashes, version 1190).
-    WOPT="$(command -v wasm-opt || true)"
-    if [ -z "$WOPT" ] || ! "$WOPT" --version 2>/dev/null | grep -qE "^wasm-opt version ${BINARYEN_VERSION#version_}( |\$)"; then
-        TAR="$TARGET_DIR/binaryen.tar.gz"
-        curl -fsSL -o "$TAR" "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz" \
-            || die "binaryen ${BINARYEN_VERSION} download failed"
-        tar xzf "$TAR" -C "$TARGET_DIR"
-        WOPT="$TARGET_DIR/binaryen-${BINARYEN_VERSION}/bin/wasm-opt"
-    fi
+    echo "== activation-budget check (binaryen $BINARYEN_VERSION, pinned recipe) =="
+    WOPT="$(resolve_wasm_opt "$TARGET_DIR")" || die "binaryen ${BINARYEN_VERSION} could not be resolved"
     OPT_OUT="$TARGET_DIR/engine.Oz.wasm"
-    "$WOPT" -Oz \
-        --enable-bulk-memory --enable-sign-ext --enable-mutable-globals \
-        --enable-nontrapping-float-to-int --enable-reference-types \
-        "$WASM" -o "$OPT_OUT"
+    "$WOPT" "${WASM_OPT_FLAGS[@]}" "$WASM" -o "$OPT_OUT"
     OPT_SIZE=$(wc -c < "$OPT_OUT")
-    echo "  optimized size: $OPT_SIZE B (limit $OPT_SIZE_LIMIT, activation cap ~$ACTIVATION_CAP)"
-    echo "  headroom vs cap: $((ACTIVATION_CAP - OPT_SIZE)) B"
+    read -r OPT_FUNCS OPT_MAX_BODY < <(python3 "$REPO_ROOT/script/wasm_max_body.py" "$OPT_OUT")
+    # An unmeasured budget must fail the gate, not skip the check: a non-numeric value would make
+    # the comparison below error out and be read as "not over the limit".
+    case "${OPT_MAX_BODY:-}" in '' | *[!0-9]*) die "could not measure the largest function body" ;; esac
+    echo "  optimized size: $OPT_SIZE B (limit $OPT_SIZE_LIMIT)"
+    echo "  headroom: $((STYLUS_MAX_WASM_SIZE - OPT_SIZE - DEPLOY_SECTION_OVERHEAD)) B under the $STYLUS_MAX_WASM_SIZE B decompressed budget"
+    echo "  functions: $OPT_FUNCS, largest body: $OPT_MAX_BODY B (opcode limit $STYLUS_MAX_FUNC_OPCODES)"
+    FAIL=0
     if [ "$OPT_SIZE" -gt "$OPT_SIZE_LIMIT" ]; then
-        echo "  [FAIL] optimized artifact exceeds the activation budget limit"
-        exit 1
+        echo "  [FAIL] optimized artifact exceeds the size budget"
+        FAIL=1
     fi
+    if [ "$OPT_MAX_BODY" -ge "$STYLUS_MAX_FUNC_OPCODES" ]; then
+        echo "  [FAIL] largest function body may exceed the per-function opcode limit"
+        FAIL=1
+    fi
+    [ "$FAIL" = 0 ] || exit 1
     echo "  [OK] deploy artifact fits the activation budget."
 fi

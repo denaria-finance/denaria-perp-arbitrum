@@ -52,10 +52,10 @@ bash script/build_deploy_artifact.sh
 RPC="$ARBITRUM_SEPOLIA_RPC_URL" bash script/build_deploy_artifact.sh
 ```
 
-It regenerates the verification tree, builds the raw wasm, applies the pinned `wasm-opt -Oz`
-pass, validates the module, checks the activation cap, and writes `engine.Oz.wasm` — the file
-the deploy step below uploads. Do **not** deploy a plain `cargo build --release` output: it is
-un-optimized, currently well over the activation cap, and will not activate. That command is
+It regenerates the verification tree, builds the raw wasm, applies the pinned `wasm-opt`
+recipe, validates the module, checks both activation budgets, and writes `engine.Oz.wasm` — the
+file the deploy step below uploads. Do **not** deploy a plain `cargo build --release` output:
+it is un-optimized, currently well over the size budget, and will not activate. That command is
 useful only as a compile check during development.
 
 Deploy and activate `engine.Oz.wasm` with cargo-stylus. The deployed artifact must be produced
@@ -86,17 +86,19 @@ eviction risk.
 Foundry's EVM cannot execute Stylus (WASM) contracts, so the Solidity periphery is deployed
 FIRST and the engine is deployed and initialized separately, in that order.
 
-The deployed engine is the `wasm-opt -Oz` artifact — the only build that fits the Stylus
-activation size cap. cargo-stylus deploys a pre-built artifact through its `--wasm-file` path,
-which performs a raw contract creation + activation and does **not** run a Stylus
-`#[constructor]` (the `--constructor-signature` flag is currently ignored on that path). The
-engine is therefore initialized with a one-shot, admin-guarded `initializeProduction(...)` call
-after activation.
+The deployed engine is the optimised artifact — the only build that fits the Stylus activation
+budgets. cargo-stylus deploys a pre-built artifact through its `--wasm-file` path, which
+performs a raw contract creation + activation and does **not** run a Stylus `#[constructor]`
+(the `--constructor-signature` flag is currently ignored on that path, and the deployment is
+stamped with a zeroed project hash, which is also why it cannot be source-verified). The engine
+is therefore initialized with a one-shot, admin-guarded `initializeProduction(...)` call after
+activation.
 
 > Target flow: an atomic deploy + activate + initialize via a real `#[constructor]`
-> (StylusDeployer) once cargo-stylus routes a constructor through `--wasm-file`, or once the
-> un-optimized build fits under the activation cap and the native `cargo stylus deploy` path can
-> be used. Until then `initializeProduction` is the supported path, and it is **not**
+> (StylusDeployer), reached by moving off `--wasm-file` onto the native `cargo stylus deploy`
+> path — which needs the toolchain to apply the optimisation itself. See the tooling caveats in
+> [VERIFICATION.md](VERIFICATION.md) for where that stands. Until then `initializeProduction` is
+> the supported path, and it is **not**
 > front-run-proof: the initializer grants the admin roles to whoever calls it, so between
 > activation and initialization a third party can claim them. Send it immediately after
 > activation, from the same operator, as the very next transaction, and confirm the roles landed

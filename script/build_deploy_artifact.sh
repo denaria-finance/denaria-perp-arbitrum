@@ -14,8 +14,9 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
-BINARYEN_VERSION="version_119"
-CAP=282900            # empirical raw-wasm activation cap (~282.9 KB); keep headroom below it
+# shellcheck source=script/wasm_opt_recipe.sh
+. "$REPO/script/wasm_opt_recipe.sh"
+
 OUT="$REPO/engine.Oz.wasm"
 REPORT="$REPO/deploy-artifact-report.txt"
 WORK="${WORK:-$(mktemp -d)}"
@@ -28,20 +29,9 @@ RAW="$(find "$WORK/vt" -name '*.wasm' -path '*release*' -size +100k | sort | tai
 RAW_SIZE=$(stat -c%s "$RAW")
 RAW_SHA=$(sha256sum "$RAW" | cut -d' ' -f1)
 
-echo "== [2/5] wasm-opt -Oz (binaryen $BINARYEN_VERSION, pinned) =="
-# Anchored version match: a PATH wasm-opt of ANY other binaryen version produces a different
-# artifact, so only the pinned one is accepted; otherwise fetch it.
-WOPT="$(command -v wasm-opt || true)"
-if [ -z "$WOPT" ] || ! "$WOPT" --version 2>/dev/null | grep -qE "^wasm-opt version ${BINARYEN_VERSION#version_}( |\$)"; then
-  TAR="$WORK/binaryen.tar.gz"
-  curl -fsSL -o "$TAR" "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz"
-  tar xzf "$TAR" -C "$WORK"
-  WOPT="$WORK/binaryen-${BINARYEN_VERSION}/bin/wasm-opt"
-fi
-"$WOPT" -Oz \
-  --enable-bulk-memory --enable-sign-ext --enable-mutable-globals \
-  --enable-nontrapping-float-to-int --enable-reference-types \
-  "$RAW" -o "$OUT"
+echo "== [2/5] wasm-opt (binaryen $BINARYEN_VERSION, pinned recipe) =="
+WOPT="$(resolve_wasm_opt "$WORK")" || { echo "FATAL: could not resolve wasm-opt $BINARYEN_VERSION"; exit 1; }
+"$WOPT" "${WASM_OPT_FLAGS[@]}" "$RAW" -o "$OUT"
 OPT_SIZE=$(stat -c%s "$OUT")
 OPT_SHA=$(sha256sum "$OUT" | cut -d' ' -f1)
 
@@ -58,8 +48,19 @@ else
   EXPORTS="?"; IMPORTS="?"; HAS_ENTRY="?"
 fi
 
+# Activation also rejects a module with too many opcodes in ONE function body, independently of
+# the module's total size. wasm-opt's inlining is what pushes a body over, so this is checked on
+# the OPTIMISED artifact; script/wasm_max_body.py explains the proxy it measures.
+read -r FUNCS MAX_BODY < <(python3 "$REPO/script/wasm_max_body.py" "$OUT")
+# An unmeasured budget must fail the build, not skip the check: a non-numeric value would make
+# the comparison below error out and be read as "not over the limit".
+case "${MAX_BODY:-}" in '' | *[!0-9]*) echo "FATAL: could not measure the largest function body"; exit 1 ;; esac
+echo "  functions: $FUNCS, largest body: $MAX_BODY B (opcode limit $STYLUS_MAX_FUNC_OPCODES)"
+
 echo "== [4/5] size / headroom / fragments =="
-HEADROOM=$(( CAP - OPT_SIZE ))
+# The chain measures the module cargo-stylus submits, not the file on disk.
+SUBMITTED=$(( OPT_SIZE + DEPLOY_SECTION_OVERHEAD ))
+HEADROOM=$(( STYLUS_MAX_WASM_SIZE - SUBMITTED ))
 BROTLI="?"
 command -v brotli >/dev/null 2>&1 && BROTLI=$(brotli -c "$OUT" | wc -c)
 
@@ -68,17 +69,24 @@ command -v brotli >/dev/null 2>&1 && BROTLI=$(brotli -c "$OUT" | wc -c)
   echo "commit:            $(git rev-parse HEAD 2>/dev/null || echo '?')"
   echo "raw wasm size:     $RAW_SIZE B"
   echo "raw wasm sha256:   $RAW_SHA"
-  echo "optimized size:    $OPT_SIZE B   (wasm-opt -Oz, binaryen $BINARYEN_VERSION)"
+  echo "optimized size:    $OPT_SIZE B   (binaryen $BINARYEN_VERSION, ${WASM_OPT_FLAGS[*]})"
   echo "optimized sha256:  $OPT_SHA"
   echo "brotli size:       $BROTLI B"
-  echo "activation cap:    ~$CAP B (raw); headroom: $HEADROOM B"
+  echo "submitted size:    $SUBMITTED B (artifact + project_hash section)"
+  echo "size budget:       $STYLUS_MAX_WASM_SIZE B decompressed; headroom: $HEADROOM B"
+  echo "largest body:      $MAX_BODY B of $FUNCS functions (opcode limit $STYLUS_MAX_FUNC_OPCODES)"
   echo "exports:           $EXPORTS"
   echo "imports (hostio):  $IMPORTS"
   echo "user_entrypoint:   $([ "$HAS_ENTRY" != "0" ] && echo present || echo MISSING)"
 } | tee "$REPORT"
 
-if [ "$OPT_SIZE" -ge "$CAP" ]; then
-  echo "FATAL: optimized artifact ($OPT_SIZE B) is at/over the activation cap (~$CAP B)"; exit 1
+if [ "$OPT_SIZE" -gt "$OPT_SIZE_LIMIT" ]; then
+  echo "FATAL: optimized artifact ($OPT_SIZE B) is over the size budget ($OPT_SIZE_LIMIT B ="
+  echo "       $STYLUS_MAX_WASM_SIZE decompressed, less the deploy overhead and safety margin)"; exit 1
+fi
+if [ "$MAX_BODY" -ge "$STYLUS_MAX_FUNC_OPCODES" ]; then
+  echo "FATAL: largest function body ($MAX_BODY B) may exceed the Stylus per-function opcode"
+  echo "       limit ($STYLUS_MAX_FUNC_OPCODES) — the artifact would fail activation"; exit 1
 fi
 [ "$HAS_ENTRY" = "0" ] && { echo "FATAL: user_entrypoint export missing"; exit 1; }
 

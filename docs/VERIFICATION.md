@@ -32,22 +32,44 @@ The deployed `PerpEngine` is a Rust/WASM Stylus program. Its **deploy artifact i
 - `.cargo/config.toml`: WASM `build-std` + `-Zlocation-detail=none` (so the binary carries
   no local panic-location paths and is insensitive to comment/line edits)
 - `stylus-sdk`: `0.10.8`
-- Post-build optimisation: `wasm-opt -Oz` (Binaryen **version_119**, fixed flags) — see
-  `script/build_deploy_artifact.sh`
+- Post-build optimisation: Binaryen **version_119** with the flag list in
+  `script/wasm_opt_recipe.sh`, which both the build script and the CI gate read
+
+The recipe and the budgets live in a single file because the artifact reproduces only when the
+version and the flags match exactly, and because a limit that drifts between the build script
+and the CI gate is a limit nothing enforces.
+
+Activation applies **two independent budgets**, and a module that clears one can fail the
+other:
+
+- **Size** — `MaxWasmSize` on the decompressed module as submitted, which is the optimised
+  artifact plus the `project_hash` section cargo-stylus appends. The ArbOS 60 value is 262,144
+  bytes, confirmed against Arbitrum Sepolia: builds of this engine at 272,003 B and 277,107 B
+  are rejected and the boundary sits on 256 KiB.
+- **Opcodes** — no single function body may carry more than 65,536.
+
+Binaryen's `-Oz` default inlines single-use callees into the SDK router hard enough to break
+the second budget while staying inside the first, so the recipe caps that inlining. The engine
+currently clears the size budget by roughly 2.5 KB, which is thin: treat the budget as a
+standing constraint on what can be added to the on-chain surface, not as a formality.
 
 The build is two-stage:
 
 1. `script/generate_verify_tree.sh --build` emits a small, mechanically-generated tree
    (engine crate at the root, curve-math vendored as a child, test files stripped) and
    builds the **raw** engine wasm. It fails if the source layout drifts or the wasm does
-   not match the recorded `EXPECT_SIZE` / `EXPECT_SHA256`.
-2. `script/build_deploy_artifact.sh` applies the pinned `wasm-opt -Oz` pass to that raw
-   wasm, validates it (`wasm-tools`), reports size / fragments / hashes, and (with an RPC)
-   runs the read-only `cargo stylus check` activation simulation.
+   not match the recorded `EXPECT_SIZE` / `EXPECT_SHA256`. `--opt-check` additionally
+   applies the recipe and fails on either activation budget.
+2. `script/build_deploy_artifact.sh` applies the pinned recipe to that raw wasm, validates
+   it (`wasm-tools`), checks both budgets, reports size / fragments / hashes, and (with an
+   RPC) runs the read-only `cargo stylus check` activation simulation.
 
-`cargo-stylus` does not run `wasm-opt`; it only brotli-compresses. The optimised artifact is
-therefore materially smaller than the raw build and is the binary that is actually deployed
-and that must activate.
+Neither budget is inferable from the source, so both are gated mechanically: a size-only
+gate stays green while the artifact becomes unactivatable.
+
+The deploy path does not apply the recipe itself — it takes the optimised file and
+brotli-compresses it. That file, materially smaller than the raw build, is the binary actually
+deployed and the one that must activate.
 
 ### Why not Arbiscan managed source-verify
 
@@ -62,7 +84,7 @@ source-verified.**
 Provenance is attested by deterministic re-derivation of the exact deployed bytes:
 
 1. rebuild the raw verify-tree wasm (`generate_verify_tree.sh`, matches `EXPECT_SHA256`);
-2. re-apply the pinned `wasm-opt -Oz` (Binaryen version_119, same flags);
+2. re-apply the pinned recipe (Binaryen version_119, the same flag list);
 3. confirm the resulting `sha256` equals the deployed optimised artifact's hash.
 
 The verify-tree build is deterministic and path-independent (promoting the engine to the
@@ -78,10 +100,21 @@ can silently produce a false "verified" or a half-deployed engine.
 - **The Docker verify runner swallows the child exit status.** The outer runner waits for the
   inner process but does not propagate its exit code, so a byte MISMATCH inside can still
   surface as an outer success. Never treat a zero exit as proof: require an explicit positive
-  success marker in the output and reject any failure text.
-- **`--source-files-for-project-hash` is not wired.** The flag exists but the current argument
-  forwarding does not apply it. Do not rely on it to shape the hashed file set — control that
-  by controlling the tree you publish (which is what `generate_verify_tree.sh` is for).
+  success marker in the output and reject any failure text. Still the case on the current line
+  — the image build checks its exit code, the container run does not.
+- **There is no way to shape the hashed file set.** `--source-files-for-project-hash` was never
+  wired, and the current line has dropped it: the hash covers every `.rs`, `Cargo.toml` and
+  `Cargo.lock` under the build root, unconditionally. Control it by controlling the tree you
+  publish — which is what `generate_verify_tree.sh` is for.
+- **The `[wasm-opt]` table cannot yet carry this engine.** cargo-stylus 0.10.9 added an opt-in
+  `[wasm-opt]` table in `Stylus.toml` that pins a Binaryen version and flags, applies them on
+  both deploy and verification, and folds them into the project hash — which is exactly the
+  mechanism this repo needs to retire the `--wasm-file` path. It does not work for a Rust
+  contract yet: the optimisation runs *after* the normalisation that removes the `DataCount`
+  section, so the section wasm-opt emits under `--enable-bulk-memory` (mandatory — the compiler
+  already emits bulk-memory instructions, and wasm-opt refuses the input without it) survives
+  into the deployed bytes and activation rejects the module. The same bytes activate through
+  `--wasm-file`, where the normalisation runs last. Re-evaluate at the next release.
 - **A `#[constructor]` deploy needs the canonical `StylusDeployer` on the target chain.** The
   CLI routes the atomic deploy+activate+initialize through it. On a chain without that
   contract the deploy still activates but the constructor does **not** run, leaving the engine

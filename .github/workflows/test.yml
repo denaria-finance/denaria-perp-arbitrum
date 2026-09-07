@@ -109,9 +109,10 @@ jobs:
 
   # Activation-budget gate on EVERY push/PR (the deploy-artifact pipeline below stays
   # workflow_dispatch): rebuild the verification tree — which fails on any unpinned raw-wasm
-  # drift, enforcing the re-baseline discipline — then wasm-opt with the pinned binaryen and
-  # fail if the deploy artifact exceeds the ~283 KB Stylus activation cap minus a 4 KB margin.
-  # Without this lane, a change that eats the budget only surfaced at deploy time.
+  # drift, enforcing the re-baseline discipline — then apply the pinned wasm-opt recipe and
+  # fail if the deploy artifact exceeds either activation budget (decompressed module size, or
+  # opcodes in one function body; both defined in script/wasm_opt_recipe.sh). Without this lane,
+  # a change that eats a budget only surfaced at deploy time.
   wasm-size:
     name: WASM activation-budget gate
     runs-on: ubuntu-latest
